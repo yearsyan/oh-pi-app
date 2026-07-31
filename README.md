@@ -47,6 +47,20 @@ curl http://127.0.0.1:8080/healthz
 
 生产环境应在 TLS 反向代理后提供 `wss://`。
 
+## Web 演示（web-demo）
+
+`web-demo/` 是一个 Vue 3 + Vite 的浏览器端演示，提供类似 Codex App 的会话界面：实时展示思考过程（可折叠）、工具调用与输出、运行状态、扩展 UI 对话框，支持新建/恢复会话、流式对话与中止。
+
+```bash
+cd web-demo
+npm install
+npm run dev          # http://localhost:5173
+```
+
+开发时无需配置：Vite 开发服务器已把 `/ws` 反向代理到网关（`ws://localhost:5173/ws` 同源连接，网关无需 `--allow-origin`）。仅首次使用需在页面设置中填写 token；若要直连网关，则需在页面设置网关地址并给网关配置对应 `--allow-origin`。
+
+详见 [`web-demo/README.md`](web-demo/README.md)。
+
 ## WebSocket API
 
 ### 创建 session
