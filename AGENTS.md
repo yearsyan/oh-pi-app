@@ -22,6 +22,16 @@ gofmt -w cmd/pi2ws internal/gateway
 
 The build command creates the ignored `bin/pi2ws` binary. Run normal tests before every change; use the race detector for WebSocket, queue, process, or shutdown changes. `go vet` and `gofmt` are the required static and formatting checks.
 
+### KMP Android App (`app/`)
+
+`app/` is a Kotlin Multiplatform project (`androidApp`, `shared`, `desktopApp`, `iosApp`). Requires Java 21 and the Android SDK at `$ANDROID_HOME` (see `app/local.properties`).
+
+```bash
+cd app && ./gradlew :androidApp:assembleRelease
+```
+
+Output: `app/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk` (unsigned, since no `signingConfig` is configured). First build is slow (downloads Gradle 9.1.0 and dependencies); later builds use the configuration cache.
+
 ## Coding Style & Naming Conventions
 
 Follow standard Go conventions and let `gofmt` determine tabs and layout. Use short, lower-case package names; exported identifiers need Go doc comments, while implementation details should remain inside `internal/gateway`. Prefer descriptive lifecycle verbs such as `start`, `attach`, `shutdown`, and `forceKill`. Wrap errors with context using `%w`, avoid global mutable state, and preserve strict LF-delimited JSONL framing.
