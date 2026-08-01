@@ -23,6 +23,7 @@ import type {
 const SETTINGS_KEY = 'pi2ws_settings'
 const SESSIONS_KEY = 'pi2ws_sessions'
 const ACTIVE_KEY = 'pi2ws_active_session'
+const WORKSPACE_KEY = 'pi2ws_workspace'
 
 function loadSettings(): Settings {
   try {
@@ -80,12 +81,22 @@ function storeActiveSessionId(id: string): void {
   }
 }
 
+// 新建会话使用的工作区，留空表示网关默认目录。原始字符串存储。
+function loadWorkspace(): string {
+  try {
+    return localStorage.getItem(WORKSPACE_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
 // ---------- reactive state ----------
 
 const state = reactive({
   settings: loadSettings(),
   sessions: loadSessions() as SavedSession[],
   activeSessionId: loadActiveSessionId(),
+  workspace: loadWorkspace(),
   conn: 'disconnected' as ConnState,
   connDetail: '',
   sessionName: '',
@@ -628,12 +639,20 @@ function onGatewayMessage(msg: Record<string, unknown>): void {
     if (event === 'ready') {
       state.conn = 'ready'
       const sid = String(msg.session_id ?? '')
+      const workDir = String(msg.work_dir ?? '')
       if (msg.action === 'create') {
-        addSession(sid)
+        addSession(sid, '', workDir)
         state.activeSessionId = sid
         storeActiveSessionId(sid)
         status('已创建新会话', 'info')
       } else {
+        if (workDir) {
+          const saved = state.sessions.find((s) => s.id === sid)
+          if (saved && saved.workDir !== workDir) {
+            saved.workDir = workDir
+            save(SESSIONS_KEY, state.sessions)
+          }
+        }
         state.activeSessionId = sid
         storeActiveSessionId(sid)
         status('已连接到历史会话', 'info')
@@ -767,7 +786,7 @@ export function connect(action: 'create' | 'attach', sessionId?: string): void {
   state.connDetail = ''
   state.items = []
   client.connect(
-    buildWsUrl(settings.gateway, settings.token, action, sessionId),
+    buildWsUrl(settings.gateway, settings.token, action, sessionId, action === 'create' ? state.workspace : ''),
     {
       onOpen: () => {
         status(action === 'create' ? '连接已建立，等待会话就绪…' : '连接已建立，正在恢复会话…')
@@ -802,6 +821,10 @@ export function connect(action: 'create' | 'attach', sessionId?: string): void {
 
 export function newChat(): void {
   if (state.conn === 'connecting') return
+  if (!state.workspace) {
+    toast('请先填写工作区目录（绝对路径）', 'error')
+    return
+  }
   state.items = []
   connect('create')
 }
@@ -820,11 +843,20 @@ export function sendPrompt(text: string): void {
   const trimmed = text.trim()
   if (!trimmed) return
   addUserMessage(trimmed)
+  // 未命名的会话用第一条消息的首行作为标题
+  if (state.activeSessionId && !state.sessionName) {
+    renameSession(state.activeSessionId, deriveTitle(trimmed))
+  }
   const cmd: Record<string, unknown> = { type: 'prompt', message: trimmed }
   if (state.isStreaming) {
     cmd.streamingBehavior = 'steer'
   }
   sendCommand(cmd)
+}
+
+function deriveTitle(text: string): string {
+  const first = text.split('\n')[0].trim()
+  return first.length > 30 ? first.slice(0, 30) + '…' : first
 }
 
 export function loadModelOptions(): void {
@@ -857,13 +889,20 @@ export function abort(): void {
   status('已发送中止请求', 'warn')
 }
 
-export function addSession(id: string, name = ''): void {
+export function addSession(id: string, name = '', workDir = ''): void {
   const existing = state.sessions.find((s) => s.id === id)
   if (existing) {
     existing.lastActive = Date.now()
     if (name) existing.name = name
+    if (workDir) existing.workDir = workDir
   } else {
-    state.sessions.push({ id, name, createdAt: Date.now(), lastActive: Date.now() })
+    state.sessions.push({
+      id,
+      name,
+      workDir: workDir || undefined,
+      createdAt: Date.now(),
+      lastActive: Date.now(),
+    })
   }
   save(SESSIONS_KEY, state.sessions)
 }
@@ -895,6 +934,16 @@ export function saveSettings(s: Settings): void {
   save(SETTINGS_KEY, state.settings)
 }
 
+export function setWorkspace(value: string): void {
+  state.workspace = value.trim()
+  try {
+    if (state.workspace) localStorage.setItem(WORKSPACE_KEY, state.workspace)
+    else localStorage.removeItem(WORKSPACE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function openSettings(): void {
   state.settingsOpen = true
 }
@@ -924,6 +973,7 @@ export function useStore() {
     renameSession,
     removeSession,
     saveSettings,
+    setWorkspace,
     respondDialog,
     sendCommand,
     addSession,

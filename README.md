@@ -65,11 +65,14 @@ npm run dev          # http://localhost:5173
 
 ### 创建 session
 
-连接：
+连接（必须带 `work_dir` 指定工作区）：
 
 ```text
-ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>
+ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project
 ```
+
+`work_dir` 是该 session 的工作区（pi 子进程的工作目录），必须是已存在目录的绝对路径。
+省略 `work_dir` 或路径非法（相对路径、不存在、不是目录）时在 WebSocket 升级前返回 HTTP 400。
 
 连接成功后的第一条消息由网关发送：
 
@@ -78,11 +81,13 @@ ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>
   "type": "pi2ws",
   "event": "ready",
   "action": "create",
-  "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07"
+  "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
+  "work_dir": "/path/to/project"
 }
 ```
 
-客户端必须保存 `session_id`，以后用它恢复 session。
+客户端必须保存 `session_id`，以后用它恢复 session。`work_dir` 是该 session 实际使用的工作区，
+随 session 元数据持久化。
 
 ### 连接历史 session
 
@@ -90,9 +95,26 @@ ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>
 ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&token=<TOKEN>
 ```
 
-成功后的第一条消息同样是 `pi2ws/ready`，其中 `action` 为 `attach`。
+成功后的第一条消息同样是 `pi2ws/ready`，其中 `action` 为 `attach`，`work_dir` 为 session 创建时记录的工作区（旧版本创建的 session 没有记录，回退为网关的 `--work-dir`）。
 
 历史 session 必须由当前 `--data-dir` 对应的 pi2ws 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
+
+### 目录浏览（工作区选择）
+
+`GET /fs/list?path=<绝对路径>&token=<TOKEN>` 列出目录下的子目录（不含文件），供客户端实现工作区文件浏览器：
+
+```json
+{
+  "path": "/path/to/project",
+  "parent": "/path/to",
+  "dirs": [
+    { "name": "app", "path": "/path/to/project/app" },
+    { "name": "cmd", "path": "/path/to/project/cmd" }
+  ]
+}
+```
+
+省略 `path` 时从网关的 `--work-dir` 开始浏览。`path` 必须是绝对路径；不存在的路径返回 404，无权限读取返回 403。
 
 ### 收发 pi RPC
 
@@ -169,7 +191,7 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 | `--listen` | `PI2WS_LISTEN` | `127.0.0.1:8080` | HTTP 监听地址 |
 | `--token` | `PI2WS_TOKEN` | 无 | 必填鉴权 token |
 | `--data-dir` | `PI2WS_DATA_DIR` | `~/.local/state/pi2ws` | session 持久化目录 |
-| `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 每个 pi 子进程的工作目录 |
+| `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
 | `--pi` | `PI2WS_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |

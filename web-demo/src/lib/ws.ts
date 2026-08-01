@@ -69,7 +69,13 @@ export class Pi2wsClient {
   }
 }
 
-export function buildWsUrl(gateway: string, token: string, action: 'create' | 'attach', sessionId?: string): string {
+export function buildWsUrl(
+  gateway: string,
+  token: string,
+  action: 'create' | 'attach',
+  sessionId?: string,
+  workDir?: string,
+): string {
   let base = (gateway ?? '').trim()
   if (!base) {
     // 留空：走同源代理（vite dev server 的 /ws 反代，或网关同源部署）
@@ -81,6 +87,7 @@ export function buildWsUrl(gateway: string, token: string, action: 'create' | 'a
   url.search = ''
   url.searchParams.set('action', action)
   if (sessionId) url.searchParams.set('session_id', sessionId)
+  if (workDir) url.searchParams.set('work_dir', workDir)
   if (token) url.searchParams.set('token', token)
   return url.toString()
 }

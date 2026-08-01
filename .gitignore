@@ -4,3 +4,6 @@ web-demo/node_modules/
 web-demo/dist/
 web-demo/.vite/
 web-demo/.vite-temp/
+.wrangler/
+*.keystore
+keystore.properties

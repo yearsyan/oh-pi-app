@@ -20,6 +20,7 @@ var errSessionNotFound = errors.New("session not found")
 type sessionMetadata struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
+	WorkDir   string    `json:"work_dir,omitempty"`
 }
 
 type sessionStore struct {
@@ -34,7 +35,7 @@ func newSessionStore(dataDir string) (*sessionStore, error) {
 	return &sessionStore{root: root}, nil
 }
 
-func (s *sessionStore) create() (sessionMetadata, string, error) {
+func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
 	for range 8 {
 		id, err := newSessionID()
 		if err != nil {
@@ -48,7 +49,7 @@ func (s *sessionStore) create() (sessionMetadata, string, error) {
 			return sessionMetadata{}, "", fmt.Errorf("create session directory: %w", err)
 		}
 
-		meta := sessionMetadata{ID: id, CreatedAt: time.Now().UTC()}
+		meta := sessionMetadata{ID: id, CreatedAt: time.Now().UTC(), WorkDir: workDir}
 		if err := writeMetadata(dir, meta); err != nil {
 			_ = os.Remove(dir)
 			return sessionMetadata{}, "", err

@@ -25,12 +25,12 @@ func newSessionManager(cfg Config, store *sessionStore) *sessionManager {
 	}
 }
 
-func (m *sessionManager) create() (*piSession, error) {
-	meta, dir, err := m.store.create()
+func (m *sessionManager) create(workDir string) (*piSession, error) {
+	meta, dir, err := m.store.create(workDir)
 	if err != nil {
 		return nil, err
 	}
-	session, err := m.getOrStart(meta.ID, dir)
+	session, err := m.getOrStart(meta.ID, dir, meta.WorkDir)
 	if err != nil {
 		if discardErr := m.store.discard(meta.ID); discardErr != nil {
 			m.cfg.Logger.Warn(
@@ -49,7 +49,13 @@ func (m *sessionManager) attach(id string) (*piSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	session, err := m.getOrStart(meta.ID, dir)
+	workDir := meta.WorkDir
+	if workDir == "" {
+		// Sessions persisted before workspaces existed fall back to the
+		// gateway-wide working directory.
+		workDir = m.cfg.WorkDir
+	}
+	session, err := m.getOrStart(meta.ID, dir, workDir)
 	if err != nil {
 		return nil, fmt.Errorf("start existing session: %w", err)
 	}
@@ -67,7 +73,7 @@ func (m *sessionManager) exists(id string) (bool, error) {
 	return false, err
 }
 
-func (m *sessionManager) getOrStart(id, dir string) (*piSession, error) {
+func (m *sessionManager) getOrStart(id, dir, workDir string) (*piSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing {
@@ -82,7 +88,7 @@ func (m *sessionManager) getOrStart(id, dir string) (*piSession, error) {
 		Dir:            dir,
 		Command:        m.cfg.PiCommand,
 		Args:           m.cfg.PiArgs,
-		WorkDir:        m.cfg.WorkDir,
+		WorkDir:        workDir,
 		MaxEventBytes:  m.cfg.MaxMessageBytes,
 		InputQueueSize: m.cfg.InputQueueSize,
 		Logger:         m.cfg.Logger,

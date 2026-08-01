@@ -12,12 +12,15 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, dir, err := store.create()
+	created, dir, err := store.create(t.TempDir())
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	if !validSessionID(created.ID) {
 		t.Fatalf("invalid session id %q", created.ID)
+	}
+	if created.WorkDir == "" {
+		t.Fatal("created session lost its work_dir")
 	}
 	loaded, loadedDir, err := store.load(created.ID)
 	if err != nil {
@@ -56,7 +59,7 @@ func TestSessionStoreDiscardOnlyRemovesAllocatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, dir, err := store.create()
+	created, dir, err := store.create("")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +55,7 @@ func New(cfg Config) (*Gateway, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", gateway.handleHealth)
+	mux.HandleFunc("/fs/list", gateway.handleFsList)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
 	gateway.handler = mux
 	return gateway, nil
@@ -101,6 +104,16 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		writeHTTPError(writer, http.StatusBadRequest, "unexpected_session_id", "create does not accept session_id")
 		return
 	}
+
+	workDir := ""
+	if action == "create" {
+		var err error
+		workDir, err = g.resolveWorkDir(request.URL.Query().Get("work_dir"))
+		if err != nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_work_dir", err.Error())
+			return
+		}
+	}
 	if action == "attach" {
 		if sessionID == "" {
 			writeHTTPError(writer, http.StatusBadRequest, "missing_session_id", "attach requires session_id")
@@ -125,7 +138,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 
 	var session *piSession
 	if action == "create" {
-		session, err = g.manager.create()
+		session, err = g.manager.create(workDir)
 	} else {
 		session, err = g.manager.attach(sessionID)
 	}
@@ -158,6 +171,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		Event:     "ready",
 		Action:    action,
 		SessionID: session.id,
+		WorkDir:   session.workDir,
 	})
 	if !client.enqueue(ready) || !session.addClient(client) {
 		client.close(websocket.CloseInternalServerErr, "pi session is not running")
@@ -200,6 +214,32 @@ func (g *Gateway) readClient(client *wsClient, session *piSession) {
 			return
 		}
 	}
+}
+
+// resolveWorkDir validates the workspace a client requested for a new
+// session. The workspace is required and must be an absolute path to an
+// existing directory; the result is cleaned and symlink-resolved so the same
+// workspace always has one identity.
+func (g *Gateway) resolveWorkDir(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("work_dir is required")
+	}
+	if !filepath.IsAbs(raw) {
+		return "", fmt.Errorf("work_dir must be an absolute path, got %q", raw)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(raw))
+	if err != nil {
+		return "", fmt.Errorf("resolve work_dir %q: %w", raw, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect work_dir %q: %w", raw, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("work_dir %q is not a directory", raw)
+	}
+	return resolved, nil
 }
 
 func (g *Gateway) authenticated(request *http.Request) bool {
@@ -252,6 +292,7 @@ type gatewayEvent struct {
 	Event     string `json:"event"`
 	Action    string `json:"action,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	WorkDir   string `json:"work_dir,omitempty"`
 	Code      string `json:"code,omitempty"`
 	Message   string `json:"message,omitempty"`
 }

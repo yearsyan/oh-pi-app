@@ -42,6 +42,21 @@ func TestPiHelperProcess(t *testing.T) {
 	_, _ = fmt.Fprintln(startLog, os.Getpid())
 	_ = startLog.Close()
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		os.Exit(7)
+	}
+	cwdLog, err := os.OpenFile(
+		filepath.Join(sessionDir, "fake-cwd.log"),
+		os.O_WRONLY|os.O_CREATE|os.O_APPEND,
+		0o600,
+	)
+	if err != nil {
+		os.Exit(8)
+	}
+	_, _ = fmt.Fprintln(cwdLog, cwd)
+	_ = cwdLog.Close()
+
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Split(splitLF)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
@@ -106,8 +121,9 @@ func TestOnePiProcessSharedByMultipleWebSockets(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 
 	first := dialWebSocket(t, server, url.Values{
-		"action": {"create"},
-		"token":  {testToken},
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
 	})
 	defer first.Close()
 	readyFirst := readEvent(t, first)
@@ -162,8 +178,9 @@ func TestAttachRestartsHistoricalSessionAfterGatewayRestart(t *testing.T) {
 	firstGateway, firstServer := startTestGateway(t, dataDir)
 
 	first := dialWebSocket(t, firstServer, url.Values{
-		"action": {"create"},
-		"token":  {testToken},
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
 	})
 	ready := readEvent(t, first)
 	sessionID := ready.string("session_id")
@@ -204,11 +221,182 @@ func TestAttachRestartsHistoricalSessionAfterGatewayRestart(t *testing.T) {
 	}
 }
 
+func TestCreateWithCustomWorkDir(t *testing.T) {
+	dataDir := t.TempDir()
+	app, server := startTestGateway(t, dataDir)
+	// The gateway resolves symlinks in work_dir, so compare against the
+	// canonical path (macOS temp dirs live under /private/var).
+	customWorkDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve custom work dir: %v", err)
+	}
+
+	_, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {"relative/path"},
+	}), nil)
+	if err == nil {
+		t.Fatal("create with a relative work_dir unexpectedly succeeded")
+	}
+	if response == nil || response.StatusCode != 400 {
+		t.Fatalf("relative work_dir status = %v, want 400", responseStatus(response))
+	}
+	_ = response.Body.Close()
+
+	_, response, err = websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {filepath.Join(customWorkDir, "missing")},
+	}), nil)
+	if err == nil {
+		t.Fatal("create with a missing work_dir unexpectedly succeeded")
+	}
+	if response == nil || response.StatusCode != 400 {
+		t.Fatalf("missing work_dir status = %v, want 400", responseStatus(response))
+	}
+	_ = response.Body.Close()
+
+	conn := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {customWorkDir},
+	})
+	ready := readEvent(t, conn)
+	if ready.string("work_dir") != customWorkDir {
+		t.Fatalf("ready work_dir = %q, want %q", ready.string("work_dir"), customWorkDir)
+	}
+	sessionID := ready.string("session_id")
+	// The ready event fires as soon as the child is spawned; round-trip a
+	// command so the fake pi has written its cwd log before we read it.
+	writeJSON(t, conn, map[string]any{"id": "cwd-sync", "type": "get_state"})
+	_ = readEvent(t, conn)
+	_ = conn.Close()
+
+	cwdData, err := os.ReadFile(filepath.Join(dataDir, "sessions", sessionID, "fake-cwd.log"))
+	if err != nil {
+		t.Fatalf("read fake process cwd: %v", err)
+	}
+	if got := strings.Fields(string(cwdData)); len(got) != 1 || got[0] != customWorkDir {
+		t.Fatalf("fake process cwd = %q, want %q", strings.TrimSpace(string(cwdData)), customWorkDir)
+	}
+
+	// The workspace is persisted: after a gateway restart, attach must restart
+	// the child in the session's own work_dir, not the gateway default.
+	shutdownGateway(t, app)
+	server.Close()
+
+	secondGateway, secondServer := startTestGateway(t, dataDir)
+	defer shutdownGateway(t, secondGateway)
+	attached := dialWebSocket(t, secondServer, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer attached.Close()
+	readyAttached := readEvent(t, attached)
+	if readyAttached.string("work_dir") != customWorkDir {
+		t.Fatalf("attached ready work_dir = %q, want %q", readyAttached.string("work_dir"), customWorkDir)
+	}
+
+	cwdData, err = os.ReadFile(filepath.Join(dataDir, "sessions", sessionID, "fake-cwd.log"))
+	if err != nil {
+		t.Fatalf("read fake process cwd after restart: %v", err)
+	}
+	for index, line := range strings.Fields(string(cwdData)) {
+		if line != customWorkDir {
+			t.Fatalf("fake process cwd entry %d = %q, want %q", index, line, customWorkDir)
+		}
+	}
+}
+
+func TestCreateWithoutWorkDirIsRejected(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	_, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
+		"action": {"create"},
+		"token":  {testToken},
+	}), nil)
+	if err == nil {
+		t.Fatal("create without work_dir unexpectedly succeeded")
+	}
+	if response == nil || response.StatusCode != 400 {
+		t.Fatalf("missing work_dir status = %v, want 400", responseStatus(response))
+	}
+	_ = response.Body.Close()
+}
+
+func TestFsListEndpoint(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	root := t.TempDir()
+	for _, dir := range []string{"beta", "Alpha"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatalf("create fixture dir: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("create fixture file: %v", err)
+	}
+
+	httpGet := func(rawURL string) (int, map[string]any) {
+		t.Helper()
+		response, err := http.Get(rawURL)
+		if err != nil {
+			t.Fatalf("GET %s: %v", rawURL, err)
+		}
+		defer response.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return response.StatusCode, body
+	}
+
+	base := strings.TrimPrefix(server.URL, "http") + "/fs/list"
+	status, _ := httpGet("http" + base + "?path=" + url.QueryEscape(root))
+	if status != 401 {
+		t.Fatalf("fs/list without token status = %d, want 401", status)
+	}
+	status, _ = httpGet("http" + base + "?token=" + testToken + "&path=" + url.QueryEscape("relative/dir"))
+	if status != 400 {
+		t.Fatalf("fs/list relative path status = %d, want 400", status)
+	}
+	status, _ = httpGet("http" + base + "?token=" + testToken + "&path=" + url.QueryEscape(filepath.Join(root, "missing")))
+	if status != 404 {
+		t.Fatalf("fs/list missing path status = %d, want 404", status)
+	}
+
+	status, body := httpGet("http" + base + "?token=" + testToken + "&path=" + url.QueryEscape(root))
+	if status != 200 {
+		t.Fatalf("fs/list status = %d, want 200 (body %v)", status, body)
+	}
+	dirs, _ := body["dirs"].([]any)
+	if len(dirs) != 2 {
+		t.Fatalf("fs/list returned %d dirs, want 2 (files must be excluded): %v", len(dirs), body)
+	}
+	first, _ := dirs[0].(map[string]any)
+	second, _ := dirs[1].(map[string]any)
+	if first["name"] != "Alpha" || second["name"] != "beta" {
+		t.Fatalf("fs/list dir order = %v, %v; want Alpha, beta", first["name"], second["name"])
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve fixture root: %v", err)
+	}
+	if body["path"] != resolved || body["parent"] != filepath.Dir(resolved) {
+		t.Fatalf("fs/list path/parent = %v/%v, want %v/%v", body["path"], body["parent"], resolved, filepath.Dir(resolved))
+	}
+
+	// No path starts browsing at the gateway working directory.
+	status, body = httpGet("http" + base + "?token=" + testToken)
+	if status != 200 || body["path"] != app.cfg.WorkDir {
+		t.Fatalf("fs/list default = (%d, %v), want (200, %q)", status, body["path"], app.cfg.WorkDir)
+	}
+}
+
 func TestInvalidAndSessionChangingCommandsAreRejected(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 	conn := dialWebSocket(t, server, url.Values{
-		"action": {"create"},
-		"token":  {testToken},
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
 	})
 	defer conn.Close()
 	_ = readEvent(t, conn)
@@ -240,8 +428,9 @@ func TestInvalidAndSessionChangingCommandsAreRejected(t *testing.T) {
 func TestPiExitClosesAttachedWebSockets(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 	conn := dialWebSocket(t, server, url.Values{
-		"action": {"create"},
-		"token":  {testToken},
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
 	})
 	_ = readEvent(t, conn)
 

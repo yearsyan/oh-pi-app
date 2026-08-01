@@ -195,6 +195,8 @@ export interface SavedSession {
   name: string
   createdAt: number
   lastActive: number
+  /** Workspace (pi working directory) reported by the gateway ready event. */
+  workDir?: string
 }
 
 export interface Settings {

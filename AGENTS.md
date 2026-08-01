@@ -30,7 +30,37 @@ The build command creates the ignored `bin/pi2ws` binary. Run normal tests befor
 cd app && ./gradlew :androidApp:assembleRelease
 ```
 
-Output: `app/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk` (unsigned, since no `signingConfig` is configured). First build is slow (downloads Gradle 9.1.0 and dependencies); later builds use the configuration cache.
+Output: `app/androidApp/build/outputs/apk/release/androidApp-release.apk` (signed). First build is slow (downloads Gradle 9.1.0 and dependencies); later builds use the configuration cache.
+
+#### Release signing
+
+The release build is signed with a local release keystore, wired up in `app/androidApp/build.gradle.kts` via a `release` signing config. Credentials live in two **gitignored** files (do not commit them):
+
+- `app/androidApp/pi-release.keystore` — RSA 2048 keystore, alias `pi`
+- `app/keystore.properties` — `storeFile` / `storePassword` / `keyAlias` / `keyPassword`
+
+If either file is missing, the release signing config resolves to null and the APK comes out unsigned. Regenerate them with:
+
+```bash
+STORE_PASS=$(openssl rand -hex 16)
+keytool -genkeypair -v -keystore app/androidApp/pi-release.keystore -alias pi \
+  -keyalg RSA -keysize 2048 -validity 10950 \
+  -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
+  -dname "CN=Pi App, OU=pi2ws, O=yearsyan, L=Shanghai, ST=Shanghai, C=CN"
+printf "storeFile=pi-release.keystore\nstorePassword=%s\nkeyAlias=pi\nkeyPassword=%s\n" \
+  "$STORE_PASS" "$STORE_PASS" > app/keystore.properties
+chmod 600 app/keystore.properties
+```
+
+Keep using the same keystore across releases: Android refuses update installs when the signing certificate changes, so losing it means users must uninstall first. Verify a built APK with `$ANDROID_HOME/build-tools/*/apksigner verify --print-certs <apk>`.
+
+
+
+
+```bash
+  --file app/androidApp/build/outputs/apk/release/androidApp-release.apk \
+  --content-type application/vnd.android.package-archive
+```
 
 ## Coding Style & Naming Conventions
 
