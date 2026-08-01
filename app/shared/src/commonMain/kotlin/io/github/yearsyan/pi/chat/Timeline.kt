@@ -7,6 +7,14 @@ import androidx.compose.runtime.setValue
 
 enum class ToolState { Streaming, Pending, Running, Done, Error }
 
+private fun ToolState.progressRank(): Int = when (this) {
+    ToolState.Streaming -> 0
+    ToolState.Pending -> 1
+    ToolState.Running -> 2
+    ToolState.Done -> 3
+    ToolState.Error -> 4
+}
+
 /** Mutable view model for one tool call; fields update in place while streaming. */
 class ToolCallView(
     id: String = "",
@@ -30,6 +38,33 @@ class ToolCallView(
     var isError by mutableStateOf(isError)
     var startedAt by mutableStateOf(startedAt)
     var endedAt by mutableStateOf(endedAt)
+}
+
+internal fun ToolCallView.absorbExecutionFrom(source: ToolCallView) {
+    val sourceIsAtLeastAsComplete = source.state.progressRank() >= state.progressRank()
+
+    if (id.isBlank()) id = source.id
+    if (name.isBlank()) name = source.name
+    if (args.isBlank()) args = source.args
+    argsDone = argsDone || source.argsDone
+
+    if ((source.output.isNotEmpty() || source.outputDone) &&
+        (output.isEmpty() || sourceIsAtLeastAsComplete)
+    ) {
+        output = source.output
+    }
+    outputDone = outputDone || source.outputDone
+
+    if (sourceIsAtLeastAsComplete) state = source.state
+    isError = isError || source.isError || state == ToolState.Error
+
+    if (source.startedAt > 0L && (startedAt == 0L || sourceIsAtLeastAsComplete)) {
+        startedAt = source.startedAt
+    }
+    source.endedAt?.let { sourceEndedAt ->
+        val currentEndedAt = endedAt
+        if (currentEndedAt == null || sourceEndedAt >= currentEndedAt) endedAt = sourceEndedAt
+    }
 }
 
 enum class BlockKind { Thinking, Text, ToolCall }
@@ -87,6 +122,26 @@ sealed class TimelineItem {
         var text by mutableStateOf(text)
         var tone by mutableStateOf(tone)
         var ts by mutableStateOf(ts)
+    }
+}
+
+internal fun reconcileStandaloneTool(
+    items: MutableList<TimelineItem>,
+    target: ToolCallView,
+) {
+    if (target.id.isBlank()) return
+
+    for (item in items) {
+        val standalone = item as? TimelineItem.ToolItem ?: continue
+        if (standalone.tool !== target && standalone.tool.id == target.id) {
+            target.absorbExecutionFrom(standalone.tool)
+        }
+    }
+    for (index in items.lastIndex downTo 0) {
+        val standalone = items[index] as? TimelineItem.ToolItem ?: continue
+        if (standalone.tool !== target && standalone.tool.id == target.id) {
+            items.removeAt(index)
+        }
     }
 }
 

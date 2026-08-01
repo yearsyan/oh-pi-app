@@ -535,10 +535,11 @@ class ChatController(
             "toolcall_delta" -> blockAt(item, index, BlockKind.ToolCall).tool?.let { it.args += delta.strOrEmpty("delta") }
             "toolcall_end" -> blockAt(item, index, BlockKind.ToolCall).tool?.let { t ->
                 val call = delta.obj("toolCall")
-                t.id = call?.strOrEmpty("id") ?: t.id
-                t.name = call?.strOrEmpty("name") ?: t.name
-                t.args = argsToString(call?.get("arguments"))
+                t.id = call?.strOrEmpty("id").orEmpty().ifBlank { t.id }
+                t.name = call?.strOrEmpty("name").orEmpty().ifBlank { t.name }
+                t.args = argsToString(call?.get("arguments")).ifBlank { t.args }
                 t.argsDone = true
+                reconcileStandaloneTool(items, t)
             }
             "done", "error" -> item.stopReason = delta.str("reason")
         }
@@ -558,6 +559,7 @@ class ChatController(
                             t.name = b.strOrEmpty("name").ifBlank { t.name }
                             t.args = argsToString(b["arguments"]).ifBlank { t.args }
                             t.argsDone = true
+                            reconcileStandaloneTool(items, t)
                             if (t.state == ToolState.Streaming) t.state = ToolState.Pending
                         }
                     }
@@ -605,6 +607,7 @@ class ChatController(
     // ---------- timeline: tools ----------
 
     private fun findTool(toolCallId: String): ToolCallView? {
+        if (toolCallId.isBlank()) return null
         for (i in items.indices.reversed()) {
             when (val it = items[i]) {
                 is TimelineItem.AssistantItem -> {
@@ -619,15 +622,29 @@ class ChatController(
         return null
     }
 
+    private fun findUnboundAssistantTool(toolName: String): ToolCallView? {
+        val assistant = latestStreamingAssistant() ?: return null
+        return assistant.blocks.mapNotNull { block ->
+            block.tool?.takeIf { tool ->
+                block.kind == BlockKind.ToolCall &&
+                    tool.id.isBlank() &&
+                    (tool.name.isBlank() || toolName.isBlank() || tool.name == toolName) &&
+                    (tool.state == ToolState.Streaming || tool.state == ToolState.Pending)
+            }
+        }.singleOrNull()
+    }
+
     private fun handleToolStart(msg: JsonObject) {
         val callId = msg.strOrEmpty("toolCallId")
-        var tc = findTool(callId)
+        val toolName = msg.strOrEmpty("toolName")
+        var tc = findTool(callId) ?: findUnboundAssistantTool(toolName)
         if (tc == null) {
             tc = ToolCallView(id = callId, startedAt = nowMillis())
             items.add(TimelineItem.ToolItem(keySeq++, tc))
         }
-        tc.name = msg.strOrEmpty("toolName")
-        tc.args = argsToString(msg.obj("args"))
+        if (tc.id.isBlank() && callId.isNotBlank()) tc.id = callId
+        tc.name = toolName.ifBlank { tc.name }
+        tc.args = argsToString(msg.obj("args")).ifBlank { tc.args }
         tc.argsDone = true
         tc.state = ToolState.Running
         tc.startedAt = nowMillis()

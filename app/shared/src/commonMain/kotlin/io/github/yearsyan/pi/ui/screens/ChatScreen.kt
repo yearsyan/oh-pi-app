@@ -222,8 +222,12 @@ private fun MessageList(controller: ChatController, modifier: Modifier = Modifie
             when (item) {
                 is TimelineItem.UserItem -> UserMessageRow(item)
                 is TimelineItem.AssistantItem -> AssistantMessageRow(item)
-                is TimelineItem.ToolItem -> Box(Modifier.padding(horizontal = 56.dp)) {
-                    ToolCallCard(item.tool)
+                is TimelineItem.ToolItem -> Box(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Box(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
+                        ToolCallCard(item.tool)
+                    }
                 }
                 is TimelineItem.StatusItem -> StatusLine(item)
             }
