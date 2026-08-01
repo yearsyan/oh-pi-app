@@ -1,6 +1,6 @@
 # Pi — pi2ws Compose Multiplatform 客户端
 
-基于 pi2ws 网关的聊天客户端，面向 Android / Desktop (JVM) / iOS（共享代码已兼容，未单独验证）。
+基于 pi2ws 网关的聊天客户端，面向 Android / Desktop (JVM) / iOS 18.5+。
 UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 
 ## 功能
@@ -40,7 +40,7 @@ ui/          AppViewModel（导航/服务器/会话/主题）、screens、compon
   真机连接本机网关时，网关需监听 `0.0.0.0` 并在 App 内填写局域网地址，例如
   `PI2WS_TOKEN=xxx ./bin/pi2ws --listen 0.0.0.0:18080 --allow-origin='*'`。
 - Desktop：`./gradlew :desktopApp:run`。
-- iOS：使用 `/iosApp` 工程入口（未单独验证）。
+- iOS 18.5+：使用 `/iosApp` Xcode 工程入口。
 
 ## 备注
 
