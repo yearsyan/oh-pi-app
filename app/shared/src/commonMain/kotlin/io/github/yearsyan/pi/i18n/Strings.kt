@@ -96,6 +96,13 @@ interface Strings {
     val toolRunning: String
     val toolInput: String
     val toolOutput: String
+    val toolExecuted: (String) -> String
+    val toolRead: (String) -> String
+    val toolWrote: (String) -> String
+    val toolEdited: (String) -> String
+    val toolSearched: (String) -> String
+    val toolListed: (String) -> String
+    val toolCalled: (String) -> String
     val connected: String
     val connecting: String
     val disconnected: String
@@ -246,6 +253,13 @@ object EnStrings : Strings {
     override val toolRunning = "Running"
     override val toolInput = "Input"
     override val toolOutput = "Output"
+    override val toolExecuted = { target: String -> "Ran $target" }
+    override val toolRead = { target: String -> "Read $target" }
+    override val toolWrote = { target: String -> "Wrote $target" }
+    override val toolEdited = { target: String -> "Edited $target" }
+    override val toolSearched = { target: String -> "Searched for $target" }
+    override val toolListed = { target: String -> "Listed $target" }
+    override val toolCalled = { target: String -> "Used $target" }
     override val connected = "Online"
     override val connecting = "Connecting"
     override val disconnected = "Offline"
@@ -388,11 +402,18 @@ object ZhStrings : Strings {
     override val imageAttachment = { count: Int -> "图片 × $count" }
     override val imageTooLarge = "图片不能超过 8 MB"
     override val imageReadFailed = "无法读取这张图片"
-    override val thinking = "思考过程"
+    override val thinking = "思考"
     override val thinkingInProgress = "正在思考…"
     override val toolRunning = "运行中"
     override val toolInput = "输入"
     override val toolOutput = "输出"
+    override val toolExecuted = { target: String -> "执行了 $target" }
+    override val toolRead = { target: String -> "读取了 $target" }
+    override val toolWrote = { target: String -> "写入了 $target" }
+    override val toolEdited = { target: String -> "编辑了 $target" }
+    override val toolSearched = { target: String -> "搜索了 $target" }
+    override val toolListed = { target: String -> "查看了 $target" }
+    override val toolCalled = { target: String -> "调用了 $target" }
     override val connected = "在线"
     override val connecting = "连接中"
     override val disconnected = "离线"

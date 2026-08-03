@@ -37,17 +37,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.yearsyan.pi.chat.AssistantProcessDetail
+import io.github.yearsyan.pi.chat.AssistantRenderChunk
 import io.github.yearsyan.pi.chat.AssistantBlock
-import io.github.yearsyan.pi.chat.BlockKind
 import io.github.yearsyan.pi.chat.TimelineItem
 import io.github.yearsyan.pi.chat.ToolCallView
+import io.github.yearsyan.pi.chat.ToolActionKind
 import io.github.yearsyan.pi.chat.ToolState
+import io.github.yearsyan.pi.chat.chunkAssistantRun
+import io.github.yearsyan.pi.chat.toolAction
 import io.github.yearsyan.pi.i18n.S
+import io.github.yearsyan.pi.i18n.Strings
 import io.github.yearsyan.pi.markdown.MarkdownView
 import io.github.yearsyan.pi.theme.piExtras
 import androidx.compose.material.icons.Icons
@@ -78,45 +83,19 @@ fun UserMessageRow(item: TimelineItem.UserItem) {
     }
 }
 
-private sealed interface ProcessDetail {
-    data class Thinking(val block: AssistantBlock) : ProcessDetail
-
-    data class Tool(val tool: ToolCallView) : ProcessDetail
-}
-
-private sealed interface AssistantRunPart {
-    data class Process(val detail: ProcessDetail) : AssistantRunPart
-
-    data class Text(val block: AssistantBlock) : AssistantRunPart
-}
-
-private fun assistantRunParts(items: List<TimelineItem>): List<AssistantRunPart> =
-    buildList {
-        items.forEach { item ->
-            when (item) {
-                is TimelineItem.AssistantItem ->
-                    item.blocks.forEach { block ->
-                        when (block.kind) {
-                            BlockKind.Thinking -> add(AssistantRunPart.Process(ProcessDetail.Thinking(block)))
-                            BlockKind.Text -> if (block.text.isNotBlank()) add(AssistantRunPart.Text(block))
-                            BlockKind.ToolCall -> block.tool?.let {
-                                add(AssistantRunPart.Process(ProcessDetail.Tool(it)))
-                            }
-                        }
-                    }
-                is TimelineItem.ToolItem -> add(AssistantRunPart.Process(ProcessDetail.Tool(item.tool)))
-                else -> Unit
-            }
-        }
-    }
-
 @Composable
 private fun AgentProcessBlock(
-    details: List<ProcessDetail>,
+    details: List<AssistantProcessDetail>,
     isStreaming: Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val showDetails = expanded && !isStreaming
+    val strings = S
+    val summary =
+        details
+            .filterIsInstance<AssistantProcessDetail.Tool>()
+            .joinToString(" · ") { friendlyToolAction(strings, it.tool) }
+            .ifBlank { if (isStreaming) strings.thinkingInProgress else strings.thinking }
     Column(
         modifier =
             Modifier
@@ -139,11 +118,13 @@ private fun AgentProcessBlock(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                S.thinking,
+                summary,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontStyle = FontStyle.Italic,
                 modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Icon(
                 Icons.Filled.KeyboardArrowDown,
@@ -166,8 +147,8 @@ private fun AgentProcessBlock(
                         )
                     }
                     when (detail) {
-                        is ProcessDetail.Thinking -> ThinkingDetail(detail.block)
-                        is ProcessDetail.Tool -> ToolDetail(detail.tool)
+                        is AssistantProcessDetail.Thinking -> ThinkingDetail(detail.block)
+                        is AssistantProcessDetail.Tool -> ToolDetail(detail.tool)
                     }
                 }
             }
@@ -195,6 +176,7 @@ private fun ThinkingDetail(block: AssistantBlock) {
 
 @Composable
 private fun ToolDetail(tool: ToolCallView) {
+    val strings = S
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             Icons.Filled.Build,
@@ -204,8 +186,8 @@ private fun ToolDetail(tool: ToolCallView) {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            tool.name.ifBlank { "tool" },
-            style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+            friendlyToolAction(strings, tool),
+            style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
             maxLines = 1,
@@ -221,6 +203,19 @@ private fun ToolDetail(tool: ToolCallView) {
         Spacer(Modifier.height(8.dp))
         ToolSectionLabel(S.toolOutput)
         ToolCodeBlock(tool.output)
+    }
+}
+
+private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String {
+    val action = toolAction(tool.name, tool.args)
+    return when (action.kind) {
+        ToolActionKind.Execute -> strings.toolExecuted(action.target)
+        ToolActionKind.Read -> strings.toolRead(action.target)
+        ToolActionKind.Write -> strings.toolWrote(action.target)
+        ToolActionKind.Edit -> strings.toolEdited(action.target)
+        ToolActionKind.Search -> strings.toolSearched(action.target)
+        ToolActionKind.List -> strings.toolListed(action.target)
+        ToolActionKind.Call -> strings.toolCalled(action.target)
     }
 }
 
@@ -297,9 +292,7 @@ fun AssistantRunRow(
     items: List<TimelineItem>,
     isStreaming: Boolean,
 ) {
-    val parts = assistantRunParts(items)
-    val processDetails = parts.mapNotNull { (it as? AssistantRunPart.Process)?.detail }
-    var processRendered = false
+    val chunks = chunkAssistantRun(items)
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Top,
@@ -308,19 +301,18 @@ fun AssistantRunRow(
             modifier = Modifier.weight(1f).widthIn(max = 720.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            parts.forEach { part ->
-                when (part) {
-                    is AssistantRunPart.Process -> {
-                        if (!processRendered) {
-                            AgentProcessBlock(processDetails, isStreaming)
-                            processRendered = true
-                        }
-                    }
-                    is AssistantRunPart.Text -> MarkdownView(part.block.text)
+            chunks.forEachIndexed { index, chunk ->
+                when (chunk) {
+                    is AssistantRenderChunk.Process ->
+                        AgentProcessBlock(
+                            details = chunk.details,
+                            isStreaming = isStreaming && index == chunks.lastIndex,
+                        )
+                    is AssistantRenderChunk.Text -> MarkdownView(chunk.block.text)
                 }
             }
-            val lastPartIsText = parts.lastOrNull() is AssistantRunPart.Text
-            if (isStreaming && (processDetails.isEmpty() || lastPartIsText)) {
+            val lastChunkIsText = chunks.lastOrNull() is AssistantRenderChunk.Text
+            if (isStreaming && (chunks.isEmpty() || lastChunkIsText)) {
                 StreamingCaret()
             }
         }

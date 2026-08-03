@@ -165,6 +165,52 @@ internal fun groupTimelineItems(items: List<TimelineItem>): List<TimelineRenderG
     return groups
 }
 
+internal sealed interface AssistantProcessDetail {
+    data class Thinking(val block: AssistantBlock) : AssistantProcessDetail
+
+    data class Tool(val tool: ToolCallView) : AssistantProcessDetail
+}
+
+internal sealed interface AssistantRenderChunk {
+    data class Process(val details: List<AssistantProcessDetail>) : AssistantRenderChunk
+
+    data class Text(val block: AssistantBlock) : AssistantRenderChunk
+}
+
+/** Merges only consecutive reasoning/tool details; visible text always starts a new chunk. */
+internal fun chunkAssistantRun(items: List<TimelineItem>): List<AssistantRenderChunk> {
+    val chunks = mutableListOf<AssistantRenderChunk>()
+    var processDetails = mutableListOf<AssistantProcessDetail>()
+
+    fun flushProcess() {
+        if (processDetails.isEmpty()) return
+        chunks += AssistantRenderChunk.Process(processDetails)
+        processDetails = mutableListOf()
+    }
+
+    items.forEach { item ->
+        when (item) {
+            is TimelineItem.AssistantItem ->
+                item.blocks.forEach { block ->
+                    when (block.kind) {
+                        BlockKind.Thinking -> processDetails += AssistantProcessDetail.Thinking(block)
+                        BlockKind.ToolCall -> block.tool?.let {
+                            processDetails += AssistantProcessDetail.Tool(it)
+                        }
+                        BlockKind.Text -> if (block.text.isNotBlank()) {
+                            flushProcess()
+                            chunks += AssistantRenderChunk.Text(block)
+                        }
+                    }
+                }
+            is TimelineItem.ToolItem -> processDetails += AssistantProcessDetail.Tool(item.tool)
+            else -> Unit
+        }
+    }
+    flushProcess()
+    return chunks
+}
+
 internal fun reconcileStandaloneTool(
     items: MutableList<TimelineItem>,
     target: ToolCallView,
