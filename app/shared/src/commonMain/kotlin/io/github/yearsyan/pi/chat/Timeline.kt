@@ -125,6 +125,46 @@ sealed class TimelineItem {
     }
 }
 
+internal sealed interface TimelineRenderGroup {
+    val key: Long
+
+    data class Single(val item: TimelineItem) : TimelineRenderGroup {
+        override val key: Long = item.key
+    }
+
+    data class AssistantRun(
+        override val key: Long,
+        val items: List<TimelineItem>,
+    ) : TimelineRenderGroup
+}
+
+/** Coalesces adjacent assistant messages and tool executions into one rendered agent run. */
+internal fun groupTimelineItems(items: List<TimelineItem>): List<TimelineRenderGroup> {
+    val groups = mutableListOf<TimelineRenderGroup>()
+    var assistantRun = mutableListOf<TimelineItem>()
+
+    fun flushAssistantRun() {
+        if (assistantRun.isEmpty()) return
+        groups += TimelineRenderGroup.AssistantRun(
+            key = assistantRun.first().key,
+            items = assistantRun,
+        )
+        assistantRun = mutableListOf()
+    }
+
+    items.forEach { item ->
+        when (item) {
+            is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> assistantRun += item
+            else -> {
+                flushAssistantRun()
+                groups += TimelineRenderGroup.Single(item)
+            }
+        }
+    }
+    flushAssistantRun()
+    return groups
+}
+
 internal fun reconcileStandaloneTool(
     items: MutableList<TimelineItem>,
     target: ToolCallView,

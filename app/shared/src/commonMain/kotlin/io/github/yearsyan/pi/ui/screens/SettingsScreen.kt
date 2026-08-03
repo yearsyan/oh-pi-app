@@ -43,6 +43,7 @@ import io.github.yearsyan.pi.data.ServerConnectionMode
 import io.github.yearsyan.pi.data.ServerProfile
 import io.github.yearsyan.pi.data.ThemeMode
 import io.github.yearsyan.pi.i18n.S
+import io.github.yearsyan.pi.net.gatewayAddressLabel
 import io.github.yearsyan.pi.ui.components.ConfirmDialog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -214,6 +215,7 @@ private fun ServerRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val gatewayLabel = gatewayAddressLabel(server.url)
     Surface(
         color = if (active) MaterialTheme.colorScheme.surfaceContainerHigh
         else MaterialTheme.colorScheme.surfaceContainerLow,
@@ -244,9 +246,9 @@ private fun ServerRow(
                 )
                 Text(
                     if (server.connectionMode == ServerConnectionMode.Ssh) {
-                        "SSH · ${server.ssh.username}@${server.ssh.host}:${server.ssh.port} → ${server.url}"
+                        "SSH · ${server.ssh.username}@${server.ssh.host}:${server.ssh.port} → $gatewayLabel"
                     } else {
-                        server.url
+                        gatewayLabel
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

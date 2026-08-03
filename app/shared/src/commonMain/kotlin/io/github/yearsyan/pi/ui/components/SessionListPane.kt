@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import io.github.yearsyan.pi.data.SavedSession
 import io.github.yearsyan.pi.data.ServerProfile
 import io.github.yearsyan.pi.i18n.S
+import io.github.yearsyan.pi.net.gatewayAddressLabel
 import io.github.yearsyan.pi.net.nowMillis
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
@@ -227,7 +228,7 @@ private fun ServerChip(
                             Column(Modifier.weight(1f)) {
                                 Text(server.displayName, style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    server.url,
+                                    gatewayAddressLabel(server.url),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

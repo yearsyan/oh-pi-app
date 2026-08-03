@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
@@ -32,6 +33,24 @@ import kotlinx.serialization.json.put
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
+
+internal enum class PromptDispatch {
+    ExistingSession,
+    CreateSession,
+    Unavailable,
+}
+
+internal fun promptDispatch(
+    conn: ConnState,
+    isDraft: Boolean,
+    hasPendingCreatePrompt: Boolean,
+): PromptDispatch =
+    when {
+        conn == ConnState.Ready -> PromptDispatch.ExistingSession
+        isDraft && !hasPendingCreatePrompt &&
+            (conn == ConnState.Disconnected || conn == ConnState.Error) -> PromptDispatch.CreateSession
+        else -> PromptDispatch.Unavailable
+    }
 
 internal fun reconnectDelayMillis(attempt: Int): Long {
     require(attempt > 0) { "attempt must be positive" }
@@ -58,6 +77,12 @@ class ChatController(
     private val strings: () -> ChatStrings,
     private val resolveGateway: suspend () -> String = { gateway },
 ) {
+    private data class PendingPrompt(
+        val text: String,
+        val images: List<PromptImage>,
+        val streaming: Boolean,
+    )
+
     /** Small string contract so the controller stays UI-independent. */
     data class ChatStrings(
         val newSessionCreated: String,
@@ -66,6 +91,7 @@ class ChatController(
         val connectionClosed: String,
         val commandRejected: String,
         val abortSent: String,
+        val imageAttachment: (Int) -> String,
         val compacting: String,
         val compacted: String,
         val retryOk: String,
@@ -95,6 +121,18 @@ class ChatController(
     /** True while a connection attempt is in flight or established. */
     val active: Boolean get() = conn == ConnState.Ready || conn == ConnState.Connecting
 
+    /** True until a locally prepared chat receives its server-assigned session ID. */
+    val isDraft: Boolean get() = draftWorkDir != null
+
+    /** True when a prompt can be sent now or can create this local draft. */
+    val canSendPrompt: Boolean
+        get() = promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
+
+    /** A draft can retry only after its first create attempt has stopped. */
+    val canReconnect: Boolean
+        get() = !isDraft ||
+            (pendingCreatePrompt != null && (conn == ConnState.Disconnected || conn == ConnState.Error))
+
     private val client = PiClient(scope)
     private var keySeq = 1L
     private val pendingUserKeys = mutableSetOf<Long>()
@@ -108,10 +146,35 @@ class ChatController(
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
     private var refreshHistoryAfterSettle = false
+    private var draftWorkDir by mutableStateOf<String?>(null)
+    private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
 
     // ---------- connection ----------
 
+    /** Prepares a local-only chat. Its first prompt starts the create connection. */
+    fun prepareCreate(workDir: String = "") {
+        disconnect()
+        sessionId = ""
+        this.workDir = workDir
+        draftWorkDir = workDir
+        pendingCreatePrompt = null
+        lastAction = "create"
+        lastSessionId = null
+        lastWorkDir = workDir
+    }
+
     fun connect(action: String, sessionId: String?, workDir: String = "") {
+        draftWorkDir = null
+        pendingCreatePrompt = null
+        beginConnection(action, sessionId, workDir, clearTimeline = true)
+    }
+
+    private fun beginConnection(
+        action: String,
+        sessionId: String?,
+        workDir: String,
+        clearTimeline: Boolean,
+    ) {
         reconnectJob?.cancel()
         reconnectJob = null
         reconnectAttempt = 0
@@ -119,7 +182,12 @@ class ChatController(
         lastAction = action
         lastSessionId = sessionId
         lastWorkDir = workDir
-        startConnection(clearTimeline = true)
+        startConnection(clearTimeline)
+    }
+
+    private fun connectDraft() {
+        val workDir = draftWorkDir ?: return
+        beginConnection("create", null, workDir, clearTimeline = false)
     }
 
     private fun startConnection(clearTimeline: Boolean) {
@@ -173,6 +241,7 @@ class ChatController(
     }
 
     fun reconnect() {
+        if (!canReconnect) return
         reconnectJob?.cancel()
         reconnectJob = null
         reconnectAttempt = 0
@@ -262,16 +331,33 @@ class ChatController(
 
     // ---------- public actions ----------
 
-    fun sendPrompt(text: String) {
+    fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): Boolean {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        addUserMessage(trimmed)
-        maybeAutoName(trimmed)
-        sendCommand {
-            put("type", "prompt")
-            put("message", trimmed)
-            if (isStreaming) put("streamingBehavior", "steer")
+        if (trimmed.isEmpty() && images.isEmpty()) return false
+        val prompt = PendingPrompt(trimmed, images.toList(), isStreaming)
+        return when (promptDispatch(conn, isDraft, pendingCreatePrompt != null)) {
+            PromptDispatch.ExistingSession -> sendPromptNow(prompt, addToTimeline = true)
+            PromptDispatch.CreateSession -> {
+                pendingCreatePrompt = prompt
+                addUserMessage(userMessageText(trimmed, images.size))
+                connectDraft()
+                true
+            }
+            PromptDispatch.Unavailable -> false
         }
+    }
+
+    private fun sendPromptNow(prompt: PendingPrompt, addToTimeline: Boolean): Boolean {
+        val sent = client.send(buildPromptCommand(prompt.text, prompt.images, prompt.streaming).toString())
+        if (!sent) return false
+        if (addToTimeline) addUserMessage(userMessageText(prompt.text, prompt.images.size))
+        if (prompt.text.isNotEmpty()) maybeAutoName(prompt.text)
+        return true
+    }
+
+    private fun flushPendingCreatePrompt() {
+        val prompt = pendingCreatePrompt ?: return
+        if (sendPromptNow(prompt, addToTimeline = false)) pendingCreatePrompt = null
     }
 
     /** Names an unnamed session after the first user message (first line, 30 chars). */
@@ -402,6 +488,7 @@ class ChatController(
     private fun handleGatewayEvent(msg: JsonObject) {
         when (msg.str("event")) {
             "ready" -> {
+                val created = msg.str("action") == "create"
                 refreshHistoryAfterSettle = false
                 conn = ConnState.Ready
                 val sid = msg.strOrEmpty("session_id")
@@ -415,18 +502,25 @@ class ChatController(
                     lastSessionId = sid
                     lastWorkDir = ""
                 }
+                if (created) draftWorkDir = null
                 println("[PiChat] ready sid=$sid action=${msg.str("action")} workDir=$workDir")
-                onSessionReady(sid, msg.str("action") == "create", workDir)
+                onSessionReady(sid, created, workDir)
                 status(
-                    if (msg.str("action") == "create") strings().newSessionCreated
+                    if (created) strings().newSessionCreated
                     else strings().sessionAttached,
                 )
+                if (created && sessionName.isNotBlank()) {
+                    autoNamed = true
+                    sendCommand { put("type", "set_session_name"); put("name", sessionName) }
+                    onAutoName(sid, sessionName)
+                }
                 sendCommand { put("type", "get_state"); this }
                 if (msg.bool("history") != true) {
                     sendCommand { put("type", "get_entries"); this }
                 }
                 sendCommand { put("type", "get_available_models"); this }
                 sendCommand { put("type", "get_available_thinking_levels"); this }
+                flushPendingCreatePrompt()
             }
             "replay" -> msg.obj("payload")?.let { dispatchMessage(it) }
             "replay_end" -> isLoadingHistory = false
@@ -633,7 +727,7 @@ class ChatController(
     }
 
     private fun handleUserMessageStart(message: JsonObject) {
-        val echoed = contentText(message["content"])
+        val echoed = userMessageText(message["content"])
         for (i in items.indices.reversed()) {
             when (val it = items[i]) {
                 is TimelineItem.UserItem -> {
@@ -724,7 +818,7 @@ class ChatController(
             val msg = entry.obj("message") ?: continue
             val ts = msg.long("timestamp") ?: nowMillis()
             when (msg.str("role")) {
-                "user" -> items.add(TimelineItem.UserItem(keySeq++, contentText(msg["content"]), ts))
+                "user" -> items.add(TimelineItem.UserItem(keySeq++, userMessageText(msg["content"]), ts))
                 "assistant" -> {
                     val item = TimelineItem.AssistantItem(
                         key = keySeq++,
@@ -788,6 +882,21 @@ class ChatController(
             }
         }
     }
+
+    private fun userMessageText(content: JsonElement?): String {
+        val text = contentText(content)
+        val imageCount =
+            (content as? JsonArray)?.count { element ->
+                (element as? JsonObject)?.str("type") == "image"
+            } ?: 0
+        return userMessageText(text, imageCount)
+    }
+
+    private fun userMessageText(text: String, imageCount: Int): String =
+        buildList {
+            if (imageCount > 0) add(strings().imageAttachment(imageCount))
+            if (text.isNotBlank()) add(text)
+        }.joinToString("\n")
 
     // ---------- extension UI ----------
 

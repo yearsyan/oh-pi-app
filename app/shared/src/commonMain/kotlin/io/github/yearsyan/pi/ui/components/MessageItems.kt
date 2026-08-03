@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -76,19 +78,65 @@ fun UserMessageRow(item: TimelineItem.UserItem) {
     }
 }
 
+private sealed interface ProcessDetail {
+    data class Thinking(val block: AssistantBlock) : ProcessDetail
+
+    data class Tool(val tool: ToolCallView) : ProcessDetail
+}
+
+private sealed interface AssistantRunPart {
+    data class Process(val detail: ProcessDetail) : AssistantRunPart
+
+    data class Text(val block: AssistantBlock) : AssistantRunPart
+}
+
+private fun assistantRunParts(items: List<TimelineItem>): List<AssistantRunPart> =
+    buildList {
+        items.forEach { item ->
+            when (item) {
+                is TimelineItem.AssistantItem ->
+                    item.blocks.forEach { block ->
+                        when (block.kind) {
+                            BlockKind.Thinking -> add(AssistantRunPart.Process(ProcessDetail.Thinking(block)))
+                            BlockKind.Text -> if (block.text.isNotBlank()) add(AssistantRunPart.Text(block))
+                            BlockKind.ToolCall -> block.tool?.let {
+                                add(AssistantRunPart.Process(ProcessDetail.Tool(it)))
+                            }
+                        }
+                    }
+                is TimelineItem.ToolItem -> add(AssistantRunPart.Process(ProcessDetail.Tool(item.tool)))
+                else -> Unit
+            }
+        }
+    }
+
 @Composable
-fun ThinkingCard(block: AssistantBlock) {
-    var open by remember { mutableStateOf(false) }
+private fun AgentProcessBlock(
+    details: List<ProcessDetail>,
+    isStreaming: Boolean,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val showDetails = expanded && !isStreaming
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable { open = !open }
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            PulsingDot(active = false, color = MaterialTheme.colorScheme.tertiary, size = 6)
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isStreaming) { expanded = !expanded }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PulsingDot(
+                active = isStreaming,
+                color = if (isStreaming) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                size = 6,
+            )
             Spacer(Modifier.width(8.dp))
             Text(
                 S.thinking,
@@ -101,70 +149,78 @@ fun ThinkingCard(block: AssistantBlock) {
                 Icons.Filled.KeyboardArrowDown,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp).alpha(0.7f),
+                modifier =
+                    Modifier
+                        .size(16.dp)
+                        .alpha(0.7f)
+                        .graphicsLayer { rotationZ = if (showDetails) 180f else 0f },
             )
         }
-        AnimatedVisibility(open) {
-            Text(
-                block.text,
-                modifier = Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
-                fontStyle = FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        AnimatedVisibility(showDetails) {
+            Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                details.forEachIndexed { index, detail ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                    }
+                    when (detail) {
+                        is ProcessDetail.Thinking -> ThinkingDetail(detail.block)
+                        is ProcessDetail.Tool -> ToolDetail(detail.tool)
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-fun ToolCallCard(tool: ToolCallView) {
-    var open by remember { mutableStateOf(false) }
-    val extras = piExtras
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .clickable { open = !open }
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Filled.Build,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                tool.name.ifBlank { "tool" },
-                style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-            )
-            ToolStateBadge(tool)
-            Spacer(Modifier.width(6.dp))
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp).alpha(0.7f),
-            )
-        }
-        AnimatedVisibility(open) {
-            Column(Modifier.padding(top = 8.dp)) {
-                if (tool.args.isNotBlank()) {
-                    ToolSectionLabel(S.toolInput)
-                    ToolCodeBlock(tool.args)
-                }
-                if (tool.output.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    ToolSectionLabel(S.toolOutput)
-                    ToolCodeBlock(tool.output)
-                }
-            }
-        }
+private fun ThinkingDetail(block: AssistantBlock) {
+    Text(
+        S.thinking,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (block.text.isNotBlank()) {
+        Text(
+            block.text,
+            modifier = Modifier.padding(top = 4.dp),
+            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+            fontStyle = FontStyle.Italic,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun ToolDetail(tool: ToolCallView) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            Icons.Filled.Build,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            tool.name.ifBlank { "tool" },
+            style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+        )
+        ToolStateBadge(tool)
+    }
+    if (tool.args.isNotBlank()) {
+        Spacer(Modifier.height(8.dp))
+        ToolSectionLabel(S.toolInput)
+        ToolCodeBlock(tool.args)
+    }
+    if (tool.output.isNotBlank()) {
+        Spacer(Modifier.height(8.dp))
+        ToolSectionLabel(S.toolOutput)
+        ToolCodeBlock(tool.output)
     }
 }
 
@@ -237,7 +293,13 @@ private fun ToolCodeBlock(text: String) {
 }
 
 @Composable
-fun AssistantMessageRow(item: TimelineItem.AssistantItem) {
+fun AssistantRunRow(
+    items: List<TimelineItem>,
+    isStreaming: Boolean,
+) {
+    val parts = assistantRunParts(items)
+    val processDetails = parts.mapNotNull { (it as? AssistantRunPart.Process)?.detail }
+    var processRendered = false
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Top,
@@ -246,37 +308,20 @@ fun AssistantMessageRow(item: TimelineItem.AssistantItem) {
             modifier = Modifier.weight(1f).widthIn(max = 720.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item.blocks.forEach { block ->
-                when (block.kind) {
-                    BlockKind.Thinking -> if (block.text.isNotBlank()) ThinkingCard(block)
-                    BlockKind.Text -> if (block.text.isNotBlank()) MarkdownView(block.text)
-                    BlockKind.ToolCall -> block.tool?.let { ToolCallCard(it) }
+            parts.forEach { part ->
+                when (part) {
+                    is AssistantRunPart.Process -> {
+                        if (!processRendered) {
+                            AgentProcessBlock(processDetails, isStreaming)
+                            processRendered = true
+                        }
+                    }
+                    is AssistantRunPart.Text -> MarkdownView(part.block.text)
                 }
             }
-            if (item.streaming) StreamingCaret()
-            item.stopReason?.let { reason ->
-                val label = when (reason) {
-                    "stop", "" -> ""
-                    "length" -> S.stopLength
-                    "toolUse" -> S.stopToolUse
-                    "error" -> S.stopError
-                    "aborted" -> S.stopAborted
-                    else -> reason
-                }
-                if (label.isNotEmpty()) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (!item.model.isNullOrBlank() && !item.streaming) {
-                Text(
-                    item.model!!,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                )
+            val lastPartIsText = parts.lastOrNull() is AssistantRunPart.Text
+            if (isStreaming && (processDetails.isEmpty() || lastPartIsText)) {
+                StreamingCaret()
             }
         }
     }

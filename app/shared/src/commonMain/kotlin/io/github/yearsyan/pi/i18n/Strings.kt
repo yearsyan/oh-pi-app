@@ -14,14 +14,16 @@ interface Strings {
     val welcomeBody: String
     val serverSetupTitle: String
     val serverNameLabel: String
-    val serverUrlLabel: String
+    val serverHostLabel: String
+    val serverPortLabel: String
+    val serverTlsLabel: String
     val serverTokenLabel: String
     val serverNamePlaceholder: String
-    val serverUrlPlaceholder: String
+    val serverHostPlaceholder: String
     val serverTokenPlaceholder: String
     val connectAndSave: String
-    val serverUrlInvalid: String
-    val serverRequired: String
+    val serverHostRequired: String
+    val serverPortInvalid: String
     val connectionModeLabel: String
     val directConnection: String
     val sshConnection: String
@@ -84,6 +86,11 @@ interface Strings {
     val messagePlaceholderStreaming: String
     val send: String
     val stop: String
+    val addImage: String
+    val removeImage: String
+    val imageAttachment: (Int) -> String
+    val imageTooLarge: String
+    val imageReadFailed: String
     val thinking: String
     val thinkingInProgress: String
     val toolRunning: String
@@ -161,18 +168,20 @@ object EnStrings : Strings {
     override val welcomeBody = "Connect to a pi2ws gateway to chat with your pi coding agent — watch it think, call tools and write code in real time."
     override val serverSetupTitle = "Set up your first server"
     override val serverNameLabel = "Name"
-    override val serverUrlLabel = "Server address"
+    override val serverHostLabel = "Gateway host / IP"
+    override val serverPortLabel = "Port"
+    override val serverTlsLabel = "Use TLS"
     override val serverTokenLabel = "Token"
     override val serverNamePlaceholder = "My workstation"
-    override val serverUrlPlaceholder = "ws://192.168.1.10:8080"
+    override val serverHostPlaceholder = "192.168.1.10"
     override val serverTokenPlaceholder = "PI2WS_TOKEN"
     override val connectAndSave = "Save & Connect"
-    override val serverUrlInvalid = "Address must start with ws://, wss://, http:// or https://"
-    override val serverRequired = "Server address is required"
+    override val serverHostRequired = "Gateway host is required"
+    override val serverPortInvalid = "Gateway port must be between 1 and 65535"
     override val connectionModeLabel = "Connection"
     override val directConnection = "Direct"
     override val sshConnection = "SSH tunnel"
-    override val sshGatewayPlaintextHint = "Use the gateway address as seen by the SSH server, usually http://127.0.0.1:8080. SSH encrypts the connection."
+    override val sshGatewayPlaintextHint = "Use the gateway host and port as seen by the SSH server. TLS is disabled because SSH encrypts the connection."
     override val sshHostLabel = "SSH host"
     override val sshPortLabel = "Port"
     override val sshUsernameLabel = "SSH username"
@@ -227,6 +236,11 @@ object EnStrings : Strings {
     override val messagePlaceholderStreaming = "Steer the agent…"
     override val send = "Send"
     override val stop = "Stop"
+    override val addImage = "Add image"
+    override val removeImage = "Remove image"
+    override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
+    override val imageTooLarge = "The image must be smaller than 8 MB"
+    override val imageReadFailed = "Could not read this image"
     override val thinking = "Thinking"
     override val thinkingInProgress = "Thinking…"
     override val toolRunning = "Running"
@@ -301,18 +315,20 @@ object ZhStrings : Strings {
     override val welcomeBody = "连接 pi2ws 网关，与你的 pi 编码智能体对话——实时查看它的思考、工具调用与代码编写过程。"
     override val serverSetupTitle = "配置第一台服务器"
     override val serverNameLabel = "名称"
-    override val serverUrlLabel = "服务器地址"
+    override val serverHostLabel = "网关主机 / IP"
+    override val serverPortLabel = "端口"
+    override val serverTlsLabel = "启用 TLS"
     override val serverTokenLabel = "令牌"
     override val serverNamePlaceholder = "我的工作站"
-    override val serverUrlPlaceholder = "ws://192.168.1.10:8080"
+    override val serverHostPlaceholder = "192.168.1.10"
     override val serverTokenPlaceholder = "PI2WS_TOKEN"
     override val connectAndSave = "保存并连接"
-    override val serverUrlInvalid = "地址需以 ws://、wss://、http:// 或 https:// 开头"
-    override val serverRequired = "服务器地址不能为空"
+    override val serverHostRequired = "网关主机不能为空"
+    override val serverPortInvalid = "网关端口必须在 1 到 65535 之间"
     override val connectionModeLabel = "连接方式"
     override val directConnection = "直接连接"
     override val sshConnection = "SSH 隧道"
-    override val sshGatewayPlaintextHint = "填写 SSH 服务器看到的网关地址，通常为 http://127.0.0.1:8080；连接已由 SSH 加密。"
+    override val sshGatewayPlaintextHint = "填写 SSH 服务器看到的网关主机和端口；连接已由 SSH 加密，因此不启用 TLS。"
     override val sshHostLabel = "SSH 主机"
     override val sshPortLabel = "端口"
     override val sshUsernameLabel = "SSH 用户名"
@@ -367,6 +383,11 @@ object ZhStrings : Strings {
     override val messagePlaceholderStreaming = "引导智能体…"
     override val send = "发送"
     override val stop = "停止"
+    override val addImage = "添加图片"
+    override val removeImage = "移除图片"
+    override val imageAttachment = { count: Int -> "图片 × $count" }
+    override val imageTooLarge = "图片不能超过 8 MB"
+    override val imageReadFailed = "无法读取这张图片"
     override val thinking = "思考过程"
     override val thinkingInProgress = "正在思考…"
     override val toolRunning = "运行中"

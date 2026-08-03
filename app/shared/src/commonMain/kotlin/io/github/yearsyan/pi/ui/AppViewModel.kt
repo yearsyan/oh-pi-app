@@ -67,18 +67,18 @@ class AppViewModel(
     val activeServer: ServerProfile? get() = servers.firstOrNull { it.id == activeServerId }
     val hasServers: Boolean get() = servers.isNotEmpty()
 
-    /** Selects a chat and starts or attaches its gateway session. */
+    /** Selects a chat, preparing new chats locally and attaching saved sessions. */
     fun openChat(sessionId: String, isNew: Boolean = false, workDir: String = "") {
         activeChatId = sessionId
         val c = controllerFor(sessionId)
-        if (isNew) c.connect("create", null, workDir) else if (!c.active) c.connect("attach", sessionId)
+        if (isNew) c.prepareCreate(workDir) else if (!c.active) c.connect("attach", sessionId)
     }
 
     fun selectChatWide(sessionId: String?, isNew: Boolean = false, workDir: String = "") {
         activeChatId = sessionId
         sessionId ?: return
         val c = controllerFor(sessionId)
-        if (isNew) c.connect("create", null, workDir) else if (!c.active) c.connect("attach", sessionId)
+        if (isNew) c.prepareCreate(workDir) else if (!c.active) c.connect("attach", sessionId)
     }
 
     // ---- servers ----
@@ -214,6 +214,10 @@ class AppViewModel(
     }
 
     fun renameSession(id: String, name: String) {
+        controllers[id]?.takeIf { it.isDraft }?.let {
+            it.setSessionNameLocally(name)
+            return
+        }
         val idx = sessions.indexOfFirst { it.id == id }
         val previous = sessions.getOrNull(idx)
         if (idx >= 0) {
@@ -249,6 +253,12 @@ class AppViewModel(
     }
 
     fun removeSession(id: String) {
+        controllers[id]?.takeIf { it.isDraft }?.let { draft ->
+            controllers.remove(id)
+            draft.disconnect()
+            if (activeChatId == id) activeChatId = null
+            return
+        }
         val removed = sessions.firstOrNull { it.id == id }
         sessions.removeAll { it.id == id }
         controllers.remove(id)?.disconnect()
@@ -314,6 +324,7 @@ class AppViewModel(
                         connectionClosed = s.connectionClosed,
                         commandRejected = s.commandRejected,
                         abortSent = s.abortSent,
+                        imageAttachment = s.imageAttachment,
                         compacting = s.compacting,
                         compacted = s.compacted,
                         retryOk = s.retryOk,
@@ -328,7 +339,7 @@ class AppViewModel(
         }
     }
 
-    /** Creates a brand-new session entry point and returns its temporary route ID. */
+    /** Creates a local-only draft and returns its temporary route ID. */
     fun startNewChat(workDir: String = ""): String {
         activeServerId.takeIf { it.isNotBlank() }?.let { store.saveLastWorkspace(it, workDir) }
         val tempId = "new-" + Random.nextLong().toString(16)

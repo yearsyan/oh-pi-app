@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -31,15 +33,18 @@ import io.github.yearsyan.pi.data.SshAuthentication
 import io.github.yearsyan.pi.data.SshServerProfile
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.i18n.Strings
-import io.github.yearsyan.pi.net.isValidGatewayUrl
-import io.github.yearsyan.pi.net.normalizeGatewayUrl
+import io.github.yearsyan.pi.net.buildGatewayUrl
+import io.github.yearsyan.pi.net.parseGatewayAddress
 import kotlin.random.Random
 
 internal class ServerEditorState(initial: ServerProfile?) {
     private val id = initial?.id ?: Random.nextLong().toString(16)
+    private val initialGateway = initial?.url?.let(::parseGatewayAddress)
 
     var name by mutableStateOf(initial?.name.orEmpty())
-    var url by mutableStateOf(initial?.url.orEmpty())
+    var gatewayHost by mutableStateOf(initialGateway?.host.orEmpty())
+    var gatewayPort by mutableStateOf((initialGateway?.port ?: 8080).toString())
+    var gatewayTls by mutableStateOf(initialGateway?.tls ?: false)
     var token by mutableStateOf(initial?.token.orEmpty())
     var connectionMode by mutableStateOf(initial?.connectionMode ?: ServerConnectionMode.Direct)
     var sshHost by mutableStateOf(initial?.ssh?.host.orEmpty())
@@ -58,15 +63,15 @@ internal class ServerEditorState(initial: ServerProfile?) {
     }
 
     fun build(strings: Strings): ServerProfile? {
-        val parsedPort = sshPort.toIntOrNull()
+        val parsedGatewayPort = gatewayPort.toIntOrNull()
+        val parsedSshPort = sshPort.toIntOrNull()
         error =
             when {
-                url.isBlank() -> strings.serverRequired
-                !isValidGatewayUrl(url) -> strings.serverUrlInvalid
-                connectionMode == ServerConnectionMode.Ssh &&
-                    normalizeGatewayUrl(url).startsWith("wss://") -> strings.sshGatewayTlsInvalid
+                gatewayHost.isBlank() -> strings.serverHostRequired
+                parsedGatewayPort !in 1..65535 -> strings.serverPortInvalid
+                connectionMode == ServerConnectionMode.Ssh && gatewayTls -> strings.sshGatewayTlsInvalid
                 connectionMode == ServerConnectionMode.Ssh && sshHost.isBlank() -> strings.sshHostRequired
-                connectionMode == ServerConnectionMode.Ssh && parsedPort !in 1..65535 -> strings.sshPortInvalid
+                connectionMode == ServerConnectionMode.Ssh && parsedSshPort !in 1..65535 -> strings.sshPortInvalid
                 connectionMode == ServerConnectionMode.Ssh && sshUsername.isBlank() ->
                     strings.sshUsernameRequired
                 connectionMode == ServerConnectionMode.Ssh &&
@@ -83,7 +88,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
             if (connectionMode == ServerConnectionMode.Ssh) {
                 SshServerProfile(
                     host = sshHost.trim(),
-                    port = parsedPort ?: 22,
+                    port = parsedSshPort ?: 22,
                     username = sshUsername.trim(),
                     authentication = sshAuthentication,
                     password = sshPassword.takeIf { sshAuthentication == SshAuthentication.Password }.orEmpty(),
@@ -103,7 +108,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
         return ServerProfile(
             id = id,
             name = name.trim(),
-            url = url.trim(),
+            url = buildGatewayUrl(gatewayHost, parsedGatewayPort ?: 8080, gatewayTls),
             token = token.trim(),
             connectionMode = connectionMode,
             ssh = ssh,
@@ -142,28 +147,61 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
         options.forEachIndexed { index, (mode, label) ->
             SegmentedButton(
                 selected = editor.connectionMode == mode,
-                onClick = { editor.connectionMode = mode; editor.clearError() },
+                onClick = {
+                    editor.connectionMode = mode
+                    if (mode == ServerConnectionMode.Ssh) editor.gatewayTls = false
+                    editor.clearError()
+                },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
             ) { Text(label) }
         }
     }
     Spacer(Modifier.height(10.dp))
 
-    OutlinedTextField(
-        value = editor.url,
-        onValueChange = { editor.url = it; editor.clearError() },
-        label = { Text(S.serverUrlLabel) },
-        placeholder = { Text(S.serverUrlPlaceholder) },
-        singleLine = true,
-        isError = editor.error != null && editor.url.isBlank(),
-        supportingText =
-            if (editor.connectionMode == ServerConnectionMode.Ssh) {
-                { Text(S.sshGatewayPlaintextHint) }
-            } else {
-                null
-            },
+    Row(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = editor.gatewayHost,
+            onValueChange = { editor.gatewayHost = it; editor.clearError() },
+            label = { Text(S.serverHostLabel) },
+            placeholder = { Text(S.serverHostPlaceholder) },
+            singleLine = true,
+            isError = editor.error == S.serverHostRequired,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(10.dp))
+        OutlinedTextField(
+            value = editor.gatewayPort,
+            onValueChange = { editor.gatewayPort = it.filter(Char::isDigit); editor.clearError() },
+            label = { Text(S.serverPortLabel) },
+            singleLine = true,
+            isError = editor.error == S.serverPortInvalid,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.weight(0.38f),
+        )
+    }
+    Spacer(Modifier.height(10.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
-    )
+    ) {
+        Text(
+            S.serverTlsLabel,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(
+            checked = editor.gatewayTls,
+            onCheckedChange = { editor.gatewayTls = it; editor.clearError() },
+            enabled = editor.connectionMode == ServerConnectionMode.Direct,
+        )
+    }
+    if (editor.connectionMode == ServerConnectionMode.Ssh) {
+        Text(
+            S.sshGatewayPlaintextHint,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     Spacer(Modifier.height(10.dp))
     OutlinedTextField(
         value = editor.token,

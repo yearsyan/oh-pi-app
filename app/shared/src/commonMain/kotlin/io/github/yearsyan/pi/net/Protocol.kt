@@ -1,5 +1,6 @@
 package io.github.yearsyan.pi.net
 
+import io.ktor.http.Url
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -83,9 +84,41 @@ fun normalizeGatewayUrl(raw: String): String {
     return url
 }
 
+internal data class GatewayAddress(
+    val host: String,
+    val port: Int,
+    val tls: Boolean,
+)
+
+/** Splits a persisted legacy gateway URL into the fields shown by the editor. */
+internal fun parseGatewayAddress(raw: String): GatewayAddress? {
+    val url = runCatching { Url(normalizeGatewayUrl(raw)) }.getOrNull() ?: return null
+    val scheme = url.protocol.name.lowercase()
+    if (scheme != "ws" && scheme != "wss") return null
+    val host = url.host.removePrefix("[").removeSuffix("]")
+    if (host.isBlank() || url.port !in 1..65535) return null
+    return GatewayAddress(host = host, port = url.port, tls = scheme == "wss")
+}
+
+/** Builds the protocol-bearing representation kept internally by ServerProfile. */
+internal fun buildGatewayUrl(host: String, port: Int, tls: Boolean): String {
+    val cleanHost = host.trim().removePrefix("[").removeSuffix("]")
+    val authorityHost = if (':' in cleanHost) "[$cleanHost]" else cleanHost
+    return "${if (tls) "wss" else "ws"}://$authorityHost:$port"
+}
+
+/** User-facing gateway label that avoids exposing the internal HTTP/WS scheme. */
+internal fun gatewayAddressLabel(raw: String): String {
+    val address = parseGatewayAddress(raw) ?: return raw
+    val host = if (':' in address.host) "[${address.host}]" else address.host
+    return buildString {
+        append(host).append(':').append(address.port)
+        if (address.tls) append(" · TLS")
+    }
+}
+
 fun isValidGatewayUrl(raw: String): Boolean {
-    val url = normalizeGatewayUrl(raw)
-    return (url.startsWith("ws://") || url.startsWith("wss://")) && url.length > 6
+    return parseGatewayAddress(raw) != null
 }
 
 fun buildWsUrl(base: String, token: String, action: String, sessionId: String?, workDir: String = ""): String {
