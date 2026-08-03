@@ -64,8 +64,19 @@ SSH 模式下网关地址必须使用 `http://` 或 `ws://`。SSH 已加密整�
 - Desktop：`./gradlew :desktopApp:run`。
 - iOS 18.5+：使用 `/iosApp` Xcode 工程入口。
 
-当前 Desktop 原生包已配置 macOS arm64 / x86_64 与 Linux x86_64；Windows MSI
-仍需补充 WinSock worker 后端，尚未启用 SSH 隧道构建。
+Desktop 原生包已配置 macOS arm64 / x86_64、Linux x86_64 与 Windows x86_64。
+Windows 包会编译 WinSock worker 与 JNI DLL，并把 DLL、第三方许可证和裁剪后的 JRE
+一并装入 MSI。构建机需要 Java 21、Visual Studio 2022 C++ 工具链、CMake，以及
+WiX Toolset 3；PowerShell 构建命令如下：
+
+```powershell
+$env:WIX_PATH = "C:\path\to\wix314"
+.\gradlew.bat :desktopApp:packageMsi --configure-on-demand
+```
+
+输出位于
+`desktopApp/build/compose/binaries/main/msi/io.github.yearsyan.pi-<version>.msi`。
+`WIX_PATH` 必须指向包含 `candle.exe` 与 `light.exe` 的 WiX 目录。
 
 ## 备注
 

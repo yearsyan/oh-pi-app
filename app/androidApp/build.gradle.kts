@@ -1,6 +1,22 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
+buildscript {
+    repositories {
+        maven("https://storage.googleapis.com/r8-releases/raw") {
+            content {
+                includeModule("com.android.tools", "r8")
+            }
+        }
+        mavenCentral()
+    }
+    dependencies {
+        // Kotlin 2.4 requires R8 9.1.29 or newer. Keep this Android-only so
+        // desktop packaging does not resolve the Android shrinker toolchain.
+        classpath("com.android.tools:r8:9.1.29")
+    }
+}
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeCompiler)

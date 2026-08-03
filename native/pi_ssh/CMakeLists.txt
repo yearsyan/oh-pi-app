@@ -13,6 +13,14 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    # The desktop DLL is extracted from the application resources at runtime;
+    # link the CRT statically so a separate VC++ Redistributable is unnecessary.
+    set(
+        CMAKE_MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+endif()
 
 find_package(Threads REQUIRED)
 
@@ -37,13 +45,27 @@ else()
     set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
     set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
-    set(LINK_WITH_PTHREAD ON CACHE BOOL "" FORCE)
+    if(WIN32)
+        # libssh installs its CRITICAL_SECTION callbacks through Mbed TLS's
+        # alternate threading API on Windows.
+        set(LINK_WITH_PTHREAD OFF CACHE BOOL "" FORCE)
+    else()
+        set(LINK_WITH_PTHREAD ON CACHE BOOL "" FORCE)
+    endif()
     set(
         MBEDTLS_USER_CONFIG_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/include/pi_ssh_mbedtls_config.h"
         CACHE FILEPATH "" FORCE
     )
     FetchContent_MakeAvailable(pi_ssh_mbedtls)
+    if(WIN32)
+        # MBEDTLS_THREADING_ALT includes threading_alt.h from consumers as
+        # well as while compiling mbedcrypto.
+        target_include_directories(
+            mbedcrypto
+            PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        )
+    endif()
 
     list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
     set(WITH_MBEDTLS ON CACHE BOOL "" FORCE)
@@ -79,6 +101,9 @@ else()
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_libssh.cmake"
     )
     FetchContent_MakeAvailable(pi_ssh_libssh)
+    if(MSVC)
+        target_compile_options(ssh PRIVATE /utf-8)
+    endif()
     # libssh's primary `ssh` target follows BUILD_SHARED_LIBS and is static in
     # this build. Keeping one archive avoids shipping a second native library.
     set(PI_SSH_LIBSSH_TARGET ssh)
@@ -90,7 +115,18 @@ else()
     set(PI_SSH_LIBRARY_TYPE STATIC)
 endif()
 
-add_library(pi_ssh ${PI_SSH_LIBRARY_TYPE} src/pi_ssh.c)
+if(WIN32)
+    set(PI_SSH_PLATFORM_SOURCE src/pi_ssh_platform_windows.c)
+else()
+    set(PI_SSH_PLATFORM_SOURCE src/pi_ssh_platform_posix.c)
+endif()
+
+add_library(
+    pi_ssh
+    ${PI_SSH_LIBRARY_TYPE}
+    src/pi_ssh.c
+    ${PI_SSH_PLATFORM_SOURCE}
+)
 target_compile_definitions(pi_ssh PRIVATE PI_SSH_BUILDING_LIBRARY)
 set_target_properties(
     pi_ssh
@@ -105,6 +141,9 @@ target_include_directories(
         "$<INSTALL_INTERFACE:include>"
 )
 target_link_libraries(pi_ssh PRIVATE ${PI_SSH_LIBSSH_TARGET} Threads::Threads)
+if(WIN32)
+    target_link_libraries(pi_ssh PRIVATE ws2_32)
+endif()
 
 if(PI_SSH_ENABLE_JNI)
     target_sources(pi_ssh PRIVATE src/pi_ssh_jni.c)
@@ -239,6 +278,21 @@ if(PI_SSH_BUILD_TESTS)
     target_link_libraries(pi_ssh_config_test PRIVATE pi_ssh)
     add_test(NAME pi_ssh_config_test COMMAND pi_ssh_config_test)
 
+    add_executable(
+        pi_ssh_platform_test
+        tests/pi_ssh_platform_test.c
+        ${PI_SSH_PLATFORM_SOURCE}
+    )
+    target_include_directories(pi_ssh_platform_test PRIVATE src)
+    target_link_libraries(
+        pi_ssh_platform_test
+        PRIVATE ${PI_SSH_LIBSSH_TARGET} Threads::Threads
+    )
+    if(WIN32)
+        target_link_libraries(pi_ssh_platform_test PRIVATE ws2_32)
+    endif()
+    add_test(NAME pi_ssh_platform_test COMMAND pi_ssh_platform_test)
+
     # This executable is run explicitly by CI/dev scripts that provide an
     # isolated sshd and HTTP server; it is not registered as a hermetic ctest.
     add_executable(
@@ -246,4 +300,7 @@ if(PI_SSH_BUILD_TESTS)
         tests/pi_ssh_tunnel_integration_test.c
     )
     target_link_libraries(pi_ssh_tunnel_integration_test PRIVATE pi_ssh)
+    if(WIN32)
+        target_link_libraries(pi_ssh_tunnel_integration_test PRIVATE ws2_32)
+    endif()
 endif()

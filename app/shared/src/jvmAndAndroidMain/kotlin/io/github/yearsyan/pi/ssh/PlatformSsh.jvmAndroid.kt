@@ -142,15 +142,9 @@ internal object NativeSshLibraryLoader {
             return
         }
 
-        val os = System.getProperty("os.name").orEmpty().lowercase()
-        val architecture = System.getProperty("os.arch").orEmpty().lowercase()
-        val classifier =
-            when {
-                os.contains("mac") && architecture in setOf("aarch64", "arm64") -> "macos-aarch64"
-                os.contains("mac") && architecture in setOf("x86_64", "amd64") -> "macos-x86_64"
-                os.contains("linux") && architecture in setOf("x86_64", "amd64") -> "linux-x86_64"
-                else -> error("SSH native library is not packaged for $os/$architecture")
-            }
+        val os = System.getProperty("os.name").orEmpty()
+        val architecture = System.getProperty("os.arch").orEmpty()
+        val classifier = nativeSshClassifier(os, architecture)
         val libraryName = System.mapLibraryName("pi_ssh")
         val resourcePath = "/native/$classifier/$libraryName"
         val input =
@@ -161,5 +155,20 @@ internal object NativeSshLibraryLoader {
         input.use { source -> library.outputStream().use(source::copyTo) }
         library.deleteOnExit()
         System.load(library.absolutePath)
+    }
+}
+
+internal fun nativeSshClassifier(
+    osName: String,
+    architectureName: String,
+): String {
+    val os = osName.lowercase()
+    val architecture = architectureName.lowercase()
+    return when {
+        os.contains("mac") && architecture in setOf("aarch64", "arm64") -> "macos-aarch64"
+        os.contains("mac") && architecture in setOf("x86_64", "amd64") -> "macos-x86_64"
+        os.contains("linux") && architecture in setOf("x86_64", "amd64") -> "linux-x86_64"
+        os.contains("windows") && architecture in setOf("x86_64", "amd64") -> "windows-x86_64"
+        else -> error("SSH native library is not packaged for $os/$architecture")
     }
 }

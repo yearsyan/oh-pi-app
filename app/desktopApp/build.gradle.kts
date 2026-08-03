@@ -8,6 +8,7 @@ val piSshClassifier =
         hostOs.contains("mac") && hostArch in setOf("aarch64", "arm64") -> "macos-aarch64"
         hostOs.contains("mac") && hostArch in setOf("x86_64", "amd64") -> "macos-x86_64"
         hostOs.contains("linux") && hostArch in setOf("x86_64", "amd64") -> "linux-x86_64"
+        hostOs.contains("windows") && hostArch in setOf("x86_64", "amd64") -> "windows-x86_64"
         else -> error("pi_ssh desktop build is not configured for $hostOs/$hostArch")
     }
 val piSshLibraryName =
@@ -36,6 +37,8 @@ dependencies {
     implementation(libs.kotlinx.coroutinesSwing)
 
     implementation(libs.compose.uiToolingPreview)
+
+    testImplementation(libs.kotlin.testJunit)
 }
 
 val configurePiSshDesktop by tasks.registering(Exec::class) {
@@ -101,6 +104,7 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "io.github.yearsyan.pi"
             packageVersion = "1.0.0"
+            vendor = "yearsyan"
         }
     }
 }

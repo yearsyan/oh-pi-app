@@ -1,21 +1,14 @@
 #include "pi_ssh.h"
+#include "pi_ssh_platform.h"
 
 #include <libssh/libssh.h>
+#include <libssh/poll.h>
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <time.h>
-#include <unistd.h>
 
 #define PI_SSH_BUFFER_CAPACITY (64u * 1024u)
 #define PI_SSH_MAX_CONNECTIONS 32u
@@ -33,7 +26,7 @@ typedef enum pi_ssh_connection_state {
 } pi_ssh_connection_state;
 
 typedef struct pi_ssh_connection {
-    int fd;
+    pi_ssh_socket socket_value;
     bool registered;
     short registered_events;
     short revents;
@@ -49,16 +42,16 @@ typedef struct pi_ssh_connection {
 } pi_ssh_connection;
 
 struct pi_ssh_tunnel {
-    pthread_mutex_t mutex;
-    pthread_t worker;
+    pi_ssh_mutex mutex;
+    pi_ssh_thread worker;
     bool worker_started;
     int32_t state;
     pi_ssh_error last_error;
 
     ssh_session session;
-    int listener_fd;
-    int wake_read_fd;
-    int wake_write_fd;
+    pi_ssh_socket listener_socket;
+    pi_ssh_socket wake_read_socket;
+    pi_ssh_socket wake_write_socket;
     uint16_t local_port;
     char *remote_host;
     uint16_t remote_port;
@@ -67,13 +60,6 @@ struct pi_ssh_tunnel {
     short listener_revents;
     short wake_revents;
 };
-
-static pthread_once_t pi_ssh_init_once = PTHREAD_ONCE_INIT;
-
-static void pi_ssh_initialize_library(void)
-{
-    (void)ssh_init();
-}
 
 static void pi_ssh_secure_zero(void *value, size_t size)
 {
@@ -165,42 +151,9 @@ static void pi_ssh_set_tunnel_error(pi_ssh_tunnel *tunnel,
         va_end(arguments);
     }
 
-    (void)pthread_mutex_lock(&tunnel->mutex);
+    pi_ssh_mutex_lock(&tunnel->mutex);
     tunnel->last_error = next;
-    (void)pthread_mutex_unlock(&tunnel->mutex);
-}
-
-static int pi_ssh_set_nonblocking_cloexec(int fd)
-{
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        return -1;
-    }
-    flags = fcntl(fd, F_GETFD, 0);
-    if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
-        return -1;
-    }
-    return 0;
-}
-
-static int pi_ssh_configure_socket(int fd)
-{
-#if defined(SO_NOSIGPIPE)
-    int enabled = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled)) < 0) {
-        return -1;
-    }
-#endif
-    return pi_ssh_set_nonblocking_cloexec(fd);
-}
-
-static ssize_t pi_ssh_socket_send(int fd, const void *buffer, size_t length)
-{
-#if defined(MSG_NOSIGNAL)
-    return send(fd, buffer, length, MSG_NOSIGNAL);
-#else
-    return send(fd, buffer, length, 0);
-#endif
+    pi_ssh_mutex_unlock(&tunnel->mutex);
 }
 
 static size_t pi_ssh_ring_free(const pi_ssh_ring_buffer *buffer)
@@ -264,7 +217,7 @@ static void pi_ssh_connection_unregister(ssh_event event,
                                          pi_ssh_connection *connection)
 {
     if (connection->registered) {
-        (void)ssh_event_remove_fd(event, connection->fd);
+        (void)ssh_event_remove_fd(event, connection->socket_value);
         connection->registered = false;
         connection->registered_events = 0;
     }
@@ -292,7 +245,7 @@ static int pi_ssh_connection_update_events(ssh_event event,
         return SSH_OK;
     }
     result = ssh_event_add_fd(event,
-                              connection->fd,
+                              connection->socket_value,
                               wanted,
                               pi_ssh_connection_fd_callback,
                               connection);
@@ -310,8 +263,8 @@ static void pi_ssh_connection_destroy(ssh_event event,
         return;
     }
     pi_ssh_connection_unregister(event, connection);
-    if (connection->fd >= 0) {
-        (void)close(connection->fd);
+    if (pi_ssh_socket_is_valid(connection->socket_value)) {
+        pi_ssh_socket_close(connection->socket_value);
     }
     if (connection->channel != NULL) {
         ssh_channel_free(connection->channel);
@@ -336,30 +289,32 @@ static int pi_ssh_accept_connections(pi_ssh_tunnel *tunnel,
                                      size_t *connection_count)
 {
     for (;;) {
-        int fd = accept(tunnel->listener_fd, NULL, NULL);
+        pi_ssh_socket socket_value =
+            pi_ssh_socket_accept(tunnel->listener_socket);
         pi_ssh_connection *connection;
 
-        if (fd < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (!pi_ssh_socket_is_valid(socket_value)) {
+            int error_code = pi_ssh_platform_last_error();
+            if (pi_ssh_platform_error_is_would_block(error_code)) {
                 return 0;
             }
-            if (errno == EINTR) {
+            if (pi_ssh_platform_error_is_interrupted(error_code)) {
                 continue;
             }
             return -1;
         }
         if (*connection_count >= PI_SSH_MAX_CONNECTIONS ||
-            pi_ssh_configure_socket(fd) < 0) {
-            (void)close(fd);
+            pi_ssh_socket_configure(socket_value) < 0) {
+            pi_ssh_socket_close(socket_value);
             continue;
         }
 
         connection = (pi_ssh_connection *)calloc(1, sizeof(*connection));
         if (connection == NULL) {
-            (void)close(fd);
+            pi_ssh_socket_close(socket_value);
             return -1;
         }
-        connection->fd = fd;
+        connection->socket_value = socket_value;
         connection->state = PI_SSH_CONNECTION_OPENING;
         connection->channel = ssh_channel_new(tunnel->session);
         if (connection->channel == NULL) {
@@ -415,10 +370,10 @@ static bool pi_ssh_connection_read_local(pi_ssh_connection *connection)
     while (pi_ssh_ring_free(&connection->to_ssh) > 0) {
         size_t count = pi_ssh_ring_write_contiguous(&connection->to_ssh);
         size_t offset = pi_ssh_ring_write_offset(&connection->to_ssh);
-        ssize_t read_count = recv(connection->fd,
-                                  connection->to_ssh.bytes + offset,
-                                  count,
-                                  0);
+        int read_count = pi_ssh_socket_receive(
+            connection->socket_value,
+            connection->to_ssh.bytes + offset,
+            count);
         if (read_count > 0) {
             pi_ssh_ring_did_write(&connection->to_ssh, (size_t)read_count);
             continue;
@@ -427,11 +382,14 @@ static bool pi_ssh_connection_read_local(pi_ssh_connection *connection)
             connection->local_read_eof = true;
             break;
         }
-        if (errno == EINTR) {
-            continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            break;
+        {
+            int error_code = pi_ssh_platform_last_error();
+            if (pi_ssh_platform_error_is_interrupted(error_code)) {
+                continue;
+            }
+            if (pi_ssh_platform_error_is_would_block(error_code)) {
+                break;
+            }
         }
         return false;
     }
@@ -509,19 +467,22 @@ static bool pi_ssh_connection_write_local(pi_ssh_connection *connection)
     if ((connection->revents & POLLOUT) != 0) {
         while (connection->to_local.length > 0) {
             size_t count = pi_ssh_ring_read_contiguous(&connection->to_local);
-            ssize_t written = pi_ssh_socket_send(
-                connection->fd,
+            int written = pi_ssh_socket_send(
+                connection->socket_value,
                 connection->to_local.bytes + connection->to_local.head,
                 count);
             if (written > 0) {
                 pi_ssh_ring_did_read(&connection->to_local, (size_t)written);
                 continue;
             }
-            if (written < 0 && errno == EINTR) {
-                continue;
-            }
-            if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                break;
+            if (written < 0) {
+                int error_code = pi_ssh_platform_last_error();
+                if (pi_ssh_platform_error_is_interrupted(error_code)) {
+                    continue;
+                }
+                if (pi_ssh_platform_error_is_would_block(error_code)) {
+                    break;
+                }
             }
             return false;
         }
@@ -529,8 +490,11 @@ static bool pi_ssh_connection_write_local(pi_ssh_connection *connection)
 
     if (connection->channel_read_eof && connection->to_local.length == 0 &&
         !connection->local_write_shutdown) {
-        if (shutdown(connection->fd, SHUT_WR) < 0 && errno != ENOTCONN) {
-            return false;
+        if (pi_ssh_socket_shutdown_write(connection->socket_value) < 0) {
+            int error_code = pi_ssh_platform_last_error();
+            if (!pi_ssh_platform_error_is_not_connected(error_code)) {
+                return false;
+            }
         }
         connection->local_write_shutdown = true;
     }
@@ -585,61 +549,37 @@ static void pi_ssh_remove_connection(ssh_event event,
 static bool pi_ssh_tunnel_stop_requested(pi_ssh_tunnel *tunnel)
 {
     bool result;
-    (void)pthread_mutex_lock(&tunnel->mutex);
+    pi_ssh_mutex_lock(&tunnel->mutex);
     result = tunnel->state == PI_SSH_STATE_STOPPING;
-    (void)pthread_mutex_unlock(&tunnel->mutex);
+    pi_ssh_mutex_unlock(&tunnel->mutex);
     return result;
 }
 
-static void pi_ssh_drain_wake_pipe(pi_ssh_tunnel *tunnel)
-{
-    unsigned char buffer[64];
-    for (;;) {
-        ssize_t count = read(tunnel->wake_read_fd, buffer, sizeof(buffer));
-        if (count > 0) {
-            continue;
-        }
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        break;
-    }
-}
-
-static uint64_t pi_ssh_monotonic_seconds(void)
-{
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0;
-    }
-    return (uint64_t)value.tv_sec;
-}
-
-static void *pi_ssh_worker_main(void *userdata)
+static void pi_ssh_worker_main(void *userdata)
 {
     pi_ssh_tunnel *tunnel = (pi_ssh_tunnel *)userdata;
     ssh_event event = NULL;
     pi_ssh_connection *connections = NULL;
     size_t connection_count = 0;
     bool failed = false;
-    uint64_t last_keepalive = pi_ssh_monotonic_seconds();
+    uint64_t last_keepalive = pi_ssh_platform_monotonic_seconds();
 
     event = ssh_event_new();
     if (event == NULL ||
         ssh_event_add_session(event, tunnel->session) != SSH_OK ||
         ssh_event_add_fd(event,
-                         tunnel->listener_fd,
+                         tunnel->listener_socket,
                          POLLIN,
                          pi_ssh_event_fd_callback,
                          &tunnel->listener_revents) != SSH_OK ||
         ssh_event_add_fd(event,
-                         tunnel->wake_read_fd,
+                         tunnel->wake_read_socket,
                          POLLIN,
                          pi_ssh_event_fd_callback,
                          &tunnel->wake_revents) != SSH_OK) {
         pi_ssh_set_tunnel_error(tunnel,
                                 PI_SSH_ERROR_INTERNAL,
-                                errno,
+                                pi_ssh_platform_last_error(),
                                 "Could not initialize SSH forwarding event loop");
         failed = true;
         goto cleanup;
@@ -650,17 +590,21 @@ static void *pi_ssh_worker_main(void *userdata)
         pi_ssh_connection **cursor;
         uint64_t now;
 
-        if (poll_result == SSH_ERROR && errno != EINTR) {
+        if (poll_result == SSH_ERROR) {
+            int error_code = pi_ssh_platform_last_error();
+            if (pi_ssh_platform_error_is_interrupted(error_code)) {
+                continue;
+            }
             pi_ssh_set_tunnel_error(tunnel,
                                     PI_SSH_ERROR_SSH_DISCONNECTED,
-                                    errno,
+                                    error_code,
                                     "SSH event loop failed: %s",
                                     ssh_get_error(tunnel->session));
             failed = true;
             break;
         }
         if (tunnel->wake_revents != 0) {
-            pi_ssh_drain_wake_pipe(tunnel);
+            pi_ssh_wake_pair_drain(tunnel->wake_read_socket);
             tunnel->wake_revents = 0;
         }
         if (pi_ssh_tunnel_stop_requested(tunnel)) {
@@ -681,7 +625,7 @@ static void *pi_ssh_worker_main(void *userdata)
                                       &connection_count) < 0) {
             pi_ssh_set_tunnel_error(tunnel,
                                     PI_SSH_ERROR_INTERNAL,
-                                    errno,
+                                    pi_ssh_platform_last_error(),
                                     "Could not accept a local tunnel connection");
             failed = true;
             break;
@@ -709,7 +653,7 @@ static void *pi_ssh_worker_main(void *userdata)
             break;
         }
 
-        now = pi_ssh_monotonic_seconds();
+        now = pi_ssh_platform_monotonic_seconds();
         if (tunnel->keepalive_interval_seconds > 0 && now > 0 &&
             now - last_keepalive >= tunnel->keepalive_interval_seconds) {
             int keepalive_result = ssh_send_ignore(tunnel->session, "pi2ws");
@@ -731,20 +675,19 @@ static void *pi_ssh_worker_main(void *userdata)
 cleanup:
     pi_ssh_destroy_connections(event, connections);
     if (event != NULL) {
-        (void)ssh_event_remove_fd(event, tunnel->listener_fd);
-        (void)ssh_event_remove_fd(event, tunnel->wake_read_fd);
+        (void)ssh_event_remove_fd(event, tunnel->listener_socket);
+        (void)ssh_event_remove_fd(event, tunnel->wake_read_socket);
         (void)ssh_event_remove_session(event, tunnel->session);
         ssh_event_free(event);
     }
 
-    (void)pthread_mutex_lock(&tunnel->mutex);
+    pi_ssh_mutex_lock(&tunnel->mutex);
     if (failed && tunnel->state != PI_SSH_STATE_STOPPING) {
         tunnel->state = PI_SSH_STATE_FAILED;
     } else {
         tunnel->state = PI_SSH_STATE_STOPPED;
     }
-    (void)pthread_mutex_unlock(&tunnel->mutex);
-    return NULL;
+    pi_ssh_mutex_unlock(&tunnel->mutex);
 }
 
 static bool pi_ssh_string_present(const char *value)
@@ -919,53 +862,6 @@ static int pi_ssh_authenticate(ssh_session session,
     return SSH_OK;
 }
 
-static int pi_ssh_create_listener(uint16_t *local_port)
-{
-    int fd = -1;
-    int enabled = 1;
-    struct sockaddr_in address;
-    socklen_t address_length = (socklen_t)sizeof(address);
-
-    fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (fd < 0) {
-        return -1;
-    }
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) < 0 ||
-        pi_ssh_configure_socket(fd) < 0) {
-        (void)close(fd);
-        return -1;
-    }
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    address.sin_port = 0;
-    if (bind(fd, (const struct sockaddr *)&address, sizeof(address)) < 0 ||
-        listen(fd, 16) < 0 ||
-        getsockname(fd, (struct sockaddr *)&address, &address_length) < 0) {
-        (void)close(fd);
-        return -1;
-    }
-    *local_port = ntohs(address.sin_port);
-    return fd;
-}
-
-static int pi_ssh_create_wake_pipe(int *read_fd, int *write_fd)
-{
-    int descriptors[2];
-    if (pipe(descriptors) < 0) {
-        return -1;
-    }
-    if (pi_ssh_set_nonblocking_cloexec(descriptors[0]) < 0 ||
-        pi_ssh_set_nonblocking_cloexec(descriptors[1]) < 0) {
-        (void)close(descriptors[0]);
-        (void)close(descriptors[1]);
-        return -1;
-    }
-    *read_fd = descriptors[0];
-    *write_fd = descriptors[1];
-    return 0;
-}
-
 static void pi_ssh_tunnel_cleanup_unstarted(pi_ssh_tunnel *tunnel)
 {
     if (tunnel == NULL) {
@@ -978,17 +874,11 @@ static void pi_ssh_tunnel_cleanup_unstarted(pi_ssh_tunnel *tunnel)
         }
         ssh_free(tunnel->session);
     }
-    if (tunnel->listener_fd >= 0) {
-        (void)close(tunnel->listener_fd);
-    }
-    if (tunnel->wake_read_fd >= 0) {
-        (void)close(tunnel->wake_read_fd);
-    }
-    if (tunnel->wake_write_fd >= 0) {
-        (void)close(tunnel->wake_write_fd);
-    }
+    pi_ssh_socket_close(tunnel->listener_socket);
+    pi_ssh_socket_close(tunnel->wake_read_socket);
+    pi_ssh_socket_close(tunnel->wake_write_socket);
     free(tunnel->remote_host);
-    (void)pthread_mutex_destroy(&tunnel->mutex);
+    pi_ssh_mutex_destroy(&tunnel->mutex);
     pi_ssh_secure_zero(tunnel, sizeof(*tunnel));
     free(tunnel);
 }
@@ -998,13 +888,22 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
 {
     pi_ssh_tunnel *tunnel = NULL;
     char *fingerprint = NULL;
+    int platform_result;
     int thread_result;
 
     pi_ssh_error_init(error);
     if (!pi_ssh_validate_config(config, error)) {
         return NULL;
     }
-    (void)pthread_once(&pi_ssh_init_once, pi_ssh_initialize_library);
+    platform_result = pi_ssh_platform_initialize();
+    if (platform_result != 0) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INTERNAL,
+                               platform_result,
+                               NULL,
+                               "Could not initialize the SSH socket runtime");
+        return NULL;
+    }
 
     tunnel = (pi_ssh_tunnel *)calloc(1, sizeof(*tunnel));
     if (tunnel == NULL) {
@@ -1015,15 +914,16 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
                                "Could not allocate SSH tunnel");
         return NULL;
     }
-    tunnel->listener_fd = -1;
-    tunnel->wake_read_fd = -1;
-    tunnel->wake_write_fd = -1;
+    tunnel->listener_socket = PI_SSH_INVALID_SOCKET;
+    tunnel->wake_read_socket = PI_SSH_INVALID_SOCKET;
+    tunnel->wake_write_socket = PI_SSH_INVALID_SOCKET;
     tunnel->state = PI_SSH_STATE_STARTING;
     pi_ssh_error_init(&tunnel->last_error);
-    if (pthread_mutex_init(&tunnel->mutex, NULL) != 0) {
+    platform_result = pi_ssh_mutex_initialize(&tunnel->mutex);
+    if (platform_result != 0) {
         pi_ssh_set_error_value(error,
                                PI_SSH_ERROR_INTERNAL,
-                               errno,
+                               platform_result,
                                NULL,
                                "Could not initialize SSH tunnel mutex");
         free(tunnel);
@@ -1031,7 +931,7 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
     }
 
     tunnel->session = ssh_new();
-    tunnel->remote_host = strdup(config->remote_host);
+    tunnel->remote_host = pi_ssh_platform_duplicate_string(config->remote_host);
     tunnel->remote_port = config->remote_port;
     tunnel->keepalive_interval_seconds = config->keepalive_interval_seconds;
     if (tunnel->session == NULL || tunnel->remote_host == NULL) {
@@ -1047,7 +947,7 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
         ssh_connect(tunnel->session) != SSH_OK) {
         pi_ssh_set_error_value(error,
                                PI_SSH_ERROR_SSH_CONNECT,
-                               errno,
+                               pi_ssh_platform_last_error(),
                                NULL,
                                "Could not connect to SSH server: %s",
                                ssh_get_error(tunnel->session));
@@ -1092,13 +992,14 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
         pi_ssh_tunnel_cleanup_unstarted(tunnel);
         return NULL;
     }
-    tunnel->listener_fd = pi_ssh_create_listener(&tunnel->local_port);
-    if (tunnel->listener_fd < 0 ||
-        pi_ssh_create_wake_pipe(&tunnel->wake_read_fd,
-                                &tunnel->wake_write_fd) < 0) {
+    tunnel->listener_socket =
+        pi_ssh_socket_create_listener(&tunnel->local_port);
+    if (!pi_ssh_socket_is_valid(tunnel->listener_socket) ||
+        pi_ssh_wake_pair_create(&tunnel->wake_read_socket,
+                                &tunnel->wake_write_socket) < 0) {
         pi_ssh_set_error_value(error,
                                PI_SSH_ERROR_LOCAL_LISTENER,
-                               errno,
+                               pi_ssh_platform_last_error(),
                                NULL,
                                "Could not create loopback SSH tunnel listener");
         pi_ssh_tunnel_cleanup_unstarted(tunnel);
@@ -1107,10 +1008,9 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
 
     ssh_set_blocking(tunnel->session, 0);
     tunnel->state = PI_SSH_STATE_RUNNING;
-    thread_result = pthread_create(&tunnel->worker,
-                                   NULL,
-                                   pi_ssh_worker_main,
-                                   tunnel);
+    thread_result = pi_ssh_thread_start(&tunnel->worker,
+                                        pi_ssh_worker_main,
+                                        tunnel);
     if (thread_result != 0) {
         tunnel->state = PI_SSH_STATE_STOPPED;
         pi_ssh_set_error_value(error,
@@ -1136,9 +1036,9 @@ int32_t pi_ssh_tunnel_state(const pi_ssh_tunnel *tunnel)
     if (tunnel == NULL) {
         return PI_SSH_STATE_STOPPED;
     }
-    (void)pthread_mutex_lock((pthread_mutex_t *)&tunnel->mutex);
+    pi_ssh_mutex_lock((pi_ssh_mutex *)&tunnel->mutex);
     state = tunnel->state;
-    (void)pthread_mutex_unlock((pthread_mutex_t *)&tunnel->mutex);
+    pi_ssh_mutex_unlock((pi_ssh_mutex *)&tunnel->mutex);
     return state;
 }
 
@@ -1152,33 +1052,28 @@ void pi_ssh_tunnel_copy_last_error(const pi_ssh_tunnel *tunnel,
     if (tunnel == NULL) {
         return;
     }
-    (void)pthread_mutex_lock((pthread_mutex_t *)&tunnel->mutex);
+    pi_ssh_mutex_lock((pi_ssh_mutex *)&tunnel->mutex);
     *error = tunnel->last_error;
-    (void)pthread_mutex_unlock((pthread_mutex_t *)&tunnel->mutex);
+    pi_ssh_mutex_unlock((pi_ssh_mutex *)&tunnel->mutex);
 }
 
 void pi_ssh_tunnel_free(pi_ssh_tunnel *tunnel)
 {
-    unsigned char wake = 1;
-
     if (tunnel == NULL) {
         return;
     }
-    (void)pthread_mutex_lock(&tunnel->mutex);
+    pi_ssh_mutex_lock(&tunnel->mutex);
     if (tunnel->state == PI_SSH_STATE_RUNNING ||
         tunnel->state == PI_SSH_STATE_STARTING) {
         tunnel->state = PI_SSH_STATE_STOPPING;
     }
-    (void)pthread_mutex_unlock(&tunnel->mutex);
+    pi_ssh_mutex_unlock(&tunnel->mutex);
 
-    if (tunnel->wake_write_fd >= 0) {
-        ssize_t ignored;
-        do {
-            ignored = write(tunnel->wake_write_fd, &wake, sizeof(wake));
-        } while (ignored < 0 && errno == EINTR);
+    if (pi_ssh_socket_is_valid(tunnel->wake_write_socket)) {
+        pi_ssh_wake_pair_signal(tunnel->wake_write_socket);
     }
     if (tunnel->worker_started) {
-        (void)pthread_join(tunnel->worker, NULL);
+        (void)pi_ssh_thread_join(tunnel->worker);
         tunnel->worker_started = false;
     }
 
@@ -1190,17 +1085,11 @@ void pi_ssh_tunnel_free(pi_ssh_tunnel *tunnel)
         ssh_free(tunnel->session);
         tunnel->session = NULL;
     }
-    if (tunnel->listener_fd >= 0) {
-        (void)close(tunnel->listener_fd);
-    }
-    if (tunnel->wake_read_fd >= 0) {
-        (void)close(tunnel->wake_read_fd);
-    }
-    if (tunnel->wake_write_fd >= 0) {
-        (void)close(tunnel->wake_write_fd);
-    }
+    pi_ssh_socket_close(tunnel->listener_socket);
+    pi_ssh_socket_close(tunnel->wake_read_socket);
+    pi_ssh_socket_close(tunnel->wake_write_socket);
     free(tunnel->remote_host);
-    (void)pthread_mutex_destroy(&tunnel->mutex);
+    pi_ssh_mutex_destroy(&tunnel->mutex);
     pi_ssh_secure_zero(tunnel, sizeof(*tunnel));
     free(tunnel);
 }

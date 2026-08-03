@@ -5,9 +5,10 @@ apps. It exposes a small C ABI and keeps all SSH protocol, host-key checking,
 authentication, local listener, channel multiplexing, buffering, and shutdown
 behavior in one implementation.
 
-The app currently packages this POSIX worker for Android, iOS, macOS
-(arm64/x86_64), and Linux x86_64. A Windows Desktop package will require a
-WinSock event/wakeup backend before SSH tunneling can be enabled there.
+The app packages this worker for Android, iOS, macOS (arm64/x86_64), Linux
+x86_64, and Windows x86_64. POSIX targets use file descriptors and a pipe for
+event wakeups. Windows uses WinSock sockets plus a loopback UDP socket pair so
+libssh's socket-based Windows poller can wake the worker without polling.
 
 The tunnel binds only `127.0.0.1` on an OS-selected port. Each local TCP
 connection becomes one SSH `direct-tcpip` channel to `remote_host:remote_port`.
@@ -30,6 +31,10 @@ cmake -S native/pi_ssh -B build/pi_ssh \
 cmake --build build/pi_ssh
 ctest --test-dir build/pi_ssh --output-on-failure
 ```
+
+On Windows, configure from an x64 Visual Studio developer environment. The
+portable build links the MSVC runtime, libssh, and Mbed TLS into `pi_ssh.dll`;
+only Windows system DLLs are required at runtime.
 
 libssh is licensed under LGPL-2.1-or-later. Mbed TLS is licensed under
 Apache-2.0 OR GPL-2.0-or-later. Release packaging must retain their applicable
