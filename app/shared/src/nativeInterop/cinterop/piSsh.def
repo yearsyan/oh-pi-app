@@ -1,0 +1,3 @@
+headers = pi_ssh.h
+headerFilter = pi_ssh.h
+package = io.github.yearsyan.pi.ssh.cinterop

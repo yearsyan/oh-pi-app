@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -23,6 +25,8 @@ var sessionChangingCommands = map[string]struct{}{
 	"fork":           {},
 	"clone":          {},
 }
+
+const maxSessionNameRunes = 200
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
@@ -56,6 +60,8 @@ func New(cfg Config) (*Gateway, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", gateway.handleHealth)
 	mux.HandleFunc("/fs/list", gateway.handleFsList)
+	mux.HandleFunc("/api/sessions", gateway.handleSessions)
+	mux.HandleFunc("/api/sessions/", gateway.handleSession)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
 	gateway.handler = mux
 	return gateway, nil
@@ -80,6 +86,143 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")
 	_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
+}
+
+type sessionResponse struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	WorkDir    string `json:"work_dir"`
+	CreatedAt  int64  `json:"created_at"`
+	LastActive int64  `json:"last_active"`
+	Running    bool   `json:"running"`
+}
+
+type sessionListResponse struct {
+	Sessions []sessionResponse `json:"sessions"`
+}
+
+type updateSessionRequest struct {
+	Name *string `json:"name"`
+}
+
+func (g *Gateway) handleSessions(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	if !g.authenticated(request) {
+		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
+		return
+	}
+
+	sessions, err := g.manager.list()
+	if err != nil {
+		g.cfg.Logger.Error("list sessions", "error", err)
+		writeHTTPError(writer, http.StatusInternalServerError, "session_list_failed", "could not list sessions")
+		return
+	}
+	response := sessionListResponse{Sessions: make([]sessionResponse, 0, len(sessions))}
+	for _, session := range sessions {
+		response.Sessions = append(response.Sessions, makeSessionResponse(session))
+	}
+	writeJSONResponse(writer, http.StatusOK, response)
+}
+
+func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet && request.Method != http.MethodPatch && request.Method != http.MethodDelete {
+		writer.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))
+		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET, PATCH, and DELETE are allowed")
+		return
+	}
+	if !g.authenticated(request) {
+		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
+		return
+	}
+
+	id := strings.TrimPrefix(request.URL.Path, "/api/sessions/")
+	if !validSessionID(id) {
+		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
+		return
+	}
+
+	switch request.Method {
+	case http.MethodGet:
+		session, err := g.manager.get(id)
+		if !g.writeSessionManagerError(writer, "get", id, err) {
+			return
+		}
+		writeJSONResponse(writer, http.StatusOK, makeSessionResponse(session))
+	case http.MethodPatch:
+		request.Body = http.MaxBytesReader(writer, request.Body, 8<<10)
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		var update updateSessionRequest
+		if err := decoder.Decode(&update); err != nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must be one JSON object with a name field")
+			return
+		}
+		if err := ensureJSONEOF(decoder); err != nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must contain exactly one JSON object")
+			return
+		}
+		if update.Name == nil {
+			writeHTTPError(writer, http.StatusBadRequest, "missing_name", "name is required")
+			return
+		}
+		name, err := normalizeSessionName(*update.Name)
+		if err != nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_name", err.Error())
+			return
+		}
+		session, err := g.manager.rename(id, name, true)
+		if !g.writeSessionManagerError(writer, "rename", id, err) {
+			return
+		}
+		writeJSONResponse(writer, http.StatusOK, makeSessionResponse(session))
+	case http.MethodDelete:
+		ctx, cancel := context.WithTimeout(request.Context(), g.cfg.HistoryTimeout)
+		err := g.manager.delete(ctx, id)
+		cancel()
+		if !g.writeSessionManagerError(writer, "delete", id, err) {
+			return
+		}
+		writer.Header().Set("Cache-Control", "no-store")
+		writer.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (g *Gateway) writeSessionManagerError(writer http.ResponseWriter, operation, id string, err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errSessionNotFound) {
+		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
+		return false
+	}
+	if errors.Is(err, errSessionDeleting) {
+		writeHTTPError(writer, http.StatusConflict, "session_deleting", "session is already being deleted")
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		writeHTTPError(writer, http.StatusGatewayTimeout, "session_stop_timeout", "could not stop session before the timeout")
+		return false
+	}
+	g.cfg.Logger.Error(operation+" session", "session_id", id, "error", err)
+	writeHTTPError(writer, http.StatusInternalServerError, "session_"+operation+"_failed", "could not "+operation+" session")
+	return false
+}
+
+func makeSessionResponse(session managedSession) sessionResponse {
+	meta := session.Metadata
+	return sessionResponse{
+		ID:         meta.ID,
+		Name:       meta.Name,
+		WorkDir:    meta.WorkDir,
+		CreatedAt:  meta.CreatedAt.UnixMilli(),
+		LastActive: meta.UpdatedAt.UnixMilli(),
+		Running:    session.Running,
+	}
 }
 
 func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Request) {
@@ -152,6 +295,9 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		})
 		return
 	}
+	if err := g.manager.touch(session.id); err != nil {
+		g.cfg.Logger.Warn("touch opened session", "session_id", session.id, "error", err)
+	}
 
 	client := newWSClient(
 		conn,
@@ -165,18 +311,19 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		return conn.SetReadDeadline(time.Now().Add(g.cfg.PongTimeout))
 	})
 
-	go client.writePump()
 	ready, _ := json.Marshal(gatewayEvent{
 		Type:      "pi2ws",
 		Event:     "ready",
 		Action:    action,
 		SessionID: session.id,
 		WorkDir:   session.workDir,
+		History:   action == "attach",
 	})
-	if !client.enqueue(ready) || !session.addClient(client) {
+	if !session.addClient(client, ready, action == "attach") {
 		client.close(websocket.CloseInternalServerErr, "pi session is not running")
 		return
 	}
+	go client.writePump()
 	defer func() {
 		session.removeClient(client)
 		client.abort()
@@ -208,6 +355,19 @@ func (g *Gateway) readClient(client *wsClient, session *piSession) {
 				fmt.Sprintf("%q is managed by pi2ws; use a create or attach connection instead", commandType),
 			)
 			continue
+		}
+		var sessionName *string
+		if commandType == "set_session_name" {
+			command, sessionName, err = normalizeSessionNameCommand(command)
+			if err != nil {
+				gatewayError(client, "invalid_session_name", err.Error())
+				continue
+			}
+			if _, err := g.manager.rename(session.id, *sessionName, false); err != nil {
+				g.cfg.Logger.Error("persist session name", "session_id", session.id, "error", err)
+				gatewayError(client, "session_metadata_failed", "could not persist session name")
+				continue
+			}
 		}
 		if err := session.submit(client.done, command); err != nil {
 			client.close(websocket.CloseInternalServerErr, "pi session is not running")
@@ -243,13 +403,23 @@ func (g *Gateway) resolveWorkDir(raw string) (string, error) {
 }
 
 func (g *Gateway) authenticated(request *http.Request) bool {
-	values, ok := request.URL.Query()["token"]
-	if !ok || len(values) != 1 {
-		return false
+	provided := ""
+	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); authorization != "" {
+		scheme, token, ok := strings.Cut(authorization, " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
+			return false
+		}
+		provided = strings.TrimSpace(token)
+	} else {
+		values, ok := request.URL.Query()["token"]
+		if !ok || len(values) != 1 {
+			return false
+		}
+		provided = values[0]
 	}
-	provided := []byte(values[0])
+	providedBytes := []byte(provided)
 	expected := []byte(g.cfg.Token)
-	return subtle.ConstantTimeCompare(provided, expected) == 1
+	return subtle.ConstantTimeCompare(providedBytes, expected) == 1
 }
 
 func (g *Gateway) checkOrigin(request *http.Request) bool {
@@ -276,7 +446,8 @@ func normalizeCommand(message []byte) ([]byte, string, error) {
 		return nil, "", errors.New("command must be a JSON object")
 	}
 	var envelope struct {
-		Type string `json:"type"`
+		Type string          `json:"type"`
+		ID   json.RawMessage `json:"id,omitempty"`
 	}
 	if err := json.Unmarshal(command, &envelope); err != nil {
 		return nil, "", fmt.Errorf("decode command: %w", err)
@@ -284,17 +455,72 @@ func normalizeCommand(message []byte) ([]byte, string, error) {
 	if envelope.Type == "" {
 		return nil, "", errors.New(`command requires a non-empty "type" field`)
 	}
+	if len(envelope.ID) > 0 {
+		var id string
+		if json.Unmarshal(envelope.ID, &id) == nil && strings.HasPrefix(id, internalRPCIDPrefix) {
+			return nil, "", errors.New("command id uses a reserved pi2ws prefix")
+		}
+	}
 	return command, envelope.Type, nil
 }
 
+func normalizeSessionNameCommand(command []byte) ([]byte, *string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(command, &fields); err != nil {
+		return nil, nil, fmt.Errorf("decode set_session_name: %w", err)
+	}
+	rawName, ok := fields["name"]
+	if !ok {
+		return nil, nil, errors.New("set_session_name requires a name")
+	}
+	var raw string
+	if err := json.Unmarshal(rawName, &raw); err != nil {
+		return nil, nil, errors.New("session name must be a string")
+	}
+	name, err := normalizeSessionName(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	fields["name"], _ = json.Marshal(name)
+	normalized, err := json.Marshal(fields)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode set_session_name: %w", err)
+	}
+	return normalized, &name, nil
+}
+
+func normalizeSessionName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if utf8.RuneCountInString(name) > maxSessionNameRunes {
+		return "", fmt.Errorf("name must not exceed %d characters", maxSessionNameRunes)
+	}
+	return name, nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
 type gatewayEvent struct {
-	Type      string `json:"type"`
-	Event     string `json:"event"`
-	Action    string `json:"action,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	WorkDir   string `json:"work_dir,omitempty"`
-	Code      string `json:"code,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Type       string          `json:"type"`
+	Event      string          `json:"event"`
+	Action     string          `json:"action,omitempty"`
+	SessionID  string          `json:"session_id,omitempty"`
+	WorkDir    string          `json:"work_dir,omitempty"`
+	Code       string          `json:"code,omitempty"`
+	Message    string          `json:"message,omitempty"`
+	History    bool            `json:"history,omitempty"`
+	FromSeq    uint64          `json:"from_seq,omitempty"`
+	ThroughSeq uint64          `json:"through_seq,omitempty"`
+	Seq        uint64          `json:"seq,omitempty"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
 }
 
 func gatewayError(client *wsClient, code, message string) {
@@ -327,4 +553,11 @@ func writeHTTPError(writer http.ResponseWriter, status int, code, message string
 		"error":   code,
 		"message": message,
 	})
+}
+
+func writeJSONResponse(writer http.ResponseWriter, status int, value any) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(status)
+	_ = json.NewEncoder(writer).Encode(value)
 }

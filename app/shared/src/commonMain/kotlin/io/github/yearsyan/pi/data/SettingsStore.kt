@@ -7,7 +7,7 @@ expect fun createSettings(): Settings
 
 private val storeJson = Json { ignoreUnknownKeys = true }
 
-/** Persists server profiles, UI preferences and per-server session lists. */
+/** Persists server profiles, UI preferences and legacy session-list migration data. */
 class SettingsStore(private val settings: Settings = createSettings()) {
 
     fun loadServers(): List<ServerProfile> =
@@ -35,11 +35,11 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         get() = settings.getString(KEY_LAST_SESSION, "")
         set(value) = settings.putString(KEY_LAST_SESSION, value)
 
-    fun loadSessions(serverId: String): List<SavedSession> =
+    fun loadLegacySessions(serverId: String): List<SavedSession> =
         decodeList(settings.getString("$KEY_SESSIONS$serverId", ""))
 
-    fun saveSessions(serverId: String, sessions: List<SavedSession>) {
-        settings.putString("$KEY_SESSIONS$serverId", encode(sessions))
+    fun clearLegacySessions(serverId: String) {
+        settings.remove("$KEY_SESSIONS$serverId")
     }
 
     /** Last workspace the user picked for new chats on this server (blank = gateway default). */
@@ -63,7 +63,7 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         private const val KEY_THEME = "theme_mode"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_LAST_SESSION = "last_session"
-        private const val KEY_SESSIONS = "sessions_"
+        private const val KEY_SESSIONS = "sessions_" // pre-server-list releases
         private const val KEY_LAST_WORKSPACE = "last_workspace_"
     }
 }

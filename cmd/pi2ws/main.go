@@ -41,6 +41,8 @@ func run() int {
 	workDir := flag.String("work-dir", envOr("PI2WS_WORK_DIR", mustWorkingDir()), "working directory for pi processes")
 	piCommand := flag.String("pi", envOr("PI2WS_PI_COMMAND", "pi"), "pi executable")
 	maxMessage := flag.Int64("max-message-bytes", 16<<20, "maximum WebSocket command and pi event size")
+	maxReplay := flag.Int64("max-replay-bytes", 64<<20, "maximum active-turn replay memory per session")
+	sessionIdle := flag.Duration("session-idle-timeout", 5*time.Minute, "stop a settled pi session after this idle period")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Var(&piArgs, "pi-arg", "extra pi argument; repeat for multiple arguments")
 	flag.Var(&allowedOrigins, "allow-origin", `allowed WebSocket Origin; repeat or use "*"`)
@@ -49,6 +51,10 @@ func run() int {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
 	if *shutdownTimeout <= 0 {
 		logger.Error("shutdown timeout must be positive")
+		return 2
+	}
+	if *sessionIdle <= 0 {
+		logger.Error("session idle timeout must be positive")
 		return 2
 	}
 
@@ -60,6 +66,8 @@ func run() int {
 		PiArgs:          piArgs,
 		AllowedOrigins:  allowedOrigins,
 		MaxMessageBytes: *maxMessage,
+		MaxReplayBytes:  *maxReplay,
+		SessionIdle:     *sessionIdle,
 		Logger:          logger,
 	})
 	if err != nil {

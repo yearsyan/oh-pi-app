@@ -9,11 +9,18 @@ import (
 
 type wsClient struct {
 	conn         *websocket.Conn
+	initial      [][]byte
 	send         chan []byte
 	done         chan struct{}
 	writeTimeout time.Duration
 	pongTimeout  time.Duration
 	closeOnce    sync.Once
+}
+
+// setInitial installs the fixed backlog written before the bounded live
+// queue. It must be called before writePump starts.
+func (c *wsClient) setInitial(messages [][]byte) {
+	c.initial = messages
 }
 
 func newWSClient(conn *websocket.Conn, queueSize int, writeTimeout, pongTimeout time.Duration) *wsClient {
@@ -47,15 +54,17 @@ func (c *wsClient) writePump() {
 	ticker := time.NewTicker(pingEvery)
 	defer ticker.Stop()
 
+	for _, message := range c.initial {
+		if !c.writeMessage(message) {
+			return
+		}
+	}
+	c.initial = nil
+
 	for {
 		select {
 		case message := <-c.send:
-			if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
-				c.abort()
-				return
-			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				c.abort()
+			if !c.writeMessage(message) {
 				return
 			}
 		case <-ticker.C:
@@ -68,6 +77,18 @@ func (c *wsClient) writePump() {
 			return
 		}
 	}
+}
+
+func (c *wsClient) writeMessage(message []byte) bool {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+		c.abort()
+		return false
+	}
+	if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		c.abort()
+		return false
+	}
+	return true
 }
 
 func (c *wsClient) close(code int, reason string) {

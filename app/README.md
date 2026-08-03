@@ -5,8 +5,8 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 
 ## 功能
 
-- **会话列表 / 会话详情**：本地持久化每个服务器下的会话，支持新建、恢复（attach 后通过
-  `get_entries` 重建时间线）、重命名（同步 `set_session_name`）、删除。
+- **会话列表 / 会话详情**：从网关 HTTP API 读取服务端权威会话列表，支持新建、恢复
+  （attach 时先消费网关提供的稳定 `get_entries` 快照和活动 turn replay）、重命名和永久删除。
 - **会话内对话**：流式渲染助手消息（Markdown：标题/列表/引用/代码块/行内样式），
   运行中可随时中止（abort）或引导（steer）。
 - **思考过程**：可折叠的思考卡片，流式更新。
@@ -18,13 +18,17 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **深色 / 浅色**：跟随系统或手动指定。
 - **多服务器**：设置页维护多个 pi2ws 网关（名称 / 地址 / token），随时切换；
   首次启动未配置时进入引导配置页。
+- **内置 SSH 隧道**：可通过 SSH 密码或内存私钥连接远端服务器，再让 WebSocket 与
+  `/fs/list` 共同复用一条本机回环隧道。Android、Desktop 与 iOS 都调用相同的
+  `libssh` C 核心；首次连接以及主机密钥变化时必须人工确认 SHA-256 指纹。
 - **扩展 UI 对话框**：支持 pi 扩展的 select / confirm / input / editor 请求。
 
 ## 架构（shared 模块）
 
 ```
-data/        ServerProfile、SavedSession、SettingsStore（multiplatform-settings 持久化）
-net/         PiClient（Ktor CIO WebSocket，事件回主线程）、协议 JSON 工具
+data/        ServerProfile、SavedSession、SettingsStore（设备设置与旧列表迁移）
+net/         PiClient（Ktor CIO WebSocket）、会话/目录 HTTP API、协议 JSON 工具
+ssh/         pi_ssh 的 JNI / Kotlin-Native cinterop 绑定
 chat/        ChatController（连接 + pi RPC 状态机 + 时间线归约）、Timeline 模型
 markdown/    轻量 Markdown 渲染器
 i18n/        中英文字符串表
@@ -32,7 +36,25 @@ theme/       Material3 深浅色主题 + 语义扩展色
 ui/          AppViewModel（导航/服务器/会话/主题）、screens、components
 ```
 
-协议细节见仓库根目录 `README.md` 的 WebSocket API 一节；连接与会话语义与 `web-demo` 一致。
+协议细节见仓库根目录 `README.md` 的会话管理 HTTP API 与 WebSocket API 两节。
+
+原生实现位于 `../native/pi_ssh/`：稳定 C ABI 封装固定版本的 libssh 0.12.1 与
+Mbed TLS 3.6.6，一个 worker 线程复用多个 `direct-tcpip` channel。依赖的完整
+许可证、校验和与重链接说明见
+[`../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md`](../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md)。
+
+## SSH 连接
+
+在服务器编辑页选择「SSH 隧道」，然后填写：
+
+- 网关地址：SSH 服务器自身看到的 pi2ws 地址，通常是 `http://127.0.0.1:8080`；
+- SSH 主机、端口、用户名；
+- SSH 密码，或 OpenSSH / PEM 私钥的完整内容与可选口令。
+
+SSH 模式下网关地址必须使用 `http://` 或 `ws://`。SSH 已加密整条链路；若把
+`https://` / `wss://` 改写到随机回环端口，TLS 主机名校验会失效，因此 App 会拒绝
+这种配置。首次连接只读取服务器公钥并显示 `SHA256:...` 指纹，确认后才发送凭据；
+以后指纹不一致会显示高风险变更提示。
 
 ## 运行
 
@@ -42,7 +64,12 @@ ui/          AppViewModel（导航/服务器/会话/主题）、screens、compon
 - Desktop：`./gradlew :desktopApp:run`。
 - iOS 18.5+：使用 `/iosApp` Xcode 工程入口。
 
+当前 Desktop 原生包已配置 macOS arm64 / x86_64 与 Linux x86_64；Windows MSI
+仍需补充 WinSock worker 后端，尚未启用 SSH 隧道构建。
+
 ## 备注
 
-- token 仅保存在本机设置中，不会写入日志。
-- 会话列表保存在本地（网关无列表 API）；删除会话只移除本地记录。
+- token 与 SSH 凭据仅保存在本机设置中，不会写入日志；设备设置存储本身应由系统
+  账户和磁盘加密保护。
+- 会话列表、名称和删除操作都由网关管理；本地仅保留服务器配置、偏好设置，以及升级时使用的一次性旧会话名称迁移数据。
+- 删除会话会停止对应 pi 进程并永久删除服务端会话目录，无法从 App 内恢复。

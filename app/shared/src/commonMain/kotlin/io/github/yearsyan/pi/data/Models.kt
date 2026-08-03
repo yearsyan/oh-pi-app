@@ -2,6 +2,27 @@ package io.github.yearsyan.pi.data
 
 import kotlinx.serialization.Serializable
 
+@Serializable
+enum class ServerConnectionMode { Direct, Ssh }
+
+@Serializable
+enum class SshAuthentication { Password, PrivateKey }
+
+/** SSH endpoint and credentials used to reach a gateway on the remote host. */
+@Serializable
+data class SshServerProfile(
+    val host: String = "",
+    val port: Int = 22,
+    val username: String = "",
+    val authentication: SshAuthentication = SshAuthentication.Password,
+    val password: String = "",
+    /** Private key contents in OpenSSH or PEM form; no filesystem path is used. */
+    val privateKey: String = "",
+    val privateKeyPassphrase: String = "",
+    /** Explicitly trusted OpenSSH SHA-256 fingerprint, for example SHA256:abc. */
+    val hostKeySha256: String = "",
+)
+
 /** A configured pi2ws gateway the app can connect to. */
 @Serializable
 data class ServerProfile(
@@ -9,11 +30,13 @@ data class ServerProfile(
     val name: String,
     val url: String,
     val token: String,
+    val connectionMode: ServerConnectionMode = ServerConnectionMode.Direct,
+    val ssh: SshServerProfile = SshServerProfile(),
 ) {
     val displayName: String get() = name.ifBlank { url.substringAfter("://").substringBefore("/") }
 }
 
-/** A session remembered locally for a given server (the gateway has no list API). */
+/** A server-owned session summary displayed by the app. */
 @Serializable
 data class SavedSession(
     val id: String,

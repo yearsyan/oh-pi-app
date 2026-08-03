@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,12 +20,16 @@ var errSessionNotFound = errors.New("session not found")
 
 type sessionMetadata struct {
 	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	NameSet   bool      `json:"name_set,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	WorkDir   string    `json:"work_dir,omitempty"`
 }
 
 type sessionStore struct {
 	root string
+	mu   sync.RWMutex
 }
 
 func newSessionStore(dataDir string) (*sessionStore, error) {
@@ -36,6 +41,9 @@ func newSessionStore(dataDir string) (*sessionStore, error) {
 }
 
 func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for range 8 {
 		id, err := newSessionID()
 		if err != nil {
@@ -49,7 +57,14 @@ func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
 			return sessionMetadata{}, "", fmt.Errorf("create session directory: %w", err)
 		}
 
-		meta := sessionMetadata{ID: id, CreatedAt: time.Now().UTC(), WorkDir: workDir}
+		now := time.Now().UTC()
+		meta := sessionMetadata{
+			ID:        id,
+			NameSet:   true,
+			CreatedAt: now,
+			UpdatedAt: now,
+			WorkDir:   workDir,
+		}
 		if err := writeMetadata(dir, meta); err != nil {
 			_ = os.Remove(dir)
 			return sessionMetadata{}, "", err
@@ -60,6 +75,12 @@ func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
 }
 
 func (s *sessionStore) load(id string) (sessionMetadata, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadLocked(id)
+}
+
+func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 	if !validSessionID(id) {
 		return sessionMetadata{}, "", fmt.Errorf("%w: invalid session id", errSessionNotFound)
 	}
@@ -98,7 +119,82 @@ func (s *sessionStore) load(id string) (sessionMetadata, string, error) {
 	if meta.ID != id || meta.CreatedAt.IsZero() {
 		return sessionMetadata{}, "", fmt.Errorf("invalid session metadata for %q", id)
 	}
+	if meta.UpdatedAt.IsZero() {
+		// Metadata created by older gateways did not record activity time.
+		meta.UpdatedAt = meta.CreatedAt
+	}
 	return meta, dir, nil
+}
+
+func (s *sessionStore) list() ([]sessionMetadata, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("read session store: %w", err)
+	}
+	metas := make([]sessionMetadata, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !validSessionID(entry.Name()) {
+			continue
+		}
+		meta, _, err := s.loadLocked(entry.Name())
+		if err != nil {
+			if errors.Is(err, errSessionNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("load session %q: %w", entry.Name(), err)
+		}
+		metas = append(metas, meta)
+	}
+	return metas, nil
+}
+
+func (s *sessionStore) rename(id, name string) (sessionMetadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		return sessionMetadata{}, err
+	}
+	meta.Name = name
+	meta.NameSet = true
+	meta.UpdatedAt = time.Now().UTC()
+	if err := replaceMetadata(dir, meta); err != nil {
+		return sessionMetadata{}, err
+	}
+	return meta, nil
+}
+
+func (s *sessionStore) adoptName(id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		return err
+	}
+	if meta.NameSet {
+		return nil
+	}
+	meta.Name = name
+	meta.NameSet = true
+	meta.UpdatedAt = time.Now().UTC()
+	return replaceMetadata(dir, meta)
+}
+
+func (s *sessionStore) touch(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		return err
+	}
+	meta.UpdatedAt = time.Now().UTC()
+	return replaceMetadata(dir, meta)
 }
 
 func (s *sessionStore) sessionDir(id string) string {
@@ -106,6 +202,9 @@ func (s *sessionStore) sessionDir(id string) string {
 }
 
 func (s *sessionStore) discard(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !validSessionID(id) {
 		return fmt.Errorf("invalid session id %q", id)
 	}
@@ -113,18 +212,36 @@ func (s *sessionStore) discard(id string) error {
 	if err := os.Remove(filepath.Join(dir, metadataFileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove session metadata: %w", err)
 	}
+	for _, name := range []string{historyCacheFileName, replayLogFileName} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove session gateway state %q: %w", name, err)
+		}
+	}
 	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove session directory: %w", err)
 	}
 	return nil
 }
 
-func writeMetadata(dir string, meta sessionMetadata) error {
-	data, err := json.MarshalIndent(meta, "", "  ")
+func (s *sessionStore) delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, dir, err := s.loadLocked(id)
 	if err != nil {
-		return fmt.Errorf("encode session metadata: %w", err)
+		return err
 	}
-	data = append(data, '\n')
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove session directory: %w", err)
+	}
+	return nil
+}
+
+func writeMetadata(dir string, meta sessionMetadata) error {
+	data, err := encodeMetadata(meta)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(dir, metadataFileName)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -140,6 +257,50 @@ func writeMetadata(dir string, meta sessionMetadata) error {
 		return fmt.Errorf("close session metadata: %w", err)
 	}
 	return nil
+}
+
+func replaceMetadata(dir string, meta sessionMetadata) error {
+	data, err := encodeMetadata(meta)
+	if err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(dir, ".pi2ws-session-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary session metadata: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	committed := false
+	defer func() {
+		_ = temporary.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0o600); err != nil {
+		return fmt.Errorf("set temporary session metadata permissions: %w", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return fmt.Errorf("write temporary session metadata: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync temporary session metadata: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary session metadata: %w", err)
+	}
+	if err := os.Rename(temporaryPath, filepath.Join(dir, metadataFileName)); err != nil {
+		return fmt.Errorf("replace session metadata: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+func encodeMetadata(meta sessionMetadata) ([]byte, error) {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode session metadata: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 func newSessionID() (string, error) {

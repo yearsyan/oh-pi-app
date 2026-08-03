@@ -15,6 +15,7 @@ import io.github.yearsyan.pi.i18n.LocalStrings
 import io.github.yearsyan.pi.i18n.stringsFor
 import io.github.yearsyan.pi.theme.PiTheme
 import io.github.yearsyan.pi.ui.AppViewModel
+import io.github.yearsyan.pi.ui.components.SshHostKeyDialog
 import io.github.yearsyan.pi.ui.components.ToastHost
 import io.github.yearsyan.pi.ui.screens.HomeScreen
 import io.github.yearsyan.pi.ui.screens.OnboardingScreen
@@ -43,6 +44,13 @@ fun App(vm: AppViewModel = viewModel { AppViewModel() }) {
                     OnboardingScreen(onSave = vm::saveServer)
                 } else {
                     HomeScreen(vm)
+                }
+                vm.sshHostKeyPrompt?.let { prompt ->
+                    SshHostKeyDialog(
+                        prompt = prompt,
+                        onReject = { vm.answerSshHostKeyPrompt(false) },
+                        onTrust = { vm.answerSshHostKeyPrompt(true) },
+                    )
                 }
                 ToastHost(vm.toasts)
             }

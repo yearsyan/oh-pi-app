@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.Exec
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -9,10 +10,72 @@ plugins {
 }
 
 kotlin {
+    val piSshSourceDir = rootProject.projectDir.parentFile.resolve("native/pi_ssh")
+
     listOf(
         iosArm64(),
         iosSimulatorArm64()
     ).forEach { iosTarget ->
+        val targetName = iosTarget.name
+        val targetSuffix = targetName.replaceFirstChar { it.uppercase() }
+        val sysroot = if (targetName == "iosArm64") "iphoneos" else "iphonesimulator"
+        val nativeBuildDir = layout.buildDirectory.dir("piSsh/cmake/$targetName")
+        val nativeOutputDir = layout.buildDirectory.dir("piSsh/output/$targetName")
+        val nativeBuildPath = nativeBuildDir.get().asFile.absolutePath
+        val nativeOutputPath = nativeOutputDir.get().asFile.absolutePath
+        val configureTask =
+            tasks.register<Exec>("configurePiSsh$targetSuffix") {
+                inputs.dir(piSshSourceDir)
+                outputs.file(nativeBuildDir.map { it.file("CMakeCache.txt") })
+                commandLine(
+                    "cmake",
+                    "-S",
+                    piSshSourceDir.absolutePath,
+                    "-B",
+                    nativeBuildPath,
+                    "-G",
+                    "Xcode",
+                    "-DCMAKE_SYSTEM_NAME=iOS",
+                    "-DCMAKE_OSX_SYSROOT=$sysroot",
+                    "-DCMAKE_OSX_ARCHITECTURES=arm64",
+                    "-DCMAKE_OSX_DEPLOYMENT_TARGET=18.5",
+                    "-DPI_SSH_BUILD_SHARED=OFF",
+                    "-DPI_SSH_BUILD_APPLE_BUNDLE=ON",
+                    "-DPI_SSH_BUILD_TESTS=OFF",
+                    "-DPI_SSH_OUTPUT_DIRECTORY=$nativeOutputPath",
+                )
+            }
+        val buildTask =
+            tasks.register<Exec>("buildPiSsh$targetSuffix") {
+                dependsOn(configureTask)
+                inputs.dir(piSshSourceDir)
+                outputs.file(nativeOutputDir.map { it.file("libpi_ssh_bundle.a") })
+                commandLine(
+                    "cmake",
+                    "--build",
+                    nativeBuildPath,
+                    "--config",
+                    "Release",
+                    "--target",
+                    "pi_ssh_bundle",
+                    "--parallel",
+                )
+            }
+
+        val piSshInterop =
+            iosTarget.compilations.getByName("main").cinterops.create("piSsh") {
+                defFile(project.file("src/nativeInterop/cinterop/piSsh.def"))
+                compilerOpts("-I${piSshSourceDir.resolve("include").absolutePath}")
+                extraOpts(
+                    "-libraryPath",
+                    nativeOutputPath,
+                    "-staticLibrary",
+                    "libpi_ssh_bundle.a",
+                )
+            }
+        tasks.matching { it.name == piSshInterop.interopProcessingTaskName }
+            .configureEach { dependsOn(buildTask) }
+
         iosTarget.binaries.framework {
             baseName = "Shared"
             isStatic = true
@@ -43,6 +106,13 @@ kotlin {
     }
     
     sourceSets {
+        val androidMain by getting {
+            kotlin.srcDir("src/jvmAndAndroidMain/kotlin")
+        }
+        val jvmMain by getting {
+            kotlin.srcDir("src/jvmAndAndroidMain/kotlin")
+        }
+
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.compose.uiTooling)

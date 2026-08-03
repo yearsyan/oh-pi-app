@@ -44,6 +44,17 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 9
         versionName = "1.8"
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DPI_SSH_ENABLE_JNI=ON",
+                    "-DPI_SSH_BUILD_TESTS=OFF",
+                    "-DPI_SSH_BUILD_SHARED=ON",
+                )
+                targets += "pi_ssh"
+            }
+        }
     }
     packaging {
         resources {
@@ -54,6 +65,9 @@ android {
         release {
             isMinifyEnabled = true
             signingConfig = signingConfigs.findByName("release")
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -66,5 +80,16 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    sourceSets {
+        getByName("main") {
+            resources.directories.add(rootProject.file("../native/pi_ssh/licenses").absolutePath)
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = rootProject.file("../native/pi_ssh/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }

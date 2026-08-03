@@ -3,7 +3,10 @@ package io.github.yearsyan.pi.net
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.Serializable
 
 /** One subdirectory of a listed directory on the gateway host. */
@@ -24,9 +27,9 @@ data class FsListResponse(
 /** Failure from /fs/list; [message] carries the gateway's error text. */
 class FsListException(message: String) : Exception(message)
 
-private val fsHttp = HttpClient(CIO)
+internal val gatewayHttp = HttpClient(CIO)
 
-private fun httpBase(gateway: String): String {
+internal fun gatewayHttpBase(gateway: String): String {
     val ws = normalizeGatewayUrl(gateway)
     return when {
         ws.startsWith("wss://") -> "https://" + ws.removePrefix("wss://")
@@ -41,11 +44,21 @@ private fun httpBase(gateway: String): String {
  */
 suspend fun listGatewayDirs(gateway: String, token: String, path: String): FsListResponse {
     val url = buildString {
-        append(httpBase(gateway)).append("/fs/list?path=").append(urlEncode(path.trim()))
-        if (token.isNotBlank()) append("&token=").append(urlEncode(token))
+        append(gatewayHttpBase(gateway)).append("/fs/list?path=").append(urlEncode(path.trim()))
     }
-    val response = fsHttp.get(url)
-    val body = response.bodyAsText()
+    var response = gatewayHttp.get(url) {
+        if (token.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $token")
+    }
+    var body = response.bodyAsText()
+
+    // pi2ws releases before the HTTP session API authenticated /fs/list only
+    // through the token query parameter. Prefer the Bearer header, but retry a
+    // 401 once with the legacy form so existing gateway installations keep
+    // working while they are upgraded.
+    if (response.status == HttpStatusCode.Unauthorized && token.isNotBlank()) {
+        response = gatewayHttp.get("$url&token=${urlEncode(token)}")
+        body = response.bodyAsText()
+    }
     if (response.status.value !in 200..299) {
         val message = parseMessage(body)?.str("message") ?: "HTTP ${response.status.value}"
         throw FsListException(message)

@@ -47,7 +47,6 @@ fun Composer(
         modifier = modifier.fillMaxWidth().imePadding(),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
-        shadowElevation = 8.dp,
     ) {
         Row(
             modifier = Modifier

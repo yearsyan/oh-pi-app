@@ -2,8 +2,6 @@ package io.github.yearsyan.pi.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -24,7 +22,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -38,18 +35,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.pi.data.AppLanguage
+import io.github.yearsyan.pi.data.ServerConnectionMode
 import io.github.yearsyan.pi.data.ServerProfile
 import io.github.yearsyan.pi.data.ThemeMode
 import io.github.yearsyan.pi.i18n.S
-import io.github.yearsyan.pi.net.isValidGatewayUrl
 import io.github.yearsyan.pi.ui.components.ConfirmDialog
-import kotlin.random.Random
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -79,7 +73,7 @@ fun SettingsScreen(
         Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeContentPadding(),
+            .safeDrawingPadding(),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -249,7 +243,11 @@ private fun ServerRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    server.url,
+                    if (server.connectionMode == ServerConnectionMode.Ssh) {
+                        "SSH · ${server.ssh.username}@${server.ssh.host}:${server.ssh.port} → ${server.url}"
+                    } else {
+                        server.url
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -290,66 +288,22 @@ fun ServerEditDialog(
     onDismiss: () -> Unit,
     onSave: (ServerProfile) -> Unit,
 ) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var url by remember { mutableStateOf(initial?.url ?: "") }
-    var token by remember { mutableStateOf(initial?.token ?: "") }
-    var error by remember { mutableStateOf<String?>(null) }
+    val editor = rememberServerEditor(initial)
     val strings = S
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) S.addServer else S.editServer) },
         text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(S.serverNameLabel) },
-                    placeholder = { Text(S.serverNamePlaceholder) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it; error = null },
-                    label = { Text(S.serverUrlLabel) },
-                    placeholder = { Text(S.serverUrlPlaceholder) },
-                    singleLine = true,
-                    isError = error != null,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = { Text(S.serverTokenLabel) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                error?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                }
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                ServerEditorFields(editor)
             }
         },
         confirmButton = {
             Button(onClick = {
-                when {
-                    url.isBlank() -> error = strings.serverRequired
-                    !isValidGatewayUrl(url) -> error = strings.serverUrlInvalid
-                    else -> {
-                        onSave(
-                            ServerProfile(
-                                id = initial?.id ?: Random.nextLong().toString(16),
-                                name = name.trim(),
-                                url = url.trim(),
-                                token = token.trim(),
-                            ),
-                        )
-                        onDismiss()
-                    }
+                editor.build(strings)?.let { profile ->
+                    onSave(profile)
+                    onDismiss()
                 }
             }) { Text(S.confirm) }
         },

@@ -16,8 +16,15 @@ import io.github.yearsyan.pi.data.ThemeMode
 import io.github.yearsyan.pi.i18n.Strings
 import io.github.yearsyan.pi.net.FsListException
 import io.github.yearsyan.pi.net.FsListResponse
+import io.github.yearsyan.pi.net.GatewayTransport
+import io.github.yearsyan.pi.net.SshHostKeyPrompt
+import io.github.yearsyan.pi.net.deleteGatewaySession
 import io.github.yearsyan.pi.net.listGatewayDirs
+import io.github.yearsyan.pi.net.listGatewaySessions
 import io.github.yearsyan.pi.net.nowMillis
+import io.github.yearsyan.pi.net.renameGatewaySession
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
@@ -35,9 +42,14 @@ class AppViewModel(
 
     // ---- runtime state ----
     var activeChatId by mutableStateOf<String?>(null); private set
+    var sshHostKeyPrompt by mutableStateOf<SshHostKeyPrompt?>(null); private set
     val toasts = mutableStateListOf<Toast>()
 
     private val controllers = HashMap<String, ChatController>()
+    private var gatewayTransport: GatewayTransport? = null
+    private var gatewayTransportServerId = ""
+    private var sshHostKeyDecision: CompletableDeferred<Boolean>? = null
+    private var sessionRefreshGeneration = 0L
     private var stringsProvider: () -> Strings = { io.github.yearsyan.pi.i18n.EnStrings }
 
     init {
@@ -73,17 +85,24 @@ class AppViewModel(
 
     fun saveServer(profile: ServerProfile) {
         val idx = servers.indexOfFirst { it.id == profile.id }
+        val previous = servers.getOrNull(idx)
         if (idx >= 0) servers[idx] = profile else servers.add(profile)
         store.saveServers(servers.toList())
-        if (activeServerId.isBlank()) selectServer(profile.id)
+        if (activeServerId.isBlank()) {
+            selectServer(profile.id)
+        } else if (profile.id == activeServerId && previous != profile) {
+            resetActiveConnections()
+            activeChatId = null
+            loadSessionsForActive()
+        }
     }
 
     fun deleteServer(id: String) {
         servers.removeAll { it.id == id }
         store.saveServers(servers.toList())
-        store.saveSessions(id, emptyList())
+        store.clearLegacySessions(id)
         if (activeServerId == id) {
-            disconnectAll()
+            resetActiveConnections()
             activeServerId = servers.firstOrNull()?.id ?: ""
             store.activeServerId = activeServerId
             loadSessionsForActive()
@@ -93,8 +112,7 @@ class AppViewModel(
 
     fun selectServer(id: String) {
         if (activeServerId == id) return
-        disconnectAll()
-        controllers.clear()
+        resetActiveConnections()
         activeServerId = id
         store.activeServerId = id
         activeChatId = null
@@ -103,6 +121,15 @@ class AppViewModel(
 
     private fun disconnectAll() {
         controllers.values.forEach { it.disconnect() }
+    }
+
+    private fun resetActiveConnections() {
+        disconnectAll()
+        controllers.clear()
+        gatewayTransport?.close()
+        gatewayTransport = null
+        gatewayTransportServerId = ""
+        rejectPendingHostKey()
     }
 
     // ---- preferences ----
@@ -119,14 +146,58 @@ class AppViewModel(
 
     // ---- sessions ----
 
-    private fun loadSessionsForActive() {
-        sessions.clear()
-        activeServerId.takeIf { it.isNotBlank() }?.let {
-            sessions.addAll(store.loadSessions(it).sortedByDescending { s -> s.lastActive })
+    private fun loadSessionsForActive(clearExisting: Boolean = true) {
+        val generation = ++sessionRefreshGeneration
+        val server = activeServer
+        if (clearExisting) sessions.clear()
+        if (server == null) return
+        val legacySessions = store.loadLegacySessions(server.id)
+        viewModelScope.launch {
+            if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                var loaded = listGatewaySessions(gateway, server.token)
+
+                // Releases before the server list API kept titles locally. Migrate
+                // matching titles once, then discard the obsolete local list.
+                var migrationComplete = true
+                if (legacySessions.isNotEmpty()) {
+                    val legacyById = legacySessions.associateBy { it.id }
+                    loaded = loaded.map { remote ->
+                        val legacyName = legacyById[remote.id]?.name.orEmpty()
+                        if (remote.name.isBlank() && legacyName.isNotBlank()) {
+                            try {
+                                renameGatewaySession(gateway, server.token, remote.id, legacyName)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Throwable) {
+                                migrationComplete = false
+                                remote
+                            }
+                        } else {
+                            remote
+                        }
+                    }
+                }
+
+                if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
+                sessions.clear()
+                sessions.addAll(loaded.sortedByDescending { it.lastActive })
+                if (migrationComplete) store.clearLegacySessions(server.id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (generation == sessionRefreshGeneration && activeServerId == server.id) {
+                    toast(
+                        "Could not load sessions: ${failure.message ?: "unknown error"}",
+                        Toast.Kind.Error,
+                    )
+                }
+            }
         }
     }
 
-    fun addOrTouchSession(id: String, name: String = "", workDir: String = "") {
+    private fun addOrTouchSession(id: String, name: String = "", workDir: String = "") {
         val idx = sessions.indexOfFirst { it.id == id }
         val now = nowMillis()
         if (idx >= 0) {
@@ -140,29 +211,70 @@ class AppViewModel(
         } else {
             sessions.add(0, SavedSession(id, name, now, now, workDir))
         }
-        persistSessions()
     }
 
     fun renameSession(id: String, name: String) {
         val idx = sessions.indexOfFirst { it.id == id }
+        val previous = sessions.getOrNull(idx)
         if (idx >= 0) {
             sessions[idx] = sessions[idx].copy(name = name)
-            persistSessions()
         }
-        controllers[id]?.renameSession(name)
+        controllers[id]?.setSessionNameLocally(name)
+        val server = activeServer ?: return
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                val updated = renameGatewaySession(gateway, server.token, id, name)
+                if (activeServerId != server.id) return@launch
+                val current = sessions.indexOfFirst { it.id == id }
+                if (current >= 0) sessions[current] = updated
+                controllers[id]?.setSessionNameLocally(updated.name)
+                sessions.sortByDescending { it.lastActive }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    val current = sessions.indexOfFirst { it.id == id }
+                    if (current >= 0 && sessions[current].name == name && previous != null) {
+                        sessions[current] = previous
+                        controllers[id]?.setSessionNameLocally(previous.name)
+                    }
+                    toast(
+                        "Could not rename session: ${failure.message ?: "unknown error"}",
+                        Toast.Kind.Error,
+                    )
+                }
+            }
+        }
     }
 
     fun removeSession(id: String) {
+        val removed = sessions.firstOrNull { it.id == id }
         sessions.removeAll { it.id == id }
-        persistSessions()
         controllers.remove(id)?.disconnect()
         if (activeChatId == id) {
             activeChatId = null
         }
-    }
-
-    private fun persistSessions() {
-        activeServerId.takeIf { it.isNotBlank() }?.let { store.saveSessions(it, sessions.toList()) }
+        val server = activeServer ?: return
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                deleteGatewaySession(gateway, server.token, id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    if (removed != null && sessions.none { it.id == id }) {
+                        sessions.add(removed)
+                        sessions.sortByDescending { it.lastActive }
+                    }
+                    toast(
+                        "Could not delete session: ${failure.message ?: "unknown error"}",
+                        Toast.Kind.Error,
+                    )
+                }
+            }
+        }
     }
 
     // ---- chat controllers ----
@@ -170,6 +282,7 @@ class AppViewModel(
     fun controllerFor(sessionId: String): ChatController {
         return controllers.getOrPut(sessionId) {
             val server = activeServer ?: error("no active server")
+            val transport = transportFor(server)
             ChatController(
                 scope = viewModelScope,
                 gateway = server.url,
@@ -184,6 +297,7 @@ class AppViewModel(
                         }
                         activeChatId = sid
                     }
+                    loadSessionsForActive(clearExisting = false)
                 },
                 onAutoName = { sid, title ->
                     val existing = sessions.firstOrNull { it.id == sid }
@@ -209,6 +323,7 @@ class AppViewModel(
                         notify = s.appName,
                     )
                 },
+                resolveGateway = transport::resolveGateway,
             )
         }
     }
@@ -228,7 +343,60 @@ class AppViewModel(
     /** Lists subdirectories of [path] on the active gateway for the workspace browser. */
     suspend fun listDirs(path: String): FsListResponse {
         val server = activeServer ?: throw FsListException("no active server")
-        return listGatewayDirs(server.url, server.token, path)
+        val gateway = transportFor(server).resolveGateway()
+        return listGatewayDirs(gateway, server.token, path)
+    }
+
+    // ---- gateway transport / SSH host trust ----
+
+    private fun transportFor(server: ServerProfile): GatewayTransport {
+        gatewayTransport?.takeIf { gatewayTransportServerId == server.id }?.let { return it }
+        gatewayTransport?.close()
+        return GatewayTransport(
+            profile = server,
+            confirmHostKey = ::confirmSshHostKey,
+            onHostKeyTrusted = { fingerprint -> rememberTrustedHostKey(server.id, fingerprint) },
+        ).also {
+            gatewayTransport = it
+            gatewayTransportServerId = server.id
+        }
+    }
+
+    private suspend fun confirmSshHostKey(prompt: SshHostKeyPrompt): Boolean {
+        val current = sshHostKeyDecision
+        if (current != null) return current.await()
+
+        val decision = CompletableDeferred<Boolean>()
+        sshHostKeyDecision = decision
+        sshHostKeyPrompt = prompt
+        return try {
+            decision.await()
+        } finally {
+            if (sshHostKeyDecision === decision) {
+                sshHostKeyDecision = null
+                sshHostKeyPrompt = null
+            }
+        }
+    }
+
+    fun answerSshHostKeyPrompt(trust: Boolean) {
+        sshHostKeyPrompt = null
+        sshHostKeyDecision?.complete(trust)
+    }
+
+    private fun rejectPendingHostKey() {
+        sshHostKeyPrompt = null
+        sshHostKeyDecision?.complete(false)
+        sshHostKeyDecision = null
+    }
+
+    private fun rememberTrustedHostKey(serverId: String, fingerprint: String) {
+        val index = servers.indexOfFirst { it.id == serverId }
+        if (index < 0) return
+        val server = servers[index]
+        if (server.ssh.hostKeySha256 == fingerprint) return
+        servers[index] = server.copy(ssh = server.ssh.copy(hostKeySha256 = fingerprint))
+        store.saveServers(servers.toList())
     }
 
     // ---- toasts ----
@@ -244,7 +412,6 @@ class AppViewModel(
     }
 
     override fun onCleared() {
-        controllers.values.forEach { it.disconnect() }
-        controllers.clear()
+        resetActiveConnections()
     }
 }

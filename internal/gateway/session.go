@@ -12,35 +12,65 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 type piSession struct {
-	id         string
-	dir        string
-	command    string
-	args       []string
-	workDir    string
-	maxEvent   int64
-	logger     *slog.Logger
-	onExit     func(*piSession, error)
-	input      chan []byte
-	processEnd chan struct{}
-	done       chan struct{}
+	id          string
+	dir         string
+	command     string
+	args        []string
+	workDir     string
+	maxEvent    int64
+	maxReplay   int64
+	idleAfter   time.Duration
+	historyWait time.Duration
+	logger      *slog.Logger
+	onExit      func(*piSession, error)
+	onActivity  func() error
+	onName      func(string) error
+	input       chan []byte
+	inputMu     sync.Mutex
+	processEnd  chan struct{}
+	done        chan struct{}
 
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	ioWG     sync.WaitGroup
-	stopOnce sync.Once
-	stopping atomic.Bool
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	ioWG         sync.WaitGroup
+	backgroundWG sync.WaitGroup
+	stopOnce     sync.Once
+	stopping     atomic.Bool
 
 	failureMu sync.Mutex
 	failure   error
 
 	clientsMu     sync.Mutex
 	clientsClosed bool
-	clients       map[*wsClient]struct{}
+	clients       map[*wsClient]uint64
+
+	replayMu        sync.Mutex
+	outputSeq       uint64
+	historyReady    bool
+	historyResponse []byte
+	historyThrough  uint64
+	replay          []replayRecord
+	replayBytes     int64
+	replayTruncated bool
+	replayFile      *os.File
+	historyInitMu   sync.Mutex
+
+	internalMu       sync.Mutex
+	internalSequence atomic.Uint64
+	internalWaiters  map[string]chan []byte
+
+	idleMu          sync.Mutex
+	idleTimer       *time.Timer
+	idleGeneration  uint64
+	settled         bool
+	checkpointing   bool
+	checkpointToken uint64
 }
 
 type piSessionConfig struct {
@@ -50,26 +80,44 @@ type piSessionConfig struct {
 	Args           []string
 	WorkDir        string
 	MaxEventBytes  int64
+	MaxReplayBytes int64
 	InputQueueSize int
+	SessionIdle    time.Duration
+	HistoryTimeout time.Duration
+	NewSession     bool
 	Logger         *slog.Logger
 	OnExit         func(*piSession, error)
+	OnActivity     func() error
+	OnName         func(string) error
 }
 
 func newPiSession(cfg piSessionConfig) *piSession {
-	return &piSession{
-		id:         cfg.ID,
-		dir:        cfg.Dir,
-		command:    cfg.Command,
-		args:       append([]string(nil), cfg.Args...),
-		workDir:    cfg.WorkDir,
-		maxEvent:   cfg.MaxEventBytes,
-		logger:     cfg.Logger.With("session_id", cfg.ID),
-		onExit:     cfg.OnExit,
-		input:      make(chan []byte, cfg.InputQueueSize),
-		processEnd: make(chan struct{}),
-		done:       make(chan struct{}),
-		clients:    make(map[*wsClient]struct{}),
+	session := &piSession{
+		id:              cfg.ID,
+		dir:             cfg.Dir,
+		command:         cfg.Command,
+		args:            append([]string(nil), cfg.Args...),
+		workDir:         cfg.WorkDir,
+		maxEvent:        cfg.MaxEventBytes,
+		maxReplay:       cfg.MaxReplayBytes,
+		idleAfter:       cfg.SessionIdle,
+		historyWait:     cfg.HistoryTimeout,
+		logger:          cfg.Logger.With("session_id", cfg.ID),
+		onExit:          cfg.OnExit,
+		onActivity:      cfg.OnActivity,
+		onName:          cfg.OnName,
+		input:           make(chan []byte, cfg.InputQueueSize),
+		processEnd:      make(chan struct{}),
+		done:            make(chan struct{}),
+		clients:         make(map[*wsClient]uint64),
+		internalWaiters: make(map[string]chan []byte),
+		settled:         true,
 	}
+	if cfg.NewSession {
+		session.historyReady = true
+		session.historyResponse = emptyHistoryResponse()
+	}
+	return session
 }
 
 func (s *piSession) start() error {
@@ -124,8 +172,11 @@ func (s *piSession) submit(clientDone <-chan struct{}, command []byte) error {
 	default:
 	}
 
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	select {
 	case s.input <- command:
+		s.noteInput()
 		return nil
 	case <-s.done:
 		return errors.New("pi session is not running")
@@ -134,41 +185,43 @@ func (s *piSession) submit(clientDone <-chan struct{}, command []byte) error {
 	}
 }
 
-func (s *piSession) addClient(client *wsClient) bool {
-	s.clientsMu.Lock()
-	defer s.clientsMu.Unlock()
-	if s.clientsClosed {
-		return false
-	}
-	s.clients[client] = struct{}{}
-	return true
-}
-
 func (s *piSession) removeClient(client *wsClient) {
 	s.clientsMu.Lock()
 	delete(s.clients, client)
 	s.clientsMu.Unlock()
 }
 
-func (s *piSession) broadcast(message []byte) {
+func (s *piSession) broadcast(message []byte, outputSeq uint64) {
 	s.clientsMu.Lock()
-	clients := make([]*wsClient, 0, len(s.clients))
-	for client := range s.clients {
-		clients = append(clients, client)
+	type target struct {
+		client    *wsClient
+		liveAfter uint64
+	}
+	clients := make([]target, 0, len(s.clients))
+	for client, liveAfter := range s.clients {
+		clients = append(clients, target{client: client, liveAfter: liveAfter})
 	}
 	s.clientsMu.Unlock()
 
-	for _, client := range clients {
-		if !client.enqueue(message) {
-			s.removeClient(client)
+	for _, target := range clients {
+		if outputSeq <= target.liveAfter {
+			continue
+		}
+		if !target.client.enqueue(message) {
+			s.removeClient(target.client)
 		}
 	}
 }
 
 func (s *piSession) requestStop() {
+	s.stop(websocket.CloseGoingAway, "pi2ws is shutting down")
+}
+
+func (s *piSession) stop(code int, reason string) {
 	s.stopOnce.Do(func() {
 		s.stopping.Store(true)
-		s.closeClients(websocket.CloseGoingAway, "pi2ws is shutting down")
+		s.stopIdleTimer()
+		s.closeClients(code, reason)
 		if s.stdin != nil {
 			_ = s.stdin.Close()
 		}
@@ -222,7 +275,7 @@ func (s *piSession) readOutput(stdout io.Reader) {
 	scanner.Buffer(make([]byte, 64<<10), int(s.maxEvent))
 	for scanner.Scan() {
 		message := bytes.Clone(scanner.Bytes())
-		s.broadcast(message)
+		s.handleOutput(message)
 	}
 	if err := scanner.Err(); err != nil {
 		s.fail(fmt.Errorf("read pi stdout: %w", err))
@@ -245,6 +298,8 @@ func (s *piSession) wait() {
 	waitErr := s.cmd.Wait()
 	close(s.processEnd)
 	s.ioWG.Wait()
+	s.backgroundWG.Wait()
+	s.closeReplayStore()
 
 	s.failureMu.Lock()
 	failure := s.failure
@@ -255,7 +310,6 @@ func (s *piSession) wait() {
 
 	close(s.done)
 	if s.stopping.Load() {
-		s.closeClients(websocket.CloseGoingAway, "pi2ws is shutting down")
 		s.logger.Info("pi process stopped")
 	} else {
 		reason := "pi process exited"

@@ -68,6 +68,7 @@ fun SessionListPane(
     onDeleteSession: (SavedSession) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         // header
         Row(
@@ -122,12 +123,20 @@ fun SessionListPane(
                             active = wide && session.id == activeChatId,
                             onClick = { onSelectSession(session) },
                             onRename = { onRenameSession(session) },
-                            onDelete = { onDeleteSession(session) },
+                            onDelete = { deleteCandidate = session },
                         )
                     }
                 }
             }
         }
+    }
+    deleteCandidate?.let { session ->
+        ConfirmDialog(
+            title = S.deleteSessionTitle,
+            body = S.deleteSessionBody,
+            onDismiss = { deleteCandidate = null },
+            onConfirm = { onDeleteSession(session) },
+        )
     }
 }
 

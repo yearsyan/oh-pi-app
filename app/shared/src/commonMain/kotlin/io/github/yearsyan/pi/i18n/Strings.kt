@@ -22,6 +22,38 @@ interface Strings {
     val connectAndSave: String
     val serverUrlInvalid: String
     val serverRequired: String
+    val connectionModeLabel: String
+    val directConnection: String
+    val sshConnection: String
+    val sshGatewayPlaintextHint: String
+    val sshHostLabel: String
+    val sshPortLabel: String
+    val sshUsernameLabel: String
+    val sshAuthenticationLabel: String
+    val sshPasswordAuthentication: String
+    val sshPrivateKeyAuthentication: String
+    val sshPasswordLabel: String
+    val sshPrivateKeyLabel: String
+    val sshPrivateKeyPassphraseLabel: String
+    val sshTrustedHostKeyLabel: String
+    val sshForgetHostKey: String
+    val sshTrustOnFirstUseHint: String
+    val sshHostRequired: String
+    val sshPortInvalid: String
+    val sshUsernameRequired: String
+    val sshPasswordRequired: String
+    val sshPrivateKeyRequired: String
+    val sshGatewayTlsInvalid: String
+
+    // SSH host verification
+    val sshHostKeyTitle: String
+    val sshHostKeyChangedTitle: String
+    val sshHostKeyBody: (String) -> String
+    val sshHostKeyChangedBody: (String) -> String
+    val sshExpectedFingerprint: String
+    val sshObservedFingerprint: String
+    val sshRejectHostKey: String
+    val sshTrustAndConnect: String
 
     // session list
     val sessionsTitle: String
@@ -137,6 +169,37 @@ object EnStrings : Strings {
     override val connectAndSave = "Save & Connect"
     override val serverUrlInvalid = "Address must start with ws://, wss://, http:// or https://"
     override val serverRequired = "Server address is required"
+    override val connectionModeLabel = "Connection"
+    override val directConnection = "Direct"
+    override val sshConnection = "SSH tunnel"
+    override val sshGatewayPlaintextHint = "Use the gateway address as seen by the SSH server, usually http://127.0.0.1:8080. SSH encrypts the connection."
+    override val sshHostLabel = "SSH host"
+    override val sshPortLabel = "Port"
+    override val sshUsernameLabel = "SSH username"
+    override val sshAuthenticationLabel = "Authentication"
+    override val sshPasswordAuthentication = "Password"
+    override val sshPrivateKeyAuthentication = "Private key"
+    override val sshPasswordLabel = "SSH password"
+    override val sshPrivateKeyLabel = "Private key contents"
+    override val sshPrivateKeyPassphraseLabel = "Key passphrase (optional)"
+    override val sshTrustedHostKeyLabel = "Trusted host key"
+    override val sshForgetHostKey = "Forget key"
+    override val sshTrustOnFirstUseHint = "The server fingerprint will be shown for confirmation before credentials are sent."
+    override val sshHostRequired = "SSH host is required"
+    override val sshPortInvalid = "SSH port must be between 1 and 65535"
+    override val sshUsernameRequired = "SSH username is required"
+    override val sshPasswordRequired = "SSH password is required"
+    override val sshPrivateKeyRequired = "Private key contents are required"
+    override val sshGatewayTlsInvalid = "SSH mode requires ws:// or http://; the SSH tunnel already provides encryption"
+
+    override val sshHostKeyTitle = "Trust this SSH server?"
+    override val sshHostKeyChangedTitle = "SSH host key changed"
+    override val sshHostKeyBody = { host: String -> "Verify this fingerprint for $host before connecting. Credentials have not been sent yet." }
+    override val sshHostKeyChangedBody = { host: String -> "The key presented by $host differs from the trusted key. This can indicate a server reinstall or an attack. Only continue after verifying it." }
+    override val sshExpectedFingerprint = "Previously trusted"
+    override val sshObservedFingerprint = "Presented now"
+    override val sshRejectHostKey = "Cancel"
+    override val sshTrustAndConnect = "Trust & connect"
 
     override val sessionsTitle = "Chats"
     override val newChat = "New chat"
@@ -149,7 +212,7 @@ object EnStrings : Strings {
     override val cancel = "Cancel"
     override val confirm = "Save"
     override val deleteSessionTitle = "Delete chat?"
-    override val deleteSessionBody = "This only removes the chat from this device. The session stays on the server."
+    override val deleteSessionBody = "This permanently deletes the chat and its history from the server. This cannot be undone."
     override val untitledSession = "Untitled chat"
 
     override val workspaceDialogTitle = "Choose a workspace"
@@ -214,7 +277,7 @@ object EnStrings : Strings {
     override val addServer = "Add server"
     override val editServer = "Edit server"
     override val deleteServerTitle = "Delete server?"
-    override val deleteServerBody = "Sessions remembered for this server are removed too."
+    override val deleteServerBody = "This only removes the server profile from this device. Sessions on the server are not deleted."
     override val appearanceSection = "Appearance"
     override val themeSystem = "System"
     override val themeLight = "Light"
@@ -246,6 +309,37 @@ object ZhStrings : Strings {
     override val connectAndSave = "保存并连接"
     override val serverUrlInvalid = "地址需以 ws://、wss://、http:// 或 https:// 开头"
     override val serverRequired = "服务器地址不能为空"
+    override val connectionModeLabel = "连接方式"
+    override val directConnection = "直接连接"
+    override val sshConnection = "SSH 隧道"
+    override val sshGatewayPlaintextHint = "填写 SSH 服务器看到的网关地址，通常为 http://127.0.0.1:8080；连接已由 SSH 加密。"
+    override val sshHostLabel = "SSH 主机"
+    override val sshPortLabel = "端口"
+    override val sshUsernameLabel = "SSH 用户名"
+    override val sshAuthenticationLabel = "认证方式"
+    override val sshPasswordAuthentication = "密码"
+    override val sshPrivateKeyAuthentication = "私钥"
+    override val sshPasswordLabel = "SSH 密码"
+    override val sshPrivateKeyLabel = "私钥内容"
+    override val sshPrivateKeyPassphraseLabel = "私钥口令（可选）"
+    override val sshTrustedHostKeyLabel = "已信任主机密钥"
+    override val sshForgetHostKey = "忘记密钥"
+    override val sshTrustOnFirstUseHint = "发送凭据前会先显示服务器指纹，由你确认是否信任。"
+    override val sshHostRequired = "SSH 主机不能为空"
+    override val sshPortInvalid = "SSH 端口必须在 1 到 65535 之间"
+    override val sshUsernameRequired = "SSH 用户名不能为空"
+    override val sshPasswordRequired = "SSH 密码不能为空"
+    override val sshPrivateKeyRequired = "私钥内容不能为空"
+    override val sshGatewayTlsInvalid = "SSH 模式需使用 ws:// 或 http://；SSH 隧道本身已提供加密"
+
+    override val sshHostKeyTitle = "信任这台 SSH 服务器？"
+    override val sshHostKeyChangedTitle = "SSH 主机密钥已变化"
+    override val sshHostKeyBody = { host: String -> "连接 $host 前请核对以下指纹。当前尚未发送认证凭据。" }
+    override val sshHostKeyChangedBody = { host: String -> "$host 提供的密钥与已信任密钥不同，可能是服务器重装，也可能存在攻击。请核实后再继续。" }
+    override val sshExpectedFingerprint = "原已信任"
+    override val sshObservedFingerprint = "本次提供"
+    override val sshRejectHostKey = "取消"
+    override val sshTrustAndConnect = "信任并连接"
 
     override val sessionsTitle = "会话"
     override val newChat = "新会话"
@@ -258,7 +352,7 @@ object ZhStrings : Strings {
     override val cancel = "取消"
     override val confirm = "保存"
     override val deleteSessionTitle = "删除会话？"
-    override val deleteSessionBody = "仅从此设备移除记录，服务器上的会话仍会保留。"
+    override val deleteSessionBody = "这会永久删除服务器上的会话及其历史记录，且无法撤销。"
     override val untitledSession = "未命名会话"
 
     override val workspaceDialogTitle = "选择工作区"
@@ -323,7 +417,7 @@ object ZhStrings : Strings {
     override val addServer = "添加服务器"
     override val editServer = "编辑服务器"
     override val deleteServerTitle = "删除服务器？"
-    override val deleteServerBody = "该服务器下已记住的会话记录也会一并移除。"
+    override val deleteServerBody = "这只会从本设备移除服务器配置，不会删除服务器上的会话。"
     override val appearanceSection = "外观"
     override val themeSystem = "跟随系统"
     override val themeLight = "浅色"

@@ -6,8 +6,17 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A18D64000000000000000001 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */; };
+		A18D64000000000000000002 /* libssh-LGPL-2.1-or-later.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */; };
+		A18D64000000000000000003 /* mbedtls-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000013 /* mbedtls-LICENSE.txt */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		0F15DB9BC8DF494FE6D074CC /* PiApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
+		A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt; sourceTree = SOURCE_ROOT; };
+		A18D64000000000000000013 /* mbedtls-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -52,6 +61,7 @@
 			children = (
 				7552251DBECB0173E35CC86C /* Configuration */,
 				ACBAD709715EEABC3E88E635 /* iosApp */,
+				A18D64000000000000000020 /* Third-Party Licenses */,
 				F6D181EADAF1767E5B0A31A8 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -62,6 +72,16 @@
 				0F15DB9BC8DF494FE6D074CC /* PiApp.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A18D64000000000000000020 /* Third-Party Licenses */ = {
+			isa = PBXGroup;
+			children = (
+				A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */,
+				A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */,
+				A18D64000000000000000013 /* mbedtls-LICENSE.txt */,
+			);
+			name = "Third-Party Licenses";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -129,6 +149,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A18D64000000000000000001 /* THIRD_PARTY_NOTICES.md in Resources */,
+				A18D64000000000000000002 /* libssh-LGPL-2.1-or-later.txt in Resources */,
+				A18D64000000000000000003 /* mbedtls-LICENSE.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

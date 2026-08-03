@@ -14,6 +14,9 @@ const (
 	defaultMaxMessageBytes = int64(16 << 20)
 	defaultInputQueueSize  = 64
 	defaultClientQueueSize = 128
+	defaultReplayBytes     = int64(64 << 20)
+	defaultSessionIdle     = 5 * time.Minute
+	defaultHistoryTimeout  = 10 * time.Second
 )
 
 // Config controls the HTTP gateway and the pi child processes it owns.
@@ -25,10 +28,13 @@ type Config struct {
 	PiArgs          []string
 	AllowedOrigins  []string
 	MaxMessageBytes int64
+	MaxReplayBytes  int64
 	InputQueueSize  int
 	ClientQueueSize int
 	WriteTimeout    time.Duration
 	PongTimeout     time.Duration
+	SessionIdle     time.Duration
+	HistoryTimeout  time.Duration
 	Logger          *slog.Logger
 }
 
@@ -55,6 +61,12 @@ func (c Config) withDefaults() (Config, error) {
 	if c.MaxMessageBytes < 1 {
 		return Config{}, fmt.Errorf("max message bytes must be positive")
 	}
+	if c.MaxReplayBytes == 0 {
+		c.MaxReplayBytes = defaultReplayBytes
+	}
+	if c.MaxReplayBytes < 1 {
+		return Config{}, fmt.Errorf("max replay bytes must be positive")
+	}
 	if c.InputQueueSize == 0 {
 		c.InputQueueSize = defaultInputQueueSize
 	}
@@ -78,6 +90,18 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.PongTimeout < 2*c.WriteTimeout {
 		return Config{}, fmt.Errorf("pong timeout must be at least twice the write timeout")
+	}
+	if c.SessionIdle == 0 {
+		c.SessionIdle = defaultSessionIdle
+	}
+	if c.SessionIdle < 1 {
+		return Config{}, fmt.Errorf("session idle timeout must be positive")
+	}
+	if c.HistoryTimeout == 0 {
+		c.HistoryTimeout = defaultHistoryTimeout
+	}
+	if c.HistoryTimeout < 1 {
+		return Config{}, fmt.Errorf("history timeout must be positive")
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()

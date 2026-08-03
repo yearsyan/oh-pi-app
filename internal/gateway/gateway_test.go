@@ -61,6 +61,8 @@ func TestPiHelperProcess(t *testing.T) {
 	scanner.Split(splitLF)
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	encoder := json.NewEncoder(os.Stdout)
+	var entries []any
+	var historyDelay time.Duration
 	for scanner.Scan() {
 		var command map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &command); err != nil {
@@ -69,6 +71,21 @@ func TestPiHelperProcess(t *testing.T) {
 		commandType, _ := command["type"].(string)
 		if commandType == "fake_exit" {
 			os.Exit(0)
+		}
+		if commandType == "fake_set_entries" {
+			entries, _ = command["entries"].([]any)
+		}
+		if commandType == "fake_set_history_delay" {
+			milliseconds, _ := command["milliseconds"].(float64)
+			historyDelay = time.Duration(milliseconds) * time.Millisecond
+		}
+		if commandType == "fake_emit" {
+			events, _ := command["events"].([]any)
+			for _, event := range events {
+				if err := encoder.Encode(event); err != nil {
+					os.Exit(6)
+				}
+			}
 		}
 		response := map[string]any{
 			"type":       "response",
@@ -82,6 +99,17 @@ func TestPiHelperProcess(t *testing.T) {
 		}
 		if message, exists := command["message"]; exists {
 			response["message"] = message
+		}
+		if commandType == "get_entries" {
+			if historyDelay > 0 {
+				time.Sleep(historyDelay)
+			}
+			var leafID any
+			if len(entries) > 0 {
+				entry, _ := entries[len(entries)-1].(map[string]any)
+				leafID = entry["id"]
+			}
+			response["data"] = map[string]any{"entries": entries, "leafId": leafID}
 		}
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(6)
@@ -141,7 +169,7 @@ func TestOnePiProcessSharedByMultipleWebSockets(t *testing.T) {
 		"token":      {testToken},
 	})
 	defer second.Close()
-	readySecond := readEvent(t, second)
+	readySecond, _, _ := readAttachHistory(t, second)
 	if readySecond.string("session_id") != sessionID || readySecond.string("action") != "attach" {
 		t.Fatalf("second ready = %#v", readySecond)
 	}
@@ -199,7 +227,7 @@ func TestAttachRestartsHistoricalSessionAfterGatewayRestart(t *testing.T) {
 		"token":      {testToken},
 	})
 	defer second.Close()
-	attached := readEvent(t, second)
+	attached, _, _ := readAttachHistory(t, second)
 	if attached.string("session_id") != sessionID {
 		t.Fatalf("attached session = %q, want %q", attached.string("session_id"), sessionID)
 	}
@@ -294,7 +322,7 @@ func TestCreateWithCustomWorkDir(t *testing.T) {
 		"token":      {testToken},
 	})
 	defer attached.Close()
-	readyAttached := readEvent(t, attached)
+	readyAttached, _, _ := readAttachHistory(t, attached)
 	if readyAttached.string("work_dir") != customWorkDir {
 		t.Fatalf("attached ready work_dir = %q, want %q", readyAttached.string("work_dir"), customWorkDir)
 	}
@@ -445,6 +473,342 @@ func TestPiExitClosesAttachedWebSockets(t *testing.T) {
 	}
 }
 
+func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	ready := readEvent(t, first)
+	sessionID := ready.string("session_id")
+
+	activeEvents := []any{
+		map[string]any{"type": "agent_start"},
+		map[string]any{"type": "message_start", "message": map[string]any{
+			"role": "user", "content": []any{map[string]any{"type": "text", "text": "hello"}}, "timestamp": 1,
+		}},
+		map[string]any{"type": "message_end", "message": map[string]any{
+			"role": "user", "content": []any{map[string]any{"type": "text", "text": "hello"}}, "timestamp": 1,
+		}},
+		map[string]any{"type": "message_start", "message": map[string]any{
+			"role": "assistant", "content": []any{}, "timestamp": 2,
+		}},
+		map[string]any{
+			"type": "message_update",
+			"assistantMessageEvent": map[string]any{
+				"type": "text_delta", "contentIndex": 0, "delta": "partial",
+			},
+		},
+		map[string]any{
+			"type": "extension_ui_request", "id": "dialog-1", "method": "confirm",
+			"title": "Continue?", "message": "The pi process is waiting for this response.",
+		},
+	}
+	writeJSON(t, first, map[string]any{"id": "emit-active", "type": "fake_emit", "events": activeEvents})
+	for range activeEvents {
+		_ = readEvent(t, first)
+	}
+	if response := readEvent(t, first); response.string("id") != "emit-active" {
+		t.Fatalf("fake emit response = %#v", response)
+	}
+
+	second := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer second.Close()
+	attached, history, replay := readAttachHistory(t, second)
+	if attached.string("session_id") != sessionID || !attached.boolean("history") {
+		t.Fatalf("attach ready = %#v", attached)
+	}
+	if history.string("command") != "get_entries" || !history.boolean("success") {
+		t.Fatalf("history response = %#v", history)
+	}
+	wantTypes := []string{
+		"agent_start", "message_start", "message_end", "message_start", "message_update", "extension_ui_request",
+	}
+	if len(replay) != len(wantTypes) {
+		t.Fatalf("replay event count = %d, want %d: %#v", len(replay), len(wantTypes), replay)
+	}
+	for index, want := range wantTypes {
+		if replay[index].string("type") != want {
+			t.Fatalf("replay[%d] type = %q, want %q", index, replay[index].string("type"), want)
+		}
+	}
+
+	liveEvent := map[string]any{
+		"type": "message_update",
+		"assistantMessageEvent": map[string]any{
+			"type": "text_delta", "contentIndex": 0, "delta": " live",
+		},
+	}
+	writeJSON(t, first, map[string]any{"id": "emit-live", "type": "fake_emit", "events": []any{liveEvent}})
+	if got := readEvent(t, first); got.string("type") != "message_update" {
+		t.Fatalf("first live event = %#v", got)
+	}
+	if got := readEvent(t, second); got.string("type") != "message_update" {
+		t.Fatalf("second live event = %#v", got)
+	}
+	if got := readEvent(t, first); got.string("id") != "emit-live" {
+		t.Fatalf("first live response = %#v", got)
+	}
+	if got := readEvent(t, second); got.string("id") != "emit-live" {
+		t.Fatalf("second live response = %#v", got)
+	}
+
+	_ = app
+}
+
+func TestAgentSettledCheckpointsHistoryAndClearsReplay(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+
+	entry := map[string]any{
+		"type": "message", "id": "entry-1", "parentId": nil,
+		"message": map[string]any{"role": "user", "content": "persisted", "timestamp": 1},
+	}
+	writeJSON(t, first, map[string]any{"id": "set-entries", "type": "fake_set_entries", "entries": []any{entry}})
+	if got := readEvent(t, first); got.string("id") != "set-entries" {
+		t.Fatalf("set entries response = %#v", got)
+	}
+	writeJSON(t, first, map[string]any{
+		"id": "settle", "type": "fake_emit", "events": []any{
+			map[string]any{"type": "agent_start"},
+			map[string]any{"type": "agent_settled"},
+		},
+	})
+	if got := readEvent(t, first); got.string("type") != "agent_start" {
+		t.Fatalf("agent_start = %#v", got)
+	}
+	if got := readEvent(t, first); got.string("type") != "agent_settled" {
+		t.Fatalf("agent_settled = %#v", got)
+	}
+	if got := readEvent(t, first); got.string("id") != "settle" {
+		t.Fatalf("settle response = %#v", got)
+	}
+
+	session := activeSession(t, app, sessionID)
+	waitFor(t, 3*time.Second, func() bool {
+		session.replayMu.Lock()
+		defer session.replayMu.Unlock()
+		return session.historyThrough > 0 && len(session.replay) == 0
+	})
+
+	second := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer second.Close()
+	_, history, replay := readAttachHistory(t, second)
+	data, _ := history["data"].(map[string]any)
+	entries, _ := data["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("checkpoint entries = %#v, want one", entries)
+	}
+	if len(replay) != 0 {
+		t.Fatalf("settled session replay = %#v, want empty", replay)
+	}
+}
+
+func TestActiveReplaySurvivesGatewayRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	firstGateway, firstServer := startTestGateway(t, dataDir)
+	first := dialWebSocket(t, firstServer, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	sessionID := readEvent(t, first).string("session_id")
+	events := []any{
+		map[string]any{"type": "agent_start"},
+		map[string]any{"type": "message_start", "message": map[string]any{
+			"role": "assistant", "content": []any{}, "timestamp": 2,
+		}},
+		map[string]any{
+			"type": "message_update",
+			"assistantMessageEvent": map[string]any{
+				"type": "text_delta", "contentIndex": 0, "delta": "survives restart",
+			},
+		},
+	}
+	writeJSON(t, first, map[string]any{"id": "persist-tail", "type": "fake_emit", "events": events})
+	for range events {
+		_ = readEvent(t, first)
+	}
+	_ = readEvent(t, first)
+	_ = first.Close()
+	shutdownGateway(t, firstGateway)
+	firstServer.Close()
+
+	secondGateway, secondServer := startTestGateway(t, dataDir)
+	defer shutdownGateway(t, secondGateway)
+	second := dialWebSocket(t, secondServer, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer second.Close()
+	_, _, replay := readAttachHistory(t, second)
+	if len(replay) != len(events) {
+		t.Fatalf("recovered replay count = %d, want %d: %#v", len(replay), len(events), replay)
+	}
+	if replay[2].string("type") != "message_update" {
+		t.Fatalf("recovered final replay event = %#v", replay[2])
+	}
+}
+
+func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	newStoredSession := func(newSession bool) *piSession {
+		return newPiSession(piSessionConfig{
+			ID:             "11111111-1111-4111-8111-111111111111",
+			Dir:            dir,
+			MaxEventBytes:  1 << 20,
+			MaxReplayBytes: 1 << 20,
+			InputQueueSize: 1,
+			SessionIdle:    time.Minute,
+			HistoryTimeout: time.Second,
+			NewSession:     newSession,
+			Logger:         logger,
+			OnExit:         func(*piSession, error) {},
+		})
+	}
+
+	session := newStoredSession(true)
+	if err := session.openReplayStore(true); err != nil {
+		t.Fatalf("open replay store: %v", err)
+	}
+	session.replayMu.Lock()
+	for seq := uint64(1); seq <= 3; seq++ {
+		payload, _ := json.Marshal(map[string]any{"type": "message_update", "seq": seq})
+		if err := session.appendReplayLocked(replayRecord{Seq: seq, Payload: payload}); err != nil {
+			session.replayMu.Unlock()
+			t.Fatalf("append replay %d: %v", seq, err)
+		}
+	}
+	session.outputSeq = 3
+	session.replayTruncated = true
+	if err := session.checkpointHistoryLocked(emptyHistoryResponse(), 2); err != nil {
+		session.replayMu.Unlock()
+		t.Fatalf("checkpoint history: %v", err)
+	}
+	session.replayMu.Unlock()
+	session.closeReplayStore()
+
+	recovered := newStoredSession(false)
+	if err := recovered.openReplayStore(false); err != nil {
+		t.Fatalf("recover replay store: %v", err)
+	}
+	defer recovered.closeReplayStore()
+	recovered.replayMu.Lock()
+	defer recovered.replayMu.Unlock()
+	if recovered.historyThrough != 2 {
+		t.Fatalf("history through = %d, want 2", recovered.historyThrough)
+	}
+	if len(recovered.replay) != 1 || recovered.replay[0].Seq != 3 {
+		t.Fatalf("recovered replay = %#v, want only seq 3", recovered.replay)
+	}
+}
+
+func TestSettledSessionStopsAfterIdleTimeout(t *testing.T) {
+	dataDir := t.TempDir()
+	app, server := startTestGatewayWithConfig(t, dataDir, func(cfg *Config) {
+		cfg.SessionIdle = 120 * time.Millisecond
+	})
+	first := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	sessionID := readEvent(t, first).string("session_id")
+	session := activeSession(t, app, sessionID)
+
+	writeJSON(t, first, map[string]any{
+		"id": "start", "type": "fake_emit", "events": []any{map[string]any{"type": "agent_start"}},
+	})
+	_ = readEvent(t, first)
+	_ = readEvent(t, first)
+	time.Sleep(2 * app.cfg.SessionIdle)
+	if session.isDone() {
+		t.Fatal("busy session stopped at the idle timeout")
+	}
+
+	writeJSON(t, first, map[string]any{
+		"id": "settled", "type": "fake_emit", "events": []any{map[string]any{"type": "agent_settled"}},
+	})
+	_ = readEvent(t, first)
+	_ = readEvent(t, first)
+	waitFor(t, 3*time.Second, session.isDone)
+
+	_ = first.SetReadDeadline(time.Now().Add(time.Second))
+	_, _, err := first.ReadMessage()
+	if err == nil || !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+		t.Fatalf("idle WebSocket close = %v, want code %d", err, websocket.CloseNormalClosure)
+	}
+
+	second := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer second.Close()
+	_, _, _ = readAttachHistory(t, second)
+	writeJSON(t, second, map[string]any{"id": "restart-sync", "type": "get_state"})
+	if got := readEvent(t, second); got.string("id") != "restart-sync" {
+		t.Fatalf("restart sync response = %#v", got)
+	}
+	waitFor(t, time.Second, func() bool {
+		starts, err := os.ReadFile(filepath.Join(dataDir, "sessions", sessionID, "fake-starts.log"))
+		return err == nil && len(strings.Fields(string(starts))) == 2
+	})
+}
+
+func TestIdleTimeoutWaitsForHistoryCheckpoint(t *testing.T) {
+	app, server := startTestGatewayWithConfig(t, t.TempDir(), func(cfg *Config) {
+		cfg.SessionIdle = 80 * time.Millisecond
+		cfg.HistoryTimeout = time.Second
+	})
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer client.Close()
+	sessionID := readEvent(t, client).string("session_id")
+	session := activeSession(t, app, sessionID)
+
+	writeJSON(t, client, map[string]any{
+		"id": "delay-history", "type": "fake_set_history_delay", "milliseconds": 250,
+	})
+	_ = readEvent(t, client)
+	writeJSON(t, client, map[string]any{
+		"id": "settle-slow-checkpoint", "type": "fake_emit", "events": []any{
+			map[string]any{"type": "agent_start"},
+			map[string]any{"type": "agent_settled"},
+		},
+	})
+	_ = readEvent(t, client)
+	_ = readEvent(t, client)
+	_ = readEvent(t, client)
+
+	time.Sleep(2 * app.cfg.SessionIdle)
+	if session.isDone() {
+		t.Fatal("session stopped before its history checkpoint completed")
+	}
+	waitFor(t, 2*time.Second, session.isDone)
+}
+
 func TestNormalizeCommandUsesOneStrictLFRecord(t *testing.T) {
 	input := []byte("{\n \"type\": \"prompt\", \"message\": \"left\u2028right\" \n}")
 	command, commandType, err := normalizeCommand(input)
@@ -482,9 +846,13 @@ func TestChildEnvironmentDoesNotExposeGatewayToken(t *testing.T) {
 }
 
 func startTestGateway(t *testing.T, dataDir string) (*Gateway, *httptest.Server) {
+	return startTestGatewayWithConfig(t, dataDir, nil)
+}
+
+func startTestGatewayWithConfig(t *testing.T, dataDir string, configure func(*Config)) (*Gateway, *httptest.Server) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	app, err := New(Config{
+	cfg := Config{
 		Token:           testToken,
 		DataDir:         dataDir,
 		WorkDir:         t.TempDir(),
@@ -494,7 +862,11 @@ func startTestGateway(t *testing.T, dataDir string) (*Gateway, *httptest.Server)
 		WriteTimeout:    250 * time.Millisecond,
 		PongTimeout:     2 * time.Second,
 		Logger:          logger,
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	app, err := New(cfg)
 	if err != nil {
 		t.Fatalf("create gateway: %v", err)
 	}
@@ -504,6 +876,29 @@ func startTestGateway(t *testing.T, dataDir string) (*Gateway, *httptest.Server)
 		server.Close()
 	})
 	return app, server
+}
+
+func activeSession(t *testing.T, app *Gateway, sessionID string) *piSession {
+	t.Helper()
+	app.manager.mu.Lock()
+	defer app.manager.mu.Unlock()
+	session := app.manager.sessions[sessionID]
+	if session == nil {
+		t.Fatalf("session %q is not active", sessionID)
+	}
+	return session
+}
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not satisfied before timeout")
 }
 
 func shutdownGateway(t *testing.T, app *Gateway) {
@@ -548,6 +943,45 @@ func readEvent(t *testing.T, conn *websocket.Conn) event {
 		t.Fatalf("decode WebSocket event %q: %v", message, err)
 	}
 	return value
+}
+
+func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []event) {
+	t.Helper()
+	ready := readEvent(t, conn)
+	if ready.string("type") != "pi2ws" || ready.string("event") != "ready" {
+		t.Fatalf("attach first message = %#v, want ready", ready)
+	}
+	history := readEvent(t, conn)
+	if history.string("type") != "response" || history.string("command") != "get_entries" {
+		t.Fatalf("attach history message = %#v, want get_entries response", history)
+	}
+	begin := readEvent(t, conn)
+	if begin.string("type") != "pi2ws" || begin.string("event") != "replay_begin" {
+		t.Fatalf("attach replay start = %#v", begin)
+	}
+
+	var replay []event
+	for {
+		message := readEvent(t, conn)
+		if message.string("type") != "pi2ws" {
+			t.Fatalf("attach replay envelope = %#v", message)
+		}
+		switch message.string("event") {
+		case "replay":
+			payload, ok := message["payload"].(map[string]any)
+			if !ok {
+				t.Fatalf("replay payload = %#v", message["payload"])
+			}
+			replay = append(replay, event(payload))
+		case "replay_unavailable":
+			// The caller can inspect the empty/incomplete replay through later
+			// assertions; this helper still drains the initial backlog.
+		case "replay_end":
+			return ready, history, replay
+		default:
+			t.Fatalf("unexpected replay event = %#v", message)
+		}
+	}
 }
 
 func writeJSON(t *testing.T, conn *websocket.Conn, value any) {

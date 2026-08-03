@@ -19,3 +19,8 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# JNI entry points use the class and method names as their exported ABI.
+-keep class io.github.yearsyan.pi.ssh.NativeSshBridge {
+    native <methods>;
+}

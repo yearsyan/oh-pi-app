@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import io.github.yearsyan.pi.data.ConnState
 import io.github.yearsyan.pi.net.PiClient
 import io.github.yearsyan.pi.net.PiJson
+import io.github.yearsyan.pi.net.GatewayConnectionException
 import io.github.yearsyan.pi.net.argsToString
 import io.github.yearsyan.pi.net.arr
 import io.github.yearsyan.pi.net.bool
@@ -55,6 +56,7 @@ class ChatController(
     private val onSessionReady: (sessionId: String, isNew: Boolean, workDir: String) -> Unit,
     private val onAutoName: (sessionId: String, title: String) -> Unit,
     private val strings: () -> ChatStrings,
+    private val resolveGateway: suspend () -> String = { gateway },
 ) {
     /** Small string contract so the controller stays UI-independent. */
     data class ChatStrings(
@@ -101,9 +103,11 @@ class ChatController(
     private var lastWorkDir = ""
     private var autoNamed = false
     private var reconnectJob: Job? = null
+    private var connectionSetupJob: Job? = null
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
+    private var refreshHistoryAfterSettle = false
 
     // ---------- connection ----------
 
@@ -121,27 +125,51 @@ class ChatController(
     private fun startConnection(clearTimeline: Boolean) {
         val generation = ++connectionGeneration
         println("[PiChat] connect action=$lastAction sid=$lastSessionId workDir=$lastWorkDir")
+        connectionSetupJob?.cancel()
+        client.disconnect()
         conn = ConnState.Connecting
         if (clearTimeline) {
             items.clear()
             pendingUserKeys.clear()
         }
         isLoadingHistory = items.isEmpty()
-        client.connect(
-            buildWsUrl(gateway, token, lastAction, lastSessionId, lastWorkDir),
-            object : PiClient.Listener {
-                override fun onOpen() {}
-                override fun onMessage(text: String) {
-                    if (generation == connectionGeneration) onGatewayMessage(text)
+        connectionSetupJob = scope.launch {
+            val resolvedGateway =
+                try {
+                    resolveGateway()
+                } catch (failure: GatewayConnectionException) {
+                    if (generation == connectionGeneration) {
+                        handleConnectionFailure(failure.message.orEmpty(), failure.retryable)
+                    }
+                    return@launch
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    if (generation == connectionGeneration) {
+                        handleConnectionFailure(
+                            failure.message ?: failure::class.simpleName ?: "Connection setup failed",
+                            retryable = false,
+                        )
+                    }
+                    return@launch
                 }
-                override fun onClose(code: Short, reason: String) {
-                    if (generation == connectionGeneration) handleConnectionClosed(code, reason)
-                }
-                override fun onFailure(message: String) {
-                    if (generation == connectionGeneration) handleConnectionFailure(message)
-                }
-            },
-        )
+            if (generation != connectionGeneration) return@launch
+            client.connect(
+                buildWsUrl(resolvedGateway, token, lastAction, lastSessionId, lastWorkDir),
+                object : PiClient.Listener {
+                    override fun onOpen() {}
+                    override fun onMessage(text: String) {
+                        if (generation == connectionGeneration) onGatewayMessage(text)
+                    }
+                    override fun onClose(code: Short, reason: String) {
+                        if (generation == connectionGeneration) handleConnectionClosed(code, reason)
+                    }
+                    override fun onFailure(message: String) {
+                        if (generation == connectionGeneration) handleConnectionFailure(message)
+                    }
+                },
+            )
+        }
     }
 
     fun reconnect() {
@@ -161,6 +189,8 @@ class ChatController(
         reconnectEnabled = false
         reconnectJob?.cancel()
         reconnectJob = null
+        connectionSetupJob?.cancel()
+        connectionSetupJob = null
         reconnectAttempt = 0
         connectionGeneration++
         client.disconnect()
@@ -186,9 +216,9 @@ class ChatController(
         scheduleReconnect()
     }
 
-    private fun handleConnectionFailure(message: String) {
+    private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
         isStreaming = false
-        if (!reconnectEnabled || !hasSafeReconnectTarget()) {
+        if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Error
             isLoadingHistory = false
             if (reconnectEnabled) onToast(message, Toast.Kind.Error)
@@ -280,9 +310,8 @@ class ChatController(
         }
     }
 
-    fun renameSession(name: String) {
+    fun setSessionNameLocally(name: String) {
         sessionName = name
-        sendCommand { put("type", "set_session_name"); put("name", name) }
     }
 
     fun respondDialog(response: JsonObjectBuilder.() -> Unit) {
@@ -332,6 +361,10 @@ class ChatController(
                         }
                     }
                 }
+                if (refreshHistoryAfterSettle) {
+                    refreshHistoryAfterSettle = false
+                    sendCommand { put("type", "get_entries"); this }
+                }
             }
             "turn_start" -> Unit
             "turn_end" -> msg.obj("message")?.let { finalizeAssistant(it) }
@@ -369,6 +402,7 @@ class ChatController(
     private fun handleGatewayEvent(msg: JsonObject) {
         when (msg.str("event")) {
             "ready" -> {
+                refreshHistoryAfterSettle = false
                 conn = ConnState.Ready
                 val sid = msg.strOrEmpty("session_id")
                 sessionId = sid
@@ -388,9 +422,21 @@ class ChatController(
                     else strings().sessionAttached,
                 )
                 sendCommand { put("type", "get_state"); this }
-                sendCommand { put("type", "get_entries"); this }
+                if (msg.bool("history") != true) {
+                    sendCommand { put("type", "get_entries"); this }
+                }
                 sendCommand { put("type", "get_available_models"); this }
                 sendCommand { put("type", "get_available_thinking_levels"); this }
+            }
+            "replay" -> msg.obj("payload")?.let { dispatchMessage(it) }
+            "replay_end" -> isLoadingHistory = false
+            "replay_unavailable" -> {
+                refreshHistoryAfterSettle = true
+                sendCommand { put("type", "get_entries"); this }
+                onToast(
+                    "Active turn output exceeded the replay limit; history will refresh when the agent settles.",
+                    Toast.Kind.Info,
+                )
             }
             "error" -> onToast(
                 "${msg.strOrEmpty("code")}: ${msg.strOrEmpty("message")}",
@@ -546,7 +592,8 @@ class ChatController(
     }
 
     private fun finalizeAssistant(message: JsonObject) {
-        val item = latestStreamingAssistant() ?: return
+        if (message.str("role") != "assistant") return
+        val item = latestStreamingAssistant() ?: ensureAssistant(message)
         (message["content"] as? JsonArray)?.forEachIndexed { i, el ->
             (el as? JsonObject)?.let { b ->
                 when (b.str("type")) {
