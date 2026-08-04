@@ -19,25 +19,29 @@ internal data class ToolAction(
     val target: String,
 )
 
+private fun parseToolArgs(args: String): JsonObject? =
+    runCatching { PiJson.parseToJsonElement(args) as? JsonObject }.getOrNull()
+
+private fun JsonObject.argument(vararg keys: String): String? =
+    keys.firstNotNullOfOrNull { key -> str(key)?.takeIf { it.isNotBlank() } }
+
+private fun toolKind(name: String): ToolActionKind =
+    when (name.trim().lowercase().replace('-', '_')) {
+        "bash", "shell", "exec", "execute", "run_command" -> ToolActionKind.Execute
+        "read", "read_file", "readfile" -> ToolActionKind.Read
+        "write", "write_file", "writefile", "create_file" -> ToolActionKind.Write
+        "edit", "edit_file", "editfile", "apply_patch", "patch" -> ToolActionKind.Edit
+        "grep", "search", "rg", "find", "glob" -> ToolActionKind.Search
+        "ls", "list", "list_directory" -> ToolActionKind.List
+        else -> ToolActionKind.Call
+    }
+
 internal fun toolAction(name: String, args: String): ToolAction {
-    val normalizedName = name.trim().lowercase().replace('-', '_')
-    val arguments =
-        runCatching { PiJson.parseToJsonElement(args) as? JsonObject }
-            .getOrNull()
+    val arguments = parseToolArgs(args)
 
-    fun argument(vararg keys: String): String? =
-        keys.firstNotNullOfOrNull { key -> arguments?.str(key)?.takeIf { it.isNotBlank() } }
+    fun argument(vararg keys: String): String? = arguments?.argument(*keys)
 
-    val kind =
-        when (normalizedName) {
-            "bash", "shell", "exec", "execute", "run_command" -> ToolActionKind.Execute
-            "read", "read_file", "readfile" -> ToolActionKind.Read
-            "write", "write_file", "writefile", "create_file" -> ToolActionKind.Write
-            "edit", "edit_file", "editfile", "apply_patch", "patch" -> ToolActionKind.Edit
-            "grep", "search", "rg", "find", "glob" -> ToolActionKind.Search
-            "ls", "list", "list_directory" -> ToolActionKind.List
-            else -> ToolActionKind.Call
-        }
+    val kind = toolKind(name)
     val rawTarget =
         when (kind) {
             ToolActionKind.Execute -> argument("command", "cmd", "script")
@@ -53,6 +57,12 @@ internal fun toolAction(name: String, args: String): ToolAction {
         kind = kind,
         target = compactToolTarget(rawTarget.orEmpty().ifBlank { name.ifBlank { "tool" } }),
     )
+}
+
+/** Full untruncated shell command for Execute-kind tools, or null when unavailable. */
+internal fun toolCommandArgument(name: String, args: String): String? {
+    if (toolKind(name) != ToolActionKind.Execute) return null
+    return parseToolArgs(args)?.argument("command", "cmd", "script")?.trim()
 }
 
 private fun compactToolTarget(raw: String): String {

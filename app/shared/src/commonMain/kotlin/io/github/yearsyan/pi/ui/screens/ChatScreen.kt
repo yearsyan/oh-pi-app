@@ -90,6 +90,7 @@ fun ChatScreen(
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var composerHeightPx by remember { mutableIntStateOf(0) }
+    var scrollToBottomTick by remember { mutableIntStateOf(0) }
     val composerBottomPadding = with(LocalDensity.current) { composerHeightPx.toDp() }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -120,6 +121,7 @@ fun ChatScreen(
                         MessageList(
                             controller = controller,
                             bottomPadding = composerBottomPadding,
+                            scrollToBottomTick = scrollToBottomTick,
                             modifier = Modifier.fillMaxSize(),
                         )
                 }
@@ -127,6 +129,7 @@ fun ChatScreen(
 
             Composer(
                 controller = controller,
+                onPromptSent = { scrollToBottomTick++ },
                 modifier =
                     Modifier
                         .align(Alignment.BottomCenter)
@@ -219,6 +222,7 @@ private fun LoadingBar(
 private fun MessageList(
     controller: ChatController,
     bottomPadding: Dp,
+    scrollToBottomTick: Int,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -242,6 +246,14 @@ private fun MessageList(
     val itemCount = renderGroups.size
     LaunchedEffect(itemCount) {
         if (pinned && itemCount > 0) listState.scrollToItem(itemCount - 1)
+    }
+
+    // jump to the tail after the user sends a prompt, even when scrolled up
+    LaunchedEffect(scrollToBottomTick) {
+        if (scrollToBottomTick > 0 && renderGroups.isNotEmpty()) {
+            pinned = true
+            listState.scrollToItem(renderGroups.lastIndex)
+        }
     }
 
     Box(modifier = modifier.fillMaxWidth()) {

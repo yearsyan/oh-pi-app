@@ -51,6 +51,7 @@ import io.github.yearsyan.pi.chat.ToolActionKind
 import io.github.yearsyan.pi.chat.ToolState
 import io.github.yearsyan.pi.chat.chunkAssistantRun
 import io.github.yearsyan.pi.chat.toolAction
+import io.github.yearsyan.pi.chat.toolCommandArgument
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.i18n.Strings
 import io.github.yearsyan.pi.markdown.MarkdownView
@@ -196,8 +197,13 @@ private fun ToolDetail(tool: ToolCallView) {
     }
     if (tool.args.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
-        ToolSectionLabel(S.toolInput)
-        ToolCodeBlock(tool.args)
+        val command = toolCommandArgument(tool.name, tool.args)
+        if (command != null) {
+            BashCommandBlock(command)
+        } else {
+            ToolSectionLabel(S.toolInput)
+            ToolCodeBlock(tool.args)
+        }
     }
     if (tool.output.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
@@ -284,6 +290,39 @@ private fun ToolCodeBlock(text: String) {
             color = piExtras.onCode,
             maxLines = 40,
         )
+    }
+}
+
+/** Terminal-style block for shell commands: green "$" prompt plus the command text. */
+@Composable
+private fun BashCommandBlock(command: String) {
+    Surface(
+        color = piExtras.codeBackground,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(
+                "$",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                ),
+                color = piExtras.success,
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                command,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                ),
+                color = piExtras.onCode,
+                maxLines = 40,
+            )
+        }
     }
 }
 

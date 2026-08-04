@@ -49,6 +49,7 @@ import io.github.yearsyan.pi.i18n.S
 fun Composer(
     controller: ChatController,
     modifier: Modifier = Modifier,
+    onPromptSent: () -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
     var image by remember { mutableStateOf<PromptImage?>(null) }
@@ -177,6 +178,7 @@ fun Composer(
                                             text = ""
                                             image = null
                                             pickerError = null
+                                            onPromptSent()
                                         }
                                     }
                                 }
