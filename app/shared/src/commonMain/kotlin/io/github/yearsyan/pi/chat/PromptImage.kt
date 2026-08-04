@@ -14,11 +14,13 @@ data class PromptImage(
 )
 
 internal fun buildPromptCommand(
+    sourceId: String,
     text: String,
     images: List<PromptImage>,
     isStreaming: Boolean,
 ): JsonObject =
     buildJsonObject {
+        put("id", sourceId)
         put("type", "prompt")
         put("message", text.trim())
         if (images.isNotEmpty()) {

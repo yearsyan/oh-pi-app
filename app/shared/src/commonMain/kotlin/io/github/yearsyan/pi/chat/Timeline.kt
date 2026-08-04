@@ -86,9 +86,11 @@ sealed class TimelineItem {
         override val key: Long,
         text: String,
         ts: Long,
+        sourceId: String? = null,
     ) : TimelineItem() {
         var text by mutableStateOf(text)
         var ts by mutableStateOf(ts)
+        var sourceId by mutableStateOf(sourceId)
     }
 
     class AssistantItem(

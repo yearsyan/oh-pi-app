@@ -680,6 +680,12 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	defer first.Close()
 	ready := readEvent(t, first)
 	sessionID := ready.string("session_id")
+	writeJSON(t, first, map[string]any{
+		"id": "app-prompt-1", "type": "prompt", "message": "hello",
+	})
+	if response := readEvent(t, first); response.string("id") != "app-prompt-1" || !response.boolean("success") {
+		t.Fatalf("prompt response = %#v", response)
+	}
 
 	activeEvents := []any{
 		map[string]any{"type": "agent_start"},
@@ -704,8 +710,11 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 		},
 	}
 	writeJSON(t, first, map[string]any{"id": "emit-active", "type": "fake_emit", "events": activeEvents})
-	for range activeEvents {
-		_ = readEvent(t, first)
+	for index := range activeEvents {
+		got := readEvent(t, first)
+		if (index == 1 || index == 2) && got.string("source_id") != "app-prompt-1" {
+			t.Fatalf("user event %d source_id = %q, want app-prompt-1: %#v", index, got.string("source_id"), got)
+		}
 	}
 	if response := readEvent(t, first); response.string("id") != "emit-active" {
 		t.Fatalf("fake emit response = %#v", response)
@@ -734,6 +743,9 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 		if replay[index].string("type") != want {
 			t.Fatalf("replay[%d] type = %q, want %q", index, replay[index].string("type"), want)
 		}
+	}
+	if replay[1].string("source_id") != "app-prompt-1" || replay[2].string("source_id") != "app-prompt-1" {
+		t.Fatalf("replayed user source IDs were not preserved: %#v %#v", replay[1], replay[2])
 	}
 
 	liveEvent := map[string]any{

@@ -12,11 +12,13 @@ class PromptImageTest {
     fun promptCommandSerializesImageForPiRpc() {
         val command =
             buildPromptCommand(
+                sourceId = "app-request-1",
                 text = "  inspect this  ",
                 images = listOf(PromptImage(data = "aGVsbG8=", mimeType = "image/png", name = "screen.png")),
                 isStreaming = false,
             )
 
+        assertEquals("app-request-1", command.getValue("id").jsonPrimitive.content)
         assertEquals("prompt", command.getValue("type").jsonPrimitive.content)
         assertEquals("inspect this", command.getValue("message").jsonPrimitive.content)
         val image = command.getValue("images").jsonArray.single().jsonObject
@@ -28,7 +30,7 @@ class PromptImageTest {
 
     @Test
     fun streamingPromptUsesSteerAndOmitsEmptyImageArray() {
-        val command = buildPromptCommand("next", emptyList(), isStreaming = true)
+        val command = buildPromptCommand("app-request-2", "next", emptyList(), isStreaming = true)
 
         assertEquals("steer", command.getValue("streamingBehavior").jsonPrimitive.content)
         assertFalse("images" in command)

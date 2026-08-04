@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,10 +55,23 @@ fun Composer(
     var text by remember { mutableStateOf("") }
     var image by remember { mutableStateOf<PromptImage?>(null) }
     var pickerError by remember { mutableStateOf<String?>(null) }
+    var submittedSourceId by remember { mutableStateOf<String?>(null) }
+    val promptPending = controller.isPromptPending
+    LaunchedEffect(controller.lastConfirmedPromptSourceId) {
+        val confirmed = controller.lastConfirmedPromptSourceId
+        if (confirmed != null && confirmed == submittedSourceId) {
+            text = ""
+            image = null
+            pickerError = null
+            submittedSourceId = null
+            onPromptSent()
+        }
+    }
     val imageTooLarge = S.imageTooLarge
     val imageReadFailed = S.imageReadFailed
     val picker =
         rememberImagePicker { result ->
+            if (controller.isPromptPending) return@rememberImagePicker
             when (result) {
                 is ImagePickResult.Success -> {
                     image = result.image
@@ -114,6 +128,7 @@ fun Composer(
                     BasicTextField(
                         value = text,
                         onValueChange = { text = it },
+                        enabled = !promptPending,
                         modifier = Modifier.fillMaxWidth(),
                         textStyle =
                             MaterialTheme.typography.bodyLarge.copy(
@@ -127,6 +142,7 @@ fun Composer(
                 image?.let { selected ->
                     SelectedImageChip(
                         image = selected,
+                        enabled = !promptPending,
                         onRemove = {
                             image = null
                             pickerError = null
@@ -158,7 +174,7 @@ fun Composer(
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         ComposerIconButton(
                             onClick = { picker.launch() },
-                            enabled = picker.available,
+                            enabled = picker.available && !promptPending,
                             background = MaterialTheme.colorScheme.surfaceContainerHighest,
                         ) {
                             Icon(
@@ -173,13 +189,7 @@ fun Composer(
                                 when {
                                     showStop -> controller.abort()
                                     canSend -> {
-                                        val sent = controller.sendPrompt(text, listOfNotNull(image))
-                                        if (sent) {
-                                            text = ""
-                                            image = null
-                                            pickerError = null
-                                            onPromptSent()
-                                        }
+                                        submittedSourceId = controller.sendPrompt(text, listOfNotNull(image))
                                     }
                                 }
                             },
@@ -219,6 +229,7 @@ fun Composer(
 @Composable
 private fun SelectedImageChip(
     image: PromptImage,
+    enabled: Boolean,
     onRemove: () -> Unit,
 ) {
     Row(
@@ -244,7 +255,7 @@ private fun SelectedImageChip(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onRemove, enabled = enabled, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Filled.Close,
                 contentDescription = S.removeImage,

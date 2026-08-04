@@ -34,6 +34,7 @@ import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.io.encoding.Base64
+import kotlin.random.Random
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
@@ -88,6 +89,8 @@ internal fun reconnectDelayMillis(attempt: Int): Long {
     return delayMillis
 }
 
+internal fun shouldFinalizeAssistant(eventType: String): Boolean = eventType == "message_end"
+
 internal fun clampDraftThinkingLevel(requested: String, available: List<String>): String {
     if (available.isEmpty()) return ""
     if (requested in available) return requested
@@ -119,9 +122,12 @@ class ChatController(
     private val cacheNamespace: String = gateway,
 ) {
     private data class PendingPrompt(
+        val sourceId: String,
         val text: String,
         val images: List<PromptImage>,
         val streaming: Boolean,
+        val displayText: String,
+        val priorOccurrences: Int,
     )
 
     /** Small string contract so the controller stays UI-independent. */
@@ -166,8 +172,11 @@ class ChatController(
 
     /** True when a prompt can be sent now or can create this local draft. */
     val canSendPrompt: Boolean
-        get() = !capabilitiesLoading &&
+        get() = pendingPrompt == null && !capabilitiesLoading &&
             promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
+
+    /** True after submit and until a correlated server user event confirms it. */
+    val isPromptPending: Boolean get() = pendingPrompt != null
 
     /** True while a local draft can still change its startup model options. */
     val canConfigureDraft: Boolean
@@ -182,7 +191,6 @@ class ChatController(
     private val client = PiClient(scope)
     private val entryCache = EntryCacheStore()
     private var keySeq = 1L
-    private val pendingUserKeys = mutableSetOf<Long>()
     private var lastAction = "attach"
     private var lastSessionId: String? = null
     private var lastWorkDir = ""
@@ -203,6 +211,9 @@ class ChatController(
     private var replayChunkBytes = 0
     private var draftWorkDir by mutableStateOf<String?>(null)
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
+    private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
+    private var confirmedPromptForAutoName: String? = null
+    var lastConfirmedPromptSourceId by mutableStateOf<String?>(null); private set
 
     // ---------- connection ----------
 
@@ -213,6 +224,8 @@ class ChatController(
         this.workDir = workDir
         draftWorkDir = workDir
         pendingCreatePrompt = null
+        pendingPrompt = null
+        confirmedPromptForAutoName = null
         models.clear()
         thinkingLevels.clear()
         model = ""
@@ -285,6 +298,8 @@ class ChatController(
     fun connect(action: String, sessionId: String?, workDir: String = "") {
         draftWorkDir = null
         pendingCreatePrompt = null
+        pendingPrompt = null
+        confirmedPromptForAutoName = null
         beginConnection(action, sessionId, workDir, clearTimeline = true)
     }
 
@@ -321,7 +336,6 @@ class ChatController(
         conn = ConnState.Connecting
         if (clearTimeline) {
             items.clear()
-            pendingUserKeys.clear()
         }
         entryCache.abort()
         historyUpdating = false
@@ -437,6 +451,9 @@ class ChatController(
         conn = ConnState.Disconnected
         isStreaming = false
         isLoadingHistory = false
+        pendingCreatePrompt = null
+        pendingPrompt = null
+        confirmedPromptForAutoName = null
     }
 
     private fun handleConnectionClosed(code: Short, reason: String) {
@@ -495,33 +512,54 @@ class ChatController(
 
     // ---------- public actions ----------
 
-    fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): Boolean {
+    fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): String? {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && images.isEmpty()) return false
-        val prompt = PendingPrompt(trimmed, images.toList(), isStreaming)
-        return when (promptDispatch(conn, isDraft, pendingCreatePrompt != null)) {
-            PromptDispatch.ExistingSession -> sendPromptNow(prompt, addToTimeline = true)
+        if (trimmed.isEmpty() && images.isEmpty()) return null
+        val dispatch = promptDispatch(conn, isDraft, pendingCreatePrompt != null)
+        if (pendingPrompt != null || dispatch == PromptDispatch.Unavailable) return null
+        val displayText = userMessageText(trimmed, images.size)
+        val prompt = PendingPrompt(
+            sourceId = nextPromptSourceId(),
+            text = trimmed,
+            images = images.toList(),
+            streaming = isStreaming,
+            displayText = displayText,
+            priorOccurrences = items.count { it is TimelineItem.UserItem && it.text == displayText },
+        )
+        pendingPrompt = prompt
+        return when (dispatch) {
+            PromptDispatch.ExistingSession -> {
+                if (sendPromptNow(prompt)) prompt.sourceId else {
+                    pendingPrompt = null
+                    null
+                }
+            }
             PromptDispatch.CreateSession -> {
                 pendingCreatePrompt = prompt
-                addUserMessage(userMessageText(trimmed, images.size))
                 connectDraft()
-                true
+                prompt.sourceId
             }
-            PromptDispatch.Unavailable -> false
+            PromptDispatch.Unavailable -> null
         }
     }
 
-    private fun sendPromptNow(prompt: PendingPrompt, addToTimeline: Boolean): Boolean {
-        val sent = client.send(buildPromptCommand(prompt.text, prompt.images, prompt.streaming).toString())
-        if (!sent) return false
-        if (addToTimeline) addUserMessage(userMessageText(prompt.text, prompt.images.size))
-        if (prompt.text.isNotEmpty()) maybeAutoName(prompt.text)
-        return true
-    }
+    private fun sendPromptNow(prompt: PendingPrompt): Boolean =
+        client.send(
+            buildPromptCommand(prompt.sourceId, prompt.text, prompt.images, prompt.streaming).toString(),
+        )
 
     private fun flushPendingCreatePrompt() {
         val prompt = pendingCreatePrompt ?: return
-        if (sendPromptNow(prompt, addToTimeline = false)) pendingCreatePrompt = null
+        if (sendPromptNow(prompt)) pendingCreatePrompt = null
+    }
+
+    private fun nextPromptSourceId(): String = buildString {
+        append("pi-app-")
+        append(nowMillis().toString(16))
+        append('-')
+        repeat(12) {
+            append(Random.nextInt(256).toString(16).padStart(2, '0'))
+        }
     }
 
     /** Names an unnamed session after the first user message (first line, 30 chars). */
@@ -602,17 +640,20 @@ class ChatController(
     }
 
     private fun dispatchMessage(msg: JsonObject) {
-        when (msg.str("type")) {
+        val eventType = msg.str("type")
+        when (eventType) {
             "pi2ws" -> handleGatewayEvent(msg)
             "response" -> handleResponse(msg)
             "message_start" -> msg.obj("message")?.let { m ->
                 when (m.str("role")) {
-                    "user" -> handleUserMessageStart(m)
+                    "user" -> handleUserMessageStart(msg, m)
                     "assistant" -> ensureAssistant(m)
                 }
             }
             "message_update" -> msg.obj("assistantMessageEvent")?.let { handleDelta(it) }
-            "message_end" -> msg.obj("message")?.let { finalizeAssistant(it) }
+            "message_end", "turn_end" -> if (shouldFinalizeAssistant(eventType.orEmpty())) {
+                msg.obj("message")?.let { finalizeAssistant(it) }
+            }
             "tool_execution_start" -> handleToolStart(msg)
             "tool_execution_update" -> handleToolUpdate(msg)
             "tool_execution_end" -> handleToolEnd(msg)
@@ -631,7 +672,6 @@ class ChatController(
                 }
             }
             "turn_start" -> Unit
-            "turn_end" -> msg.obj("message")?.let { finalizeAssistant(it) }
             "queue_update" -> {
                 steeringQueue.clear(); msg.arr("steering")?.mapNotNull { it.toString().trim('"').ifBlank { null } }?.let { steeringQueue.addAll(it) }
                 followUpQueue.clear(); msg.arr("followUp")?.mapNotNull { it.toString().trim('"').ifBlank { null } }?.let { followUpQueue.addAll(it) }
@@ -703,6 +743,10 @@ class ChatController(
                     autoNamed = true
                     sendCommand { put("type", "set_session_name"); put("name", sessionName) }
                     onAutoName(sid, sessionName)
+                }
+                confirmedPromptForAutoName?.let { promptText ->
+                    confirmedPromptForAutoName = null
+                    maybeAutoName(promptText)
                 }
                 sendCommand { put("type", "get_state"); this }
                 sendCommand { put("type", "get_available_models"); this }
@@ -782,6 +826,14 @@ class ChatController(
         val success = msg.bool("success") == true
         val data = msg.obj("data")
         if (!success) {
+            val responseID = msg.strOrEmpty("id")
+            val pending = pendingPrompt
+            if (command in setOf("prompt", "steer", "follow_up") &&
+                pending != null && pending.sourceId == responseID
+            ) {
+                if (pendingCreatePrompt?.sourceId == responseID) pendingCreatePrompt = null
+                pendingPrompt = null
+            }
             val error = msg.strOrEmpty("error")
             if (command != "abort") onToast("$command: $error", Toast.Kind.Error)
             if (command == "set_model" || command == "set_thinking_level") {
@@ -947,29 +999,34 @@ class ChatController(
         item.ts = message.long("timestamp") ?: nowMillis()
     }
 
-    private fun addUserMessage(text: String) {
-        val item = TimelineItem.UserItem(keySeq++, text, nowMillis())
-        pendingUserKeys.add(item.key)
-        items.add(item)
+    private fun handleUserMessageStart(event: JsonObject, message: JsonObject) {
+        val sourceId = event.strOrEmpty("source_id")
+        val echoed = userMessageText(message["content"])
+        val timestamp = message.long("timestamp") ?: nowMillis()
+        val existing = sourceId.takeIf { it.isNotBlank() }?.let { wanted ->
+            items.asReversed().firstOrNull {
+                it is TimelineItem.UserItem && it.sourceId == wanted
+            } as? TimelineItem.UserItem
+        }
+        if (existing != null) {
+            if (echoed.isNotEmpty()) existing.text = echoed
+            existing.ts = timestamp
+        } else {
+            items.add(TimelineItem.UserItem(keySeq++, echoed, timestamp, sourceId.ifBlank { null }))
+        }
+        if (sourceId.isNotBlank()) confirmPendingPrompt(sourceId)
     }
 
-    private fun handleUserMessageStart(message: JsonObject) {
-        val echoed = userMessageText(message["content"])
-        for (i in items.indices.reversed()) {
-            when (val it = items[i]) {
-                is TimelineItem.UserItem -> {
-                    if (pendingUserKeys.contains(it.key)) {
-                        pendingUserKeys.remove(it.key)
-                        if (echoed.isNotEmpty()) it.text = echoed
-                        it.ts = message.long("timestamp") ?: nowMillis()
-                    }
-                    return
-                }
-                is TimelineItem.StatusItem -> Unit
-                else -> return
-            }
+    private fun confirmPendingPrompt(sourceId: String) {
+        val pending = pendingPrompt ?: return
+        if (pending.sourceId != sourceId) return
+        if (pendingCreatePrompt?.sourceId == sourceId) pendingCreatePrompt = null
+        pendingPrompt = null
+        lastConfirmedPromptSourceId = sourceId
+        if (pending.text.isNotEmpty()) {
+            if (conn == ConnState.Ready) maybeAutoName(pending.text)
+            else confirmedPromptForAutoName = pending.text
         }
-        items.add(TimelineItem.UserItem(keySeq++, echoed, message.long("timestamp") ?: nowMillis()))
     }
 
     // ---------- timeline: tools ----------
@@ -1037,7 +1094,6 @@ class ChatController(
 
     private fun rebuildFromEntries(entries: JsonArray) {
         items.clear()
-        pendingUserKeys.clear()
         val toolByCallId = HashMap<String, ToolCallView>()
         for (raw in entries) {
             val entry = raw as? JsonObject ?: continue
@@ -1108,6 +1164,16 @@ class ChatController(
                 ))
             }
         }
+        reconcilePendingPromptFromHistory()
+    }
+
+    private fun reconcilePendingPromptFromHistory() {
+        val pending = pendingPrompt ?: return
+        val matches = items.filterIsInstance<TimelineItem.UserItem>()
+            .filter { it.text == pending.displayText }
+        if (matches.size <= pending.priorOccurrences) return
+        matches.last().sourceId = pending.sourceId
+        confirmPendingPrompt(pending.sourceId)
     }
 
     private fun userMessageText(content: JsonElement?): String {

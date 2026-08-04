@@ -231,7 +231,7 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 }
 ```
 
-`history_chunk.data` 是 Base64 编码的原始 JSONL 字节；把所有 chunk 解码后按顺序追加到 staging 文件，得到的是 `entry_since` 之后的完整 entry 行。客户端只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标；中途断线必须回滚。`replay_chunk.data` 同样是 Base64 字节，同一个 `seq` 的 chunk 拼成一条原始 pi JSON 事件，`final: true` 表示该事件结束。
+`history_chunk.data` 是 Base64 编码的原始 JSONL 字节；把所有 chunk 解码后按顺序追加到 staging 文件，得到的是 `entry_since` 之后的完整 entry 行。客户端只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标；中途断线必须回滚。`replay_chunk.data` 同样是 Base64 字节，同一个 `seq` 的 chunk 拼成一条网关已持久化的 JSON 事件（user 事件可能已增加 `source_id`），`final: true` 表示该事件结束。
 
 每个 chunk 最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会再被一个 WebSocket 帧或旧的 64 MiB 内存回放上限截断。活动事件先落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
 
@@ -262,17 +262,29 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 {"id":"browser-a-1","type":"prompt","message":"请检查当前项目"}
 ```
 
-网关会把 pi 的响应和所有流式事件原样广播给这个 session 上的每一个 WebSocket：
+网关会把 pi 的响应和流式事件广播给这个 session 上的每一个 WebSocket：
 
 ```json
 {"id":"browser-a-1","type":"response","command":"prompt","success":true}
 ```
 
-pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等事件也保持原协议。完整命令和事件格式以本机 pi 的 `docs/rpc.md` 为准。
+对于带字符串 `id` 的 `prompt`、`steer` 和 `follow_up` 命令，网关会把该 ID
+关联到随后由 pi 发出的 user `message_start` 与 `message_end`，并在事件顶层增加
+`source_id`：
+
+```json
+{"type":"message_start","source_id":"browser-a-1","message":{"role":"user","content":"请检查当前项目"}}
+```
+
+关联后的事件会先写入 replay WAL 再广播，因此活动 turn 重连回放时仍保留同一个
+`source_id`。命令没有字符串 `id` 时保持兼容，事件不会增加 `source_id`。客户端应使用
+不可复用的 ID，并以收到匹配 `source_id` 的 user 事件作为输入已进入 session 的确认。
+
+除上述 user 事件关联字段外，pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等事件保持原协议。完整命令和事件格式以本机 pi 的 `docs/rpc.md` 为准。
 
 注意：
 
-- 输出是 session 级广播，不是按发送者私有路由。多个客户端应给 RPC `id` 加各自的唯一前缀。
+- 输出是 session 级广播，不是按发送者私有路由。多个客户端必须给会产生用户消息的 RPC `id` 加各自的唯一前缀，避免 `source_id` 冲突。
 - attach 从 pi 的 append-only session JSONL 按 entry 游标发送稳定历史，并从磁盘 WAL 发送当前活动 turn；不再调用或内嵌整包 `get_entries`。客户端仍可在 `ready` 后主动发送其他 pi RPC。
 - 普通 pi 事件（包括可能正阻塞 pi 的 `extension_ui_request`）都会进入活动 turn WAL；RPC `response` 不回放，避免 attach 客户端误处理并非由它发起的旧命令响应。
 - `abort`、`steer` 等命令会影响整个共享 session。

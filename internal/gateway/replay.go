@@ -162,6 +162,12 @@ func replayableOutput(outputType string) bool {
 func (s *piSession) handleOutput(message []byte) {
 	var envelope piOutputEnvelope
 	validJSON := json.Unmarshal(message, &envelope) == nil
+	if validJSON {
+		message = s.annotateUserSource(message, envelope.Type)
+		if envelope.Type == "response" && !envelope.Success {
+			s.userSources.reject(envelope.ID)
+		}
+	}
 	if validJSON && s.deliverInternal(message, envelope) {
 		return
 	}

@@ -63,6 +63,7 @@ type piSession struct {
 	internalMu       sync.Mutex
 	internalSequence atomic.Uint64
 	internalWaiters  map[string]chan []byte
+	userSources      userSourceTracker
 
 	idleMu          sync.Mutex
 	idleTimer       *time.Timer
@@ -168,13 +169,19 @@ func (s *piSession) submit(clientDone <-chan struct{}, command []byte) error {
 
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
+	var sourceToken uint64
+	if source, ok := userSourceFromCommand(command); ok {
+		sourceToken = s.userSources.enqueue(source)
+	}
 	select {
 	case s.input <- command:
 		s.noteInput()
 		return nil
 	case <-s.done:
+		s.userSources.rollback(sourceToken)
 		return errors.New("pi session is not running")
 	case <-clientDone:
+		s.userSources.rollback(sourceToken)
 		return errors.New("WebSocket client disconnected")
 	}
 }
