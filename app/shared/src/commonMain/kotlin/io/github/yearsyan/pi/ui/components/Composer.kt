@@ -90,7 +90,7 @@ fun Composer(
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             tonalElevation = 0.dp,
-            shadowElevation = 8.dp,
+            shadowElevation = 2.dp,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),

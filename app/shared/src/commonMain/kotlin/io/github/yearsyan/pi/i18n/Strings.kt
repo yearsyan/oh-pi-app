@@ -86,6 +86,7 @@ interface Strings {
     val messagePlaceholderStreaming: String
     val send: String
     val stop: String
+    val scrollToBottom: String
     val addImage: String
     val removeImage: String
     val imageAttachment: (Int) -> String
@@ -243,6 +244,7 @@ object EnStrings : Strings {
     override val messagePlaceholderStreaming = "Steer the agent…"
     override val send = "Send"
     override val stop = "Stop"
+    override val scrollToBottom = "Scroll to bottom"
     override val addImage = "Add image"
     override val removeImage = "Remove image"
     override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
@@ -397,6 +399,7 @@ object ZhStrings : Strings {
     override val messagePlaceholderStreaming = "引导智能体…"
     override val send = "发送"
     override val stop = "停止"
+    override val scrollToBottom = "滚动到底部"
     override val addImage = "添加图片"
     override val removeImage = "移除图片"
     override val imageAttachment = { count: Int -> "图片 × $count" }

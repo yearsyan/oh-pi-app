@@ -1,5 +1,6 @@
 package io.github.yearsyan.pi.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -7,6 +8,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +30,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -60,6 +70,7 @@ import io.github.yearsyan.pi.ui.components.ExtensionDialog
 import io.github.yearsyan.pi.ui.components.RenameDialog
 import io.github.yearsyan.pi.ui.components.StatusLine
 import io.github.yearsyan.pi.ui.components.UserMessageRow
+import kotlinx.coroutines.launch
 
 private enum class ChatBodyState {
     Loading,
@@ -212,6 +223,7 @@ private fun MessageList(
 ) {
     val listState = rememberLazyListState()
     var pinned by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
     val renderGroups = groupTimelineItems(controller.items)
     val lastAssistantRunKey =
         renderGroups.lastOrNull { it is TimelineRenderGroup.AssistantRun }?.key
@@ -232,27 +244,60 @@ private fun MessageList(
         if (pinned && itemCount > 0) listState.scrollToItem(itemCount - 1)
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = bottomPadding + 10.dp),
-    ) {
-        items(renderGroups, key = { it.key }) { group ->
-            when (group) {
-                is TimelineRenderGroup.AssistantRun ->
-                    AssistantRunRow(
-                        items = group.items,
-                        isStreaming =
-                            group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
-                                (controller.isStreaming && group.key == lastAssistantRunKey),
-                    )
-                is TimelineRenderGroup.Single -> {
-                    when (val item = group.item) {
-                        is TimelineItem.UserItem -> UserMessageRow(item)
-                        is TimelineItem.StatusItem -> StatusLine(item)
-                        is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> Unit
+    Box(modifier = modifier.fillMaxWidth()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            contentPadding = PaddingValues(top = 10.dp, bottom = bottomPadding + 10.dp),
+        ) {
+            items(renderGroups, key = { it.key }) { group ->
+                when (group) {
+                    is TimelineRenderGroup.AssistantRun ->
+                        AssistantRunRow(
+                            items = group.items,
+                            isStreaming =
+                                group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
+                                    (controller.isStreaming && group.key == lastAssistantRunKey),
+                        )
+                    is TimelineRenderGroup.Single -> {
+                        when (val item = group.item) {
+                            is TimelineItem.UserItem -> UserMessageRow(item)
+                            is TimelineItem.StatusItem -> StatusLine(item)
+                            is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> Unit
+                        }
                     }
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = !pinned,
+            modifier =
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = bottomPadding + 14.dp),
+            enter = fadeIn(tween(150)) + scaleIn(initialScale = 0.85f, animationSpec = tween(150)),
+            exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.85f, animationSpec = tween(150)),
+        ) {
+            Surface(
+                onClick = {
+                    pinned = true
+                    scope.launch { listState.animateScrollToItem(renderGroups.lastIndex) }
+                },
+                modifier = Modifier.size(38.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 2.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = S.scrollToBottom,
+                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
