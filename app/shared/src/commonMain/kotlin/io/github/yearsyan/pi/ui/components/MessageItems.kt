@@ -90,7 +90,7 @@ private fun AgentProcessBlock(
     isStreaming: Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val showDetails = expanded && !isStreaming
+    val showDetails = expanded
     val strings = S
     val summary =
         details
@@ -108,7 +108,7 @@ private fun AgentProcessBlock(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !isStreaming) { expanded = !expanded }
+                    .clickable { expanded = !expanded }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
