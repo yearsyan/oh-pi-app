@@ -55,6 +55,7 @@ android {
     }
 
     defaultConfig {
+        ndkVersion = "28.2.13676358"
         applicationId = "io.github.yearsyan.pi"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
