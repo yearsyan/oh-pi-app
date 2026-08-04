@@ -56,14 +56,16 @@ import kotlinx.serialization.Serializable
 private val WideBreakpoint = 840.dp
 private val ListPaneWidth = 300.dp
 
+// Navigation resolves serializers from KType at runtime. These route classes
+// must not be private because the JVM serializer needs to access object fields.
 @Serializable
-private data object SessionListRoute
+internal data object SessionListRoute
 
 @Serializable
-private data class ChatRoute(val sessionId: String)
+internal data class ChatRoute(val sessionId: String)
 
 @Serializable
-private data object SettingsRoute
+internal data object SettingsRoute
 
 /** Adaptive home: single-pane navigation on phones, list+detail on tablets/desktop. */
 @Composable

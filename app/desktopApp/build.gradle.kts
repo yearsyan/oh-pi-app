@@ -34,6 +34,8 @@ dependencies {
     implementation(project(":shared"))
 
     implementation(compose.desktop.currentOs)
+    implementation(libs.compose.material3)
+    implementation(libs.jna)
     implementation(libs.kotlinx.coroutinesSwing)
 
     implementation(libs.compose.uiToolingPreview)

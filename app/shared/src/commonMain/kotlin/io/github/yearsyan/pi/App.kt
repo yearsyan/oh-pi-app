@@ -1,7 +1,10 @@
 package io.github.yearsyan.pi
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -21,7 +24,10 @@ import io.github.yearsyan.pi.ui.screens.HomeScreen
 import io.github.yearsyan.pi.ui.screens.OnboardingScreen
 
 @Composable
-fun App(vm: AppViewModel = viewModel { AppViewModel() }) {
+fun App(
+    vm: AppViewModel = viewModel { AppViewModel() },
+    titleBar: (@Composable () -> Unit)? = null,
+) {
     val systemDark = isSystemInDarkTheme()
     val dark = when (vm.themeMode) {
         ThemeMode.System -> systemDark
@@ -40,19 +46,31 @@ fun App(vm: AppViewModel = viewModel { AppViewModel() }) {
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
             ) {
-                if (!vm.hasServers) {
-                    OnboardingScreen(onSave = vm::saveServer)
-                } else {
-                    HomeScreen(vm)
+                Box(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize()) {
+                        titleBar?.invoke()
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                        ) {
+                            if (!vm.hasServers) {
+                                OnboardingScreen(onSave = vm::saveServer)
+                            } else {
+                                HomeScreen(vm)
+                            }
+                        }
+                    }
+                    vm.sshHostKeyPrompt?.let { prompt ->
+                        SshHostKeyDialog(
+                            prompt = prompt,
+                            onReject = { vm.answerSshHostKeyPrompt(false) },
+                            onTrust = { vm.answerSshHostKeyPrompt(true) },
+                        )
+                    }
+                    ToastHost(vm.toasts)
                 }
-                vm.sshHostKeyPrompt?.let { prompt ->
-                    SshHostKeyDialog(
-                        prompt = prompt,
-                        onReject = { vm.answerSshHostKeyPrompt(false) },
-                        onTrust = { vm.answerSshHostKeyPrompt(true) },
-                    )
-                }
-                ToastHost(vm.toasts)
             }
         }
     }
