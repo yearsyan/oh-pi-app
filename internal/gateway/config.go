@@ -11,10 +11,9 @@ import (
 )
 
 const (
-	defaultMaxMessageBytes = int64(16 << 20)
+	defaultMaxMessageBytes = int64(128 << 20)
 	defaultInputQueueSize  = 64
 	defaultClientQueueSize = 128
-	defaultReplayBytes     = int64(64 << 20)
 	defaultSessionIdle     = 5 * time.Minute
 	defaultHistoryTimeout  = 10 * time.Second
 )
@@ -28,7 +27,6 @@ type Config struct {
 	PiArgs          []string
 	AllowedOrigins  []string
 	MaxMessageBytes int64
-	MaxReplayBytes  int64
 	InputQueueSize  int
 	ClientQueueSize int
 	WriteTimeout    time.Duration
@@ -60,12 +58,6 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.MaxMessageBytes < 1 {
 		return Config{}, fmt.Errorf("max message bytes must be positive")
-	}
-	if c.MaxReplayBytes == 0 {
-		c.MaxReplayBytes = defaultReplayBytes
-	}
-	if c.MaxReplayBytes < 1 {
-		return Config{}, fmt.Errorf("max replay bytes must be positive")
 	}
 	if c.InputQueueSize == 0 {
 		c.InputQueueSize = defaultInputQueueSize

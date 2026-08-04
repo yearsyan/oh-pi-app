@@ -3,7 +3,9 @@ package gateway
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +26,8 @@ const testToken = "test-token-that-is-not-secret"
 func TestPiHelperProcess(t *testing.T) {
 	sessionID, ok := argumentValue(os.Args, "--session-id")
 	inMemory := hasArgument(os.Args, "--no-session")
+	var sessionDir string
+	var sessionFile string
 	if !ok && !inMemory {
 		return
 	}
@@ -38,9 +42,18 @@ func TestPiHelperProcess(t *testing.T) {
 			_ = logFile.Close()
 		}
 	} else {
-		sessionDir, found := argumentValue(os.Args, "--session-dir")
+		var found bool
+		sessionDir, found = argumentValue(os.Args, "--session-dir")
 		if !found {
 			os.Exit(3)
+		}
+		sessionFile = filepath.Join(sessionDir, "2000-01-01T00-00-00-000Z_"+sessionID+".jsonl")
+		if _, err := os.Stat(sessionFile); errors.Is(err, os.ErrNotExist) {
+			if err := writeFakeSessionFile(sessionFile, sessionID, nil); err != nil {
+				os.Exit(9)
+			}
+		} else if err != nil {
+			os.Exit(9)
 		}
 
 		startLog, err := os.OpenFile(
@@ -99,7 +112,6 @@ func TestPiHelperProcess(t *testing.T) {
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	encoder := json.NewEncoder(os.Stdout)
 	var entries []any
-	var historyDelay time.Duration
 	for scanner.Scan() {
 		var command map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &command); err != nil {
@@ -111,10 +123,11 @@ func TestPiHelperProcess(t *testing.T) {
 		}
 		if commandType == "fake_set_entries" {
 			entries, _ = command["entries"].([]any)
-		}
-		if commandType == "fake_set_history_delay" {
-			milliseconds, _ := command["milliseconds"].(float64)
-			historyDelay = time.Duration(milliseconds) * time.Millisecond
+			if !inMemory {
+				if err := writeFakeSessionFile(sessionFile, sessionID, entries); err != nil {
+					os.Exit(10)
+				}
+			}
 		}
 		if commandType == "fake_emit" {
 			events, _ := command["events"].([]any)
@@ -137,17 +150,6 @@ func TestPiHelperProcess(t *testing.T) {
 		if message, exists := command["message"]; exists {
 			response["message"] = message
 		}
-		if commandType == "get_entries" {
-			if historyDelay > 0 {
-				time.Sleep(historyDelay)
-			}
-			var leafID any
-			if len(entries) > 0 {
-				entry, _ := entries[len(entries)-1].(map[string]any)
-				leafID = entry["id"]
-			}
-			response["data"] = map[string]any{"entries": entries, "leafId": leafID}
-		}
 		if commandType == "get_state" {
 			response["data"] = map[string]any{
 				"model": map[string]any{
@@ -167,6 +169,31 @@ func TestPiHelperProcess(t *testing.T) {
 			os.Exit(6)
 		}
 	}
+}
+
+func writeFakeSessionFile(path, sessionID string, entries []any) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(file)
+	if err := encoder.Encode(map[string]any{
+		"type": "session", "version": 3, "id": sessionID,
+	}); err != nil {
+		_ = file.Close()
+		return err
+	}
+	for _, entry := range entries {
+		if err := encoder.Encode(entry); err != nil {
+			_ = file.Close()
+			return err
+		}
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
@@ -691,10 +718,10 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	})
 	defer second.Close()
 	attached, history, replay := readAttachHistory(t, second)
-	if attached.string("session_id") != sessionID || !attached.boolean("history") {
+	if attached.string("session_id") != sessionID {
 		t.Fatalf("attach ready = %#v", attached)
 	}
-	if history.string("command") != "get_entries" || !history.boolean("success") {
+	if history.string("event") != "history_end" {
 		t.Fatalf("history response = %#v", history)
 	}
 	wantTypes := []string{
@@ -730,6 +757,43 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	}
 
 	_ = app
+}
+
+func TestAttachChunksLargeActiveReplayRecord(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+	largeDelta := strings.Repeat("r", 600<<10)
+	event := map[string]any{
+		"type": "message_update",
+		"assistantMessageEvent": map[string]any{
+			"type": "text_delta", "contentIndex": 0, "delta": largeDelta,
+		},
+	}
+	writeJSON(t, first, map[string]any{
+		"id": "large-active", "type": "fake_emit", "events": []any{event},
+	})
+	_ = readEvent(t, first)
+	_ = readEvent(t, first)
+
+	attached := dialWebSocket(t, server, url.Values{
+		"action": {"attach"}, "session_id": {sessionID}, "token": {testToken},
+	})
+	defer attached.Close()
+	_, _, replay := readAttachHistory(t, attached)
+	if len(replay) != 1 {
+		t.Fatalf("large active replay count = %d, want one", len(replay))
+	}
+	if replay[0].number("_pi2ws_chunk_count") < 2 {
+		t.Fatalf("large active record used %.0f chunks, want multiple", replay[0].number("_pi2ws_chunk_count"))
+	}
+	update, _ := replay[0]["assistantMessageEvent"].(map[string]any)
+	if delta, _ := update["delta"].(string); delta != largeDelta {
+		t.Fatalf("large replay delta length = %d, want %d", len(delta), len(largeDelta))
+	}
 }
 
 func TestAgentSettledCheckpointsHistoryAndClearsReplay(t *testing.T) {
@@ -770,7 +834,7 @@ func TestAgentSettledCheckpointsHistoryAndClearsReplay(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool {
 		session.replayMu.Lock()
 		defer session.replayMu.Unlock()
-		return session.historyThrough > 0 && len(session.replay) == 0
+		return session.historyThrough > 0 && session.historyEntryID == "entry-1"
 	})
 
 	second := dialWebSocket(t, server, url.Values{
@@ -787,6 +851,127 @@ func TestAgentSettledCheckpointsHistoryAndClearsReplay(t *testing.T) {
 	}
 	if len(replay) != 0 {
 		t.Fatalf("settled session replay = %#v, want empty", replay)
+	}
+}
+
+func TestAttachHistoryResumesAfterPersistedEntryCursor(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+	entries := []any{
+		map[string]any{
+			"type": "message", "id": "entry-1", "parentId": nil,
+			"message": map[string]any{"role": "user", "content": "first", "timestamp": 1},
+		},
+		map[string]any{
+			"type": "message", "id": "entry-2", "parentId": "entry-1",
+			"message": map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "text", "text": "second"},
+			}, "timestamp": 2},
+		},
+	}
+	writeJSON(t, first, map[string]any{"id": "entries", "type": "fake_set_entries", "entries": entries})
+	_ = readEvent(t, first)
+	writeJSON(t, first, map[string]any{
+		"id": "settle", "type": "fake_emit", "events": []any{map[string]any{"type": "agent_settled"}},
+	})
+	_ = readEvent(t, first)
+	_ = readEvent(t, first)
+	waitFor(t, time.Second, func() bool {
+		session := activeSession(t, app, sessionID)
+		session.replayMu.Lock()
+		defer session.replayMu.Unlock()
+		return session.historyEntryID == "entry-2"
+	})
+
+	resumed := dialWebSocket(t, server, url.Values{
+		"action": {"attach"}, "session_id": {sessionID}, "entry_since": {"entry-1"}, "token": {testToken},
+	})
+	defer resumed.Close()
+	_, delta, replay := readAttachHistory(t, resumed)
+	if delta.boolean("reset") {
+		t.Fatalf("known cursor unexpectedly reset: %#v", delta)
+	}
+	deltaData, _ := delta["data"].(map[string]any)
+	deltaEntries, _ := deltaData["entries"].([]any)
+	if len(deltaEntries) != 1 || deltaEntries[0].(map[string]any)["id"] != "entry-2" {
+		t.Fatalf("history delta = %#v, want only entry-2", deltaEntries)
+	}
+	if len(replay) != 0 {
+		t.Fatalf("settled replay = %#v, want empty", replay)
+	}
+
+	reset := dialWebSocket(t, server, url.Values{
+		"action": {"attach"}, "session_id": {sessionID}, "entry_since": {"missing"}, "token": {testToken},
+	})
+	defer reset.Close()
+	_, full, _ := readAttachHistory(t, reset)
+	if !full.boolean("reset") {
+		t.Fatalf("unknown cursor did not reset: %#v", full)
+	}
+	fullData, _ := full["data"].(map[string]any)
+	fullEntries, _ := fullData["entries"].([]any)
+	if len(fullEntries) != 2 {
+		t.Fatalf("reset history = %#v, want both entries", fullEntries)
+	}
+}
+
+func TestAttachChunksStableEntryLargerThanOneFramePage(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+	session := activeSession(t, app, sessionID)
+	var snapshot sessionFileSnapshot
+	waitFor(t, time.Second, func() bool {
+		var err error
+		snapshot, err = session.locateSessionFileSnapshot()
+		return err == nil
+	})
+	largeText := strings.Repeat("x", 2<<20)
+	entry := map[string]any{
+		"type": "message", "id": "large-entry", "parentId": nil,
+		"message": map[string]any{"role": "user", "content": largeText, "timestamp": 1},
+	}
+	if err := writeFakeSessionFile(filepath.Join(session.dir, snapshot.File), sessionID, []any{entry}); err != nil {
+		t.Fatalf("write large fake history: %v", err)
+	}
+	writeJSON(t, first, map[string]any{
+		"id": "settle-large", "type": "fake_emit", "events": []any{map[string]any{"type": "agent_settled"}},
+	})
+	_ = readEvent(t, first)
+	_ = readEvent(t, first)
+	waitFor(t, 3*time.Second, func() bool {
+		session.replayMu.Lock()
+		defer session.replayMu.Unlock()
+		return session.historyEntryID == "large-entry"
+	})
+
+	attached := dialWebSocket(t, server, url.Values{
+		"action": {"attach"}, "session_id": {sessionID}, "token": {testToken},
+	})
+	defer attached.Close()
+	_, history, replay := readAttachHistory(t, attached)
+	if history.number("chunk_count") < 2 {
+		t.Fatalf("large entry used %.0f history chunks, want multiple bounded chunks", history.number("chunk_count"))
+	}
+	data, _ := history["data"].(map[string]any)
+	gotEntries, _ := data["entries"].([]any)
+	if len(gotEntries) != 1 {
+		t.Fatalf("large history entry count = %d, want one", len(gotEntries))
+	}
+	gotEntry, _ := gotEntries[0].(map[string]any)
+	message, _ := gotEntry["message"].(map[string]any)
+	if content, _ := message["content"].(string); content != largeText {
+		t.Fatalf("large history content length = %d, want %d", len(content), len(largeText))
+	}
+	if len(replay) != 0 {
+		t.Fatalf("large settled history unexpectedly replayed events: %#v", replay)
 	}
 }
 
@@ -837,7 +1022,7 @@ func TestActiveReplaySurvivesGatewayRestart(t *testing.T) {
 	}
 }
 
-func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
+func TestCheckpointPreservesWALTailWhileAttachIsReading(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	newStoredSession := func(newSession bool) *piSession {
@@ -845,10 +1030,8 @@ func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
 			ID:             "11111111-1111-4111-8111-111111111111",
 			Dir:            dir,
 			MaxEventBytes:  1 << 20,
-			MaxReplayBytes: 1 << 20,
 			InputQueueSize: 1,
 			SessionIdle:    time.Minute,
-			HistoryTimeout: time.Second,
 			NewSession:     newSession,
 			Logger:         logger,
 			OnExit:         func(*piSession, error) {},
@@ -860,6 +1043,7 @@ func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
 		t.Fatalf("open replay store: %v", err)
 	}
 	session.replayMu.Lock()
+	session.syncReaders = 1
 	for seq := uint64(1); seq <= 3; seq++ {
 		payload, _ := json.Marshal(map[string]any{"type": "message_update", "seq": seq})
 		if err := session.appendReplayLocked(replayRecord{Seq: seq, Payload: payload}); err != nil {
@@ -868,12 +1052,12 @@ func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
 		}
 	}
 	session.outputSeq = 3
-	session.replayTruncated = true
-	if err := session.checkpointHistoryLocked(emptyHistoryResponse(), 2); err != nil {
+	if err := session.applyHistoryCheckpointLocked(historyBoundary{}, 2); err != nil {
 		session.replayMu.Unlock()
 		t.Fatalf("checkpoint history: %v", err)
 	}
 	session.replayMu.Unlock()
+	session.finishAttachSync()
 	session.closeReplayStore()
 
 	recovered := newStoredSession(false)
@@ -882,12 +1066,26 @@ func TestCheckpointPreservesWALTailAfterReplayOverflow(t *testing.T) {
 	}
 	defer recovered.closeReplayStore()
 	recovered.replayMu.Lock()
-	defer recovered.replayMu.Unlock()
 	if recovered.historyThrough != 2 {
+		recovered.replayMu.Unlock()
 		t.Fatalf("history through = %d, want 2", recovered.historyThrough)
 	}
-	if len(recovered.replay) != 1 || recovered.replay[0].Seq != 3 {
-		t.Fatalf("recovered replay = %#v, want only seq 3", recovered.replay)
+	if recovered.outputSeq != 3 {
+		recovered.replayMu.Unlock()
+		t.Fatalf("recovered output sequence = %d, want 3", recovered.outputSeq)
+	}
+	recovered.replayMu.Unlock()
+	data, err := os.ReadFile(filepath.Join(dir, replayLogFileName))
+	if err != nil {
+		t.Fatalf("read compacted replay log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("compacted replay records = %d, want one", len(lines))
+	}
+	var record persistedReplayRecord
+	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil || record.Seq != 3 {
+		t.Fatalf("compacted replay record = %#v, error = %v", record, err)
 	}
 }
 
@@ -944,7 +1142,7 @@ func TestSettledSessionStopsAfterIdleTimeout(t *testing.T) {
 	})
 }
 
-func TestIdleTimeoutWaitsForHistoryCheckpoint(t *testing.T) {
+func TestHistoryCheckpointCompletesBeforeIdleTimer(t *testing.T) {
 	app, server := startTestGatewayWithConfig(t, t.TempDir(), func(cfg *Config) {
 		cfg.SessionIdle = 80 * time.Millisecond
 		cfg.HistoryTimeout = time.Second
@@ -959,11 +1157,7 @@ func TestIdleTimeoutWaitsForHistoryCheckpoint(t *testing.T) {
 	session := activeSession(t, app, sessionID)
 
 	writeJSON(t, client, map[string]any{
-		"id": "delay-history", "type": "fake_set_history_delay", "milliseconds": 250,
-	})
-	_ = readEvent(t, client)
-	writeJSON(t, client, map[string]any{
-		"id": "settle-slow-checkpoint", "type": "fake_emit", "events": []any{
+		"id": "settle-checkpoint", "type": "fake_emit", "events": []any{
 			map[string]any{"type": "agent_start"},
 			map[string]any{"type": "agent_settled"},
 		},
@@ -972,9 +1166,13 @@ func TestIdleTimeoutWaitsForHistoryCheckpoint(t *testing.T) {
 	_ = readEvent(t, client)
 	_ = readEvent(t, client)
 
-	time.Sleep(2 * app.cfg.SessionIdle)
-	if session.isDone() {
-		t.Fatal("session stopped before its history checkpoint completed")
+	waitFor(t, time.Second, func() bool {
+		session.replayMu.Lock()
+		defer session.replayMu.Unlock()
+		return session.historyThrough > 0
+	})
+	if _, err := os.Stat(filepath.Join(session.dir, historyCacheFileName)); err != nil {
+		t.Fatalf("stable history checkpoint was not persisted: %v", err)
 	}
 	waitFor(t, 2*time.Second, session.isDone)
 }
@@ -1117,36 +1315,95 @@ func readEvent(t *testing.T, conn *websocket.Conn) event {
 
 func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []event) {
 	t.Helper()
-	ready := readEvent(t, conn)
-	if ready.string("type") != "pi2ws" || ready.string("event") != "ready" {
-		t.Fatalf("attach first message = %#v, want ready", ready)
+	historyBegin := readEvent(t, conn)
+	if historyBegin.string("type") != "pi2ws" || historyBegin.string("event") != "history_begin" {
+		t.Fatalf("attach first message = %#v, want history_begin", historyBegin)
 	}
-	history := readEvent(t, conn)
-	if history.string("type") != "response" || history.string("command") != "get_entries" {
-		t.Fatalf("attach history message = %#v, want get_entries response", history)
+	var historyJSONL []byte
+	var historyEnd event
+	historyChunkCount := 0
+	for {
+		message := readEvent(t, conn)
+		switch message.string("event") {
+		case "history_chunk":
+			historyChunkCount++
+			chunk, err := base64.StdEncoding.DecodeString(message.string("data"))
+			if err != nil {
+				t.Fatalf("decode history chunk: %v", err)
+			}
+			historyJSONL = append(historyJSONL, chunk...)
+		case "history_end":
+			historyEnd = message
+			goto historyComplete
+		default:
+			t.Fatalf("unexpected history event = %#v", message)
+		}
 	}
+
+historyComplete:
+	entries := make([]any, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(historyJSONL)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var entry any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode history entry %q: %v", line, err)
+		}
+		entries = append(entries, entry)
+	}
+	history := event{
+		"type": "pi2ws", "event": "history_end",
+		"reset": historyBegin["reset"], "entry_id": historyEnd["entry_id"],
+		"data": map[string]any{"entries": entries}, "chunk_count": float64(historyChunkCount),
+	}
+
 	begin := readEvent(t, conn)
 	if begin.string("type") != "pi2ws" || begin.string("event") != "replay_begin" {
 		t.Fatalf("attach replay start = %#v", begin)
 	}
 
 	var replay []event
+	var replaySeq float64
+	var replayPayload []byte
+	replayChunkCount := 0
 	for {
 		message := readEvent(t, conn)
 		if message.string("type") != "pi2ws" {
 			t.Fatalf("attach replay envelope = %#v", message)
 		}
 		switch message.string("event") {
-		case "replay":
-			payload, ok := message["payload"].(map[string]any)
-			if !ok {
-				t.Fatalf("replay payload = %#v", message["payload"])
+		case "replay_chunk":
+			replayChunkCount++
+			seq := message.number("seq")
+			if replaySeq != 0 && replaySeq != seq {
+				t.Fatalf("replay sequence changed before final chunk: %v -> %v", replaySeq, seq)
 			}
-			replay = append(replay, event(payload))
-		case "replay_unavailable":
-			// The caller can inspect the empty/incomplete replay through later
-			// assertions; this helper still drains the initial backlog.
+			replaySeq = seq
+			chunk, err := base64.StdEncoding.DecodeString(message.string("data"))
+			if err != nil {
+				t.Fatalf("decode replay chunk: %v", err)
+			}
+			replayPayload = append(replayPayload, chunk...)
+			if message.boolean("final") {
+				var payload event
+				if err := json.Unmarshal(replayPayload, &payload); err != nil {
+					t.Fatalf("decode replay payload: %v", err)
+				}
+				payload["_pi2ws_chunk_count"] = float64(replayChunkCount)
+				replay = append(replay, payload)
+				replaySeq = 0
+				replayPayload = nil
+				replayChunkCount = 0
+			}
 		case "replay_end":
+			if replaySeq != 0 {
+				t.Fatal("replay ended with an incomplete payload")
+			}
+			ready := readEvent(t, conn)
+			if ready.string("type") != "pi2ws" || ready.string("event") != "ready" {
+				t.Fatalf("attach handoff message = %#v, want ready", ready)
+			}
 			return ready, history, replay
 		default:
 			t.Fatalf("unexpected replay event = %#v", message)

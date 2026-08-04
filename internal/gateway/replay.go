@@ -26,17 +26,13 @@ type piOutputEnvelope struct {
 	Success bool   `json:"success,omitempty"`
 }
 
-type pendingHistoryRequest struct {
+type pendingInternalRequest struct {
 	id     string
 	waiter chan []byte
 }
 
-func emptyHistoryResponse() []byte {
-	return []byte(`{"type":"response","command":"get_entries","success":true,"data":{"entries":[],"leafId":null}}`)
-}
-
-// ensureHistory initializes the stable history snapshot for an existing pi
-// session. Only one attach performs the RPC; concurrent attaches wait for it.
+// ensureHistory initializes the stable JSONL boundary for an existing pi
+// session. Only one attach scans the file; concurrent attaches wait for it.
 func (s *piSession) ensureHistory(ctx context.Context) error {
 	s.historyInitMu.Lock()
 	defer s.historyInitMu.Unlock()
@@ -48,34 +44,26 @@ func (s *piSession) ensureHistory(ctx context.Context) error {
 		return nil
 	}
 
-	response, err := s.requestHistory(ctx)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	snapshot, err := s.locateSessionFileSnapshot()
+	if err != nil {
+		return err
+	}
+	boundary, err := s.scanHistorySnapshot(snapshot, historyBoundary{})
 	if err != nil {
 		return err
 	}
 	s.replayMu.Lock()
-	if err := s.writeHistoryCacheLocked(response, s.historyThrough); err != nil {
-		s.replayMu.Unlock()
-		return err
-	}
-	s.historyResponse = response
-	s.historyReady = true
+	err = s.applyHistoryCheckpointLocked(boundary, s.outputSeq)
 	s.replayMu.Unlock()
-	return nil
+	return err
 }
 
-func (s *piSession) requestHistory(ctx context.Context) ([]byte, error) {
-	request, err := s.beginHistoryRequest(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.awaitHistoryRequest(ctx, request)
-}
-
-func (s *piSession) beginHistoryRequest(ctx context.Context) (pendingHistoryRequest, error) {
-	return s.beginInternalRequest(ctx, map[string]any{"type": "get_entries"})
-}
-
-func (s *piSession) beginInternalRequest(ctx context.Context, fields map[string]any) (pendingHistoryRequest, error) {
+func (s *piSession) beginInternalRequest(ctx context.Context, fields map[string]any) (pendingInternalRequest, error) {
 	id := fmt.Sprintf("%s%d", internalRPCIDPrefix, s.internalSequence.Add(1))
 	waiter := make(chan []byte, 1)
 	s.internalMu.Lock()
@@ -91,34 +79,26 @@ func (s *piSession) beginInternalRequest(ctx context.Context, fields map[string]
 	command, err := json.Marshal(fields)
 	if err != nil {
 		cleanup()
-		return pendingHistoryRequest{}, fmt.Errorf("encode internal RPC command: %w", err)
+		return pendingInternalRequest{}, fmt.Errorf("encode internal RPC command: %w", err)
 	}
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	select {
 	case s.input <- command:
-		return pendingHistoryRequest{id: id, waiter: waiter}, nil
+		return pendingInternalRequest{id: id, waiter: waiter}, nil
 	case <-ctx.Done():
 		cleanup()
-		return pendingHistoryRequest{}, ctx.Err()
+		return pendingInternalRequest{}, ctx.Err()
 	case <-s.processEnd:
 		cleanup()
-		return pendingHistoryRequest{}, errors.New("pi session stopped while loading history")
+		return pendingInternalRequest{}, errors.New("pi session stopped while sending an internal command")
 	case <-s.done:
 		cleanup()
-		return pendingHistoryRequest{}, errors.New("pi session stopped while loading history")
+		return pendingInternalRequest{}, errors.New("pi session stopped while sending an internal command")
 	}
 }
 
-func (s *piSession) awaitHistoryRequest(ctx context.Context, request pendingHistoryRequest) ([]byte, error) {
-	response, err := s.awaitInternalRequest(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	return normalizeHistoryResponse(response)
-}
-
-func (s *piSession) awaitInternalRequest(ctx context.Context, request pendingHistoryRequest) ([]byte, error) {
+func (s *piSession) awaitInternalRequest(ctx context.Context, request pendingInternalRequest) ([]byte, error) {
 	defer func() {
 		s.internalMu.Lock()
 		delete(s.internalWaiters, request.id)
@@ -130,9 +110,9 @@ func (s *piSession) awaitInternalRequest(ctx context.Context, request pendingHis
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.processEnd:
-		return nil, errors.New("pi session stopped while loading history")
+		return nil, errors.New("pi session stopped while waiting for an internal command")
 	case <-s.done:
-		return nil, errors.New("pi session stopped while loading history")
+		return nil, errors.New("pi session stopped while waiting for an internal command")
 	}
 }
 
@@ -156,27 +136,6 @@ func (s *piSession) setSessionName(ctx context.Context, name string) error {
 		return fmt.Errorf("set_session_name failed: %s", response)
 	}
 	return nil
-}
-
-func normalizeHistoryResponse(message []byte) ([]byte, error) {
-	var envelope piOutputEnvelope
-	if err := json.Unmarshal(message, &envelope); err != nil {
-		return nil, fmt.Errorf("decode get_entries response: %w", err)
-	}
-	if envelope.Type != "response" || envelope.Command != "get_entries" || !envelope.Success {
-		return nil, fmt.Errorf("get_entries failed: %s", message)
-	}
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(message, &fields); err != nil {
-		return nil, fmt.Errorf("decode get_entries fields: %w", err)
-	}
-	delete(fields, "id")
-	normalized, err := json.Marshal(fields)
-	if err != nil {
-		return nil, fmt.Errorf("encode get_entries snapshot: %w", err)
-	}
-	return normalized, nil
 }
 
 func (s *piSession) deliverInternal(message []byte, envelope piOutputEnvelope) bool {
@@ -217,16 +176,6 @@ func (s *piSession) handleOutput(message []byte) {
 	if validJSON && replayableOutput(envelope.Type) {
 		record := replayRecord{Seq: outputSeq, Payload: bytes.Clone(message)}
 		replayErr = s.appendReplayLocked(record)
-		messageBytes := int64(len(message))
-		if replayErr == nil && !s.replayTruncated && s.replayBytes+messageBytes > s.maxReplay {
-			s.replay = nil
-			s.replayBytes = 0
-			s.replayTruncated = true
-			s.logger.Warn("active turn replay buffer exceeded limit", "limit_bytes", s.maxReplay)
-		} else if replayErr == nil && !s.replayTruncated {
-			s.replay = append(s.replay, record)
-			s.replayBytes += messageBytes
-		}
 		if replayErr == nil && (envelope.Type == "message_end" || envelope.Type == "tool_execution_end" || envelope.Type == "agent_settled") {
 			replayErr = s.syncReplayLocked()
 		}
@@ -238,10 +187,13 @@ func (s *piSession) handleOutput(message []byte) {
 	}
 
 	var checkpointToken uint64
+	var checkpointSnapshot sessionFileSnapshot
+	var checkpointSnapshotErr error
 	switch envelope.Type {
 	case "agent_start":
 		s.markAgentStarted()
 	case "agent_settled":
+		checkpointSnapshot, checkpointSnapshotErr = s.locateSessionFileSnapshot()
 		checkpointToken = s.markAgentSettled()
 		if s.onActivity != nil {
 			if err := s.onActivity(); err != nil {
@@ -251,7 +203,7 @@ func (s *piSession) handleOutput(message []byte) {
 	}
 
 	if checkpointToken != 0 {
-		s.scheduleCheckpoint(outputSeq, checkpointToken)
+		s.scheduleCheckpoint(outputSeq, checkpointToken, checkpointSnapshot, checkpointSnapshotErr)
 	}
 	s.broadcast(message, outputSeq)
 }
@@ -278,29 +230,33 @@ func (s *piSession) adoptObservedSessionName(message []byte) {
 	}
 }
 
-func (s *piSession) scheduleCheckpoint(throughSeq, idleToken uint64) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.historyWait)
-	request, err := s.beginHistoryRequest(ctx)
-	if err != nil {
-		cancel()
-		s.logger.Error("start session history checkpoint", "error", err)
-		s.finishCheckpoint(idleToken)
-		return
-	}
+func (s *piSession) scheduleCheckpoint(
+	throughSeq, idleToken uint64,
+	snapshot sessionFileSnapshot,
+	snapshotErr error,
+) {
 	s.backgroundWG.Add(1)
 	go func() {
 		defer s.backgroundWG.Done()
-		defer cancel()
 		defer s.finishCheckpoint(idleToken)
-		response, err := s.awaitHistoryRequest(ctx, request)
+		if snapshotErr != nil {
+			s.logger.Error("capture session history checkpoint", "error", snapshotErr)
+			return
+		}
+		s.replayMu.Lock()
+		baseline := historyBoundary{
+			File: s.historyFile, Offset: s.historyOffset, EntryID: s.historyEntryID,
+		}
+		s.replayMu.Unlock()
+		boundary, err := s.scanHistorySnapshot(snapshot, baseline)
 		if err != nil {
-			s.logger.Error("checkpoint session history", "error", err)
+			s.logger.Error("scan session history checkpoint", "error", err)
 			return
 		}
 
 		s.replayMu.Lock()
 		if throughSeq >= s.historyThrough {
-			err = s.checkpointHistoryLocked(response, throughSeq)
+			err = s.applyHistoryCheckpointLocked(boundary, throughSeq)
 		}
 		s.replayMu.Unlock()
 		if err != nil {
@@ -308,64 +264,6 @@ func (s *piSession) scheduleCheckpoint(throughSeq, idleToken uint64) {
 			return
 		}
 	}()
-}
-
-// addClient installs ready, the stable get_entries snapshot, and the active
-// turn replay as one ordered backlog. Holding replayMu through registration
-// establishes the live output high-water mark without a gap.
-func (s *piSession) addClient(client *wsClient, ready []byte, includeHistory bool) bool {
-	s.replayMu.Lock()
-	defer s.replayMu.Unlock()
-
-	initial := make([][]byte, 0, len(s.replay)+4)
-	initial = append(initial, ready)
-	if includeHistory {
-		if !s.historyReady {
-			return false
-		}
-		initial = append(initial, bytes.Clone(s.historyResponse))
-		fromSeq := s.historyThrough + 1
-		if len(s.replay) > 0 {
-			fromSeq = s.replay[0].Seq
-		}
-		initial = append(initial, mustGatewayEvent(gatewayEvent{
-			Type:       "pi2ws",
-			Event:      "replay_begin",
-			FromSeq:    fromSeq,
-			ThroughSeq: s.outputSeq,
-		}))
-		if s.replayTruncated {
-			initial = append(initial, mustGatewayEvent(gatewayEvent{
-				Type:    "pi2ws",
-				Event:   "replay_unavailable",
-				Code:    "replay_buffer_exceeded",
-				Message: "active turn output exceeded the replay buffer limit",
-			}))
-		} else {
-			for _, record := range s.replay {
-				initial = append(initial, mustGatewayEvent(gatewayEvent{
-					Type:    "pi2ws",
-					Event:   "replay",
-					Seq:     record.Seq,
-					Payload: json.RawMessage(record.Payload),
-				}))
-			}
-		}
-		initial = append(initial, mustGatewayEvent(gatewayEvent{
-			Type:       "pi2ws",
-			Event:      "replay_end",
-			ThroughSeq: s.outputSeq,
-		}))
-	}
-	client.setInitial(initial)
-
-	s.clientsMu.Lock()
-	defer s.clientsMu.Unlock()
-	if s.clientsClosed {
-		return false
-	}
-	s.clients[client] = s.outputSeq
-	return true
 }
 
 func mustGatewayEvent(event gatewayEvent) []byte {

@@ -6,7 +6,8 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 ## 功能
 
 - **会话列表 / 会话详情**：从网关 HTTP API 读取服务端权威会话列表，支持新建、恢复
-  （attach 时先消费网关提供的稳定 `get_entries` 快照和活动 turn replay）、重命名和永久删除。
+  （稳定 entry 以 JSONL 持久化到 App 私有目录；attach 只拉本地游标后的分块增量，再从
+  磁盘 WAL 追平活动 turn）、重命名和永久删除。
 - **会话内对话**：流式渲染助手消息（Markdown：标题/列表/引用/代码块/行内样式），
   运行中可随时中止（abort）或引导（steer）。
 - **思考过程**：可折叠的思考卡片，流式更新。

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.yearsyan.pi.chat.ChatController
 import io.github.yearsyan.pi.chat.Toast
+import io.github.yearsyan.pi.chat.clearEntryCache
 import io.github.yearsyan.pi.data.AppLanguage
 import io.github.yearsyan.pi.data.SavedSession
 import io.github.yearsyan.pi.data.ServerProfile
@@ -26,8 +27,10 @@ import io.github.yearsyan.pi.net.nowMillis
 import io.github.yearsyan.pi.net.renameGatewaySession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 class AppViewModel(
@@ -271,6 +274,7 @@ class AppViewModel(
             try {
                 val gateway = transportFor(server).resolveGateway()
                 deleteGatewaySession(gateway, server.token, id)
+                withContext(Dispatchers.Default) { clearEntryCache(server.id, id) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -340,6 +344,7 @@ class AppViewModel(
                     getGatewayCapabilities(transport.resolveGateway(), server.token, workDir)
                 },
                 resolveGateway = transport::resolveGateway,
+                cacheNamespace = server.id,
             )
         }
     }

@@ -9,27 +9,45 @@ import (
 
 type wsClient struct {
 	conn         *websocket.Conn
-	initial      [][]byte
 	send         chan []byte
+	syncSend     chan syncWrite
 	done         chan struct{}
 	writeTimeout time.Duration
 	pongTimeout  time.Duration
 	closeOnce    sync.Once
 }
 
-// setInitial installs the fixed backlog written before the bounded live
-// queue. It must be called before writePump starts.
-func (c *wsClient) setInitial(messages [][]byte) {
-	c.initial = messages
+type syncWrite struct {
+	message []byte
+	result  chan bool
 }
 
 func newWSClient(conn *websocket.Conn, queueSize int, writeTimeout, pongTimeout time.Duration) *wsClient {
 	return &wsClient{
 		conn:         conn,
 		send:         make(chan []byte, queueSize),
+		syncSend:     make(chan syncWrite),
 		done:         make(chan struct{}),
 		writeTimeout: writeTimeout,
 		pongTimeout:  pongTimeout,
+	}
+}
+
+// sendBlocking is used only by the bounded attach stream. Unlike enqueue it
+// applies backpressure instead of dropping a client when a history page fills
+// the live queue.
+func (c *wsClient) sendBlocking(message []byte) bool {
+	request := syncWrite{message: message, result: make(chan bool, 1)}
+	select {
+	case c.syncSend <- request:
+	case <-c.done:
+		return false
+	}
+	select {
+	case written := <-request.result:
+		return written
+	case <-c.done:
+		return false
 	}
 }
 
@@ -54,15 +72,14 @@ func (c *wsClient) writePump() {
 	ticker := time.NewTicker(pingEvery)
 	defer ticker.Stop()
 
-	for _, message := range c.initial {
-		if !c.writeMessage(message) {
-			return
-		}
-	}
-	c.initial = nil
-
 	for {
 		select {
+		case request := <-c.syncSend:
+			written := c.writeMessage(request.message)
+			request.result <- written
+			if !written {
+				return
+			}
 		case message := <-c.send:
 			if !c.writeMessage(message) {
 				return

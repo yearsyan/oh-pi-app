@@ -22,19 +22,42 @@ import io.github.yearsyan.pi.net.plainText
 import io.github.yearsyan.pi.net.str
 import io.github.yearsyan.pi.net.strOrEmpty
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.io.encoding.Base64
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
 private val OrderedThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
+
+internal data class DecodedEntryCache(
+    val entries: JsonArray,
+    val lastEntryId: String,
+)
+
+internal fun decodeEntryCache(bytes: ByteArray): DecodedEntryCache? {
+    if (bytes.isEmpty()) return DecodedEntryCache(JsonArray(emptyList()), "")
+    val byId = LinkedHashMap<String, JsonObject>()
+    var lastEntryId = ""
+    for (line in bytes.decodeToString().lineSequence()) {
+        if (line.isBlank()) continue
+        val entry = runCatching { PiJson.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: return null
+        val id = entry.strOrEmpty("id")
+        if (id.isBlank()) return null
+        byId[id] = entry
+        lastEntryId = id
+    }
+    return DecodedEntryCache(JsonArray(byId.values.toList()), lastEntryId)
+}
 
 internal enum class PromptDispatch {
     ExistingSession,
@@ -93,6 +116,7 @@ class ChatController(
     private val strings: () -> ChatStrings,
     private val loadCapabilities: suspend (workDir: String) -> GatewayCapabilities,
     private val resolveGateway: suspend () -> String = { gateway },
+    private val cacheNamespace: String = gateway,
 ) {
     private data class PendingPrompt(
         val text: String,
@@ -160,6 +184,7 @@ class ChatController(
             (pendingCreatePrompt != null && (conn == ConnState.Disconnected || conn == ConnState.Error))
 
     private val client = PiClient(scope)
+    private val entryCache = EntryCacheStore()
     private var keySeq = 1L
     private val pendingUserKeys = mutableSetOf<Long>()
     private var lastAction = "attach"
@@ -173,7 +198,13 @@ class ChatController(
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
-    private var refreshHistoryAfterSettle = false
+    private var activeEntryCacheKey = ""
+    private var requestedEntryCursor = ""
+    private var historyTargetCursor = ""
+    private var historyUpdating = false
+    private var replayChunkSeq: Long? = null
+    private val replayChunkParts = mutableListOf<ByteArray>()
+    private var replayChunkBytes = 0
     private var draftWorkDir by mutableStateOf<String?>(null)
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
 
@@ -296,8 +327,41 @@ class ChatController(
             items.clear()
             pendingUserKeys.clear()
         }
-        isLoadingHistory = items.isEmpty()
+        entryCache.abort()
+        historyUpdating = false
+        replayChunkSeq = null
+        replayChunkParts.clear()
+        replayChunkBytes = 0
+        isLoadingHistory = lastAction == "attach"
         connectionSetupJob = scope.launch {
+            var entryCursor = ""
+            if (lastAction == "attach" && !lastSessionId.isNullOrBlank()) {
+                val key = entryCacheKey(cacheNamespace, lastSessionId.orEmpty())
+                val cached = withContext(Dispatchers.Default) {
+                    runCatching {
+                        if (clearTimeline) entryCache.snapshot(key)
+                        else EntryCacheSnapshot(entryCache.cursor(key), ByteArray(0))
+                    }.getOrElse {
+                        runCatching { entryCache.clear(key) }
+                        EntryCacheSnapshot("", ByteArray(0))
+                    }
+                }
+                if (generation != connectionGeneration) return@launch
+                activeEntryCacheKey = key
+                entryCursor = cached.cursor
+                if (clearTimeline) {
+                    val decoded = withContext(Dispatchers.Default) { decodeEntryCache(cached.entries) }
+                    if (decoded == null || decoded.lastEntryId != cached.cursor) {
+                        withContext(Dispatchers.Default) { runCatching { entryCache.clear(key) } }
+                        entryCursor = ""
+                    } else if (decoded.entries.isNotEmpty()) {
+                        rebuildFromEntries(decoded.entries)
+                    }
+                }
+            } else {
+                activeEntryCacheKey = ""
+            }
+            requestedEntryCursor = entryCursor
             val resolvedGateway =
                 try {
                     resolveGateway()
@@ -327,6 +391,7 @@ class ChatController(
                     workDir = lastWorkDir,
                     initialModel = if (lastAction == "create") currentModel?.qualified.orEmpty() else "",
                     initialThinking = if (lastAction == "create") thinkingLevel else "",
+                    entrySince = entryCursor,
                 ),
                 object : PiClient.Listener {
                     override fun onOpen() {}
@@ -370,6 +435,8 @@ class ChatController(
         capabilitiesLoading = false
         reconnectAttempt = 0
         connectionGeneration++
+        entryCache.abort()
+        historyUpdating = false
         client.disconnect()
         conn = ConnState.Disconnected
         isStreaming = false
@@ -377,6 +444,8 @@ class ChatController(
     }
 
     private fun handleConnectionClosed(code: Short, reason: String) {
+        entryCache.abort()
+        historyUpdating = false
         isStreaming = false
         val retryable = when (code.toInt()) {
             1000, 1002, 1003, 1007, 1008, 1009 -> false
@@ -394,6 +463,8 @@ class ChatController(
     }
 
     private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
+        entryCache.abort()
+        historyUpdating = false
         isStreaming = false
         if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Error
@@ -534,6 +605,14 @@ class ChatController(
             dispatchMessage(msg)
         } catch (t: Throwable) {
             println("[PiChat] dispatch error: ${t.stackTraceToString().take(800)}")
+            if (msg.str("type") == "pi2ws" &&
+                msg.strOrEmpty("event") in setOf(
+                    "history_begin", "history_chunk", "history_end",
+                    "replay_begin", "replay_chunk", "replay_end",
+                )
+            ) {
+                failAttachSync(t)
+            }
         }
     }
 
@@ -564,10 +643,6 @@ class ChatController(
                             }
                         }
                     }
-                }
-                if (refreshHistoryAfterSettle) {
-                    refreshHistoryAfterSettle = false
-                    sendCommand { put("type", "get_entries"); this }
                 }
             }
             "turn_start" -> Unit
@@ -605,10 +680,26 @@ class ChatController(
 
     private fun handleGatewayEvent(msg: JsonObject) {
         when (msg.str("event")) {
+            "history_begin" -> beginHistorySync(msg)
+            "history_chunk" -> {
+                check(historyUpdating) { "unexpected history chunk" }
+                entryCache.append(Base64.decode(msg.strOrEmpty("data")))
+            }
+            "history_end" -> finishHistorySync(msg)
+            "replay_begin" -> {
+                replayChunkSeq = null
+                replayChunkParts.clear()
+                replayChunkBytes = 0
+            }
+            "replay_chunk" -> handleReplayChunk(msg)
+            "replay_end" -> {
+                check(replayChunkSeq == null) { "replay ended inside a payload" }
+                isLoadingHistory = false
+            }
             "ready" -> {
                 val created = msg.str("action") == "create"
-                refreshHistoryAfterSettle = false
                 conn = ConnState.Ready
+                isLoadingHistory = false
                 val sid = msg.strOrEmpty("session_id")
                 sessionId = sid
                 workDir = msg.strOrEmpty("work_dir")
@@ -633,28 +724,74 @@ class ChatController(
                     onAutoName(sid, sessionName)
                 }
                 sendCommand { put("type", "get_state"); this }
-                if (msg.bool("history") != true) {
-                    sendCommand { put("type", "get_entries"); this }
-                }
                 sendCommand { put("type", "get_available_models"); this }
                 sendCommand { put("type", "get_available_thinking_levels"); this }
                 flushPendingCreatePrompt()
-            }
-            "replay" -> msg.obj("payload")?.let { dispatchMessage(it) }
-            "replay_end" -> isLoadingHistory = false
-            "replay_unavailable" -> {
-                refreshHistoryAfterSettle = true
-                sendCommand { put("type", "get_entries"); this }
-                onToast(
-                    "Active turn output exceeded the replay limit; history will refresh when the agent settles.",
-                    Toast.Kind.Info,
-                )
             }
             "error" -> onToast(
                 "${msg.strOrEmpty("code")}: ${msg.strOrEmpty("message")}",
                 Toast.Kind.Error,
             )
         }
+    }
+
+    private fun beginHistorySync(msg: JsonObject) {
+        check(activeEntryCacheKey.isNotBlank()) { "attach cache key is missing" }
+        historyTargetCursor = msg.strOrEmpty("entry_id")
+        val reset = msg.bool("reset") == true
+        historyUpdating = reset || historyTargetCursor != requestedEntryCursor
+        if (historyUpdating) entryCache.begin(activeEntryCacheKey, reset)
+    }
+
+    private fun finishHistorySync(msg: JsonObject) {
+        val cursor = msg.strOrEmpty("entry_id")
+        check(cursor == historyTargetCursor) { "history cursor changed during sync" }
+        val snapshot = if (historyUpdating) {
+            entryCache.commit(cursor)
+        } else {
+            entryCache.snapshot(activeEntryCacheKey)
+        }
+        historyUpdating = false
+        val decoded = decodeEntryCache(snapshot.entries) ?: error("cached history is not valid JSONL")
+        check(decoded.lastEntryId == cursor) { "cached history cursor does not match server cursor" }
+        rebuildFromEntries(decoded.entries)
+        requestedEntryCursor = cursor
+    }
+
+    private fun handleReplayChunk(msg: JsonObject) {
+        val seq = msg.long("seq") ?: error("replay chunk has no sequence")
+        val activeSeq = replayChunkSeq
+        check(activeSeq == null || activeSeq == seq) { "replay sequence changed inside a payload" }
+        replayChunkSeq = seq
+        val part = Base64.decode(msg.strOrEmpty("data"))
+        replayChunkParts.add(part)
+        replayChunkBytes += part.size
+        if (msg.bool("final") != true) return
+
+        val payload = ByteArray(replayChunkBytes)
+        var offset = 0
+        for (chunk in replayChunkParts) {
+            chunk.copyInto(payload, offset)
+            offset += chunk.size
+        }
+        replayChunkSeq = null
+        replayChunkParts.clear()
+        replayChunkBytes = 0
+        parseMessage(payload.decodeToString())?.let { dispatchMessage(it) }
+            ?: error("replay payload is not a JSON object")
+    }
+
+    private fun failAttachSync(failure: Throwable) {
+        entryCache.abort()
+        historyUpdating = false
+        activeEntryCacheKey.takeIf { it.isNotBlank() }?.let { key ->
+            runCatching { entryCache.clear(key) }
+        }
+        reconnectEnabled = false
+        client.disconnect()
+        conn = ConnState.Error
+        isLoadingHistory = false
+        onToast("Session synchronization failed: ${failure.message.orEmpty()}", Toast.Kind.Error)
     }
 
     // ---------- responses ----------
@@ -665,7 +802,6 @@ class ChatController(
         val data = msg.obj("data")
         if (!success) {
             val error = msg.strOrEmpty("error")
-            if (command == "get_entries") isLoadingHistory = false
             if (command != "abort") onToast("$command: $error", Toast.Kind.Error)
             if (command == "set_model" || command == "set_thinking_level") {
                 sendCommand { put("type", "get_state"); this }
@@ -719,14 +855,6 @@ class ChatController(
                 sendCommand { put("type", "get_state"); this }
             }
             "set_thinking_level" -> Unit // optimistic update already applied
-            "get_entries" -> {
-                isLoadingHistory = false
-                data?.arr("entries")?.let {
-                    println("[PiChat] get_entries count=${it.size}")
-                    rebuildFromEntries(it)
-                    println("[PiChat] rebuild done items=${items.size}")
-                }
-            }
             "get_messages" -> data?.arr("messages")?.let { msgs ->
                 rebuildFromEntries(JsonArray(msgs.map { m ->
                     buildJsonObject { put("type", "message"); put("message", m) }

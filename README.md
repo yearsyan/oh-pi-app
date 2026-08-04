@@ -199,39 +199,41 @@ ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&mod
 ### 连接历史 session
 
 ```text
-ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&token=<TOKEN>
+ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_ENTRY_ID>&token=<TOKEN>
 ```
 
-成功后的第一条消息同样是 `pi2ws/ready`，其中 `action` 为 `attach`，`history` 为 `true`，`work_dir` 为 session 创建时记录的工作区（旧版本创建的 session 没有记录，回退为网关的 `--work-dir`）。
+`entry_since` 可省略。客户端应把已经完整提交到本地缓存的最后一个 entry ID 放在这里；网关只同步这个 entry 后面的稳定记录。如果游标不存在于当前稳定历史中，`history_begin.reset` 为 `true`，客户端必须丢弃该 session 的旧缓存并从头接收。
+
+attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` 表示历史、活动事件和实时广播之间的无缝切换已经完成，此时客户端才应发送 `get_state` 等 RPC：
+
+1. `pi2ws/history_begin`；
+2. 零到多个 `pi2ws/history_chunk`；
+3. `pi2ws/history_end`；
+4. `pi2ws/replay_begin`；
+5. 零到多个 `pi2ws/replay_chunk`；
+6. `pi2ws/replay_end`；
+7. `pi2ws/ready`；
+8. attach 高水位之后的实时 pi 事件。
 
 ```json
+{"type":"pi2ws","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41}
+{"type":"pi2ws","event":"history_chunk","data":"eyJ0eXBlIjoibWVzc2FnZSIsImlkIjoiZW50cnktNDUifQo="}
+{"type":"pi2ws","event":"history_end","entry_id":"entry-45","through_seq":41}
+{"type":"pi2ws","event":"replay_begin","from_seq":42,"through_seq":45}
+{"type":"pi2ws","event":"replay_chunk","seq":42,"data":"eyJ0eXBlIjoiYWdlbnRfc3RhcnQifQ==","final":true}
+{"type":"pi2ws","event":"replay_end","through_seq":45}
 {
   "type": "pi2ws",
   "event": "ready",
   "action": "attach",
   "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
-  "work_dir": "/path/to/project",
-  "history": true
+  "work_dir": "/path/to/project"
 }
 ```
 
-随后网关按固定顺序发送：
+`history_chunk.data` 是 Base64 编码的原始 JSONL 字节；把所有 chunk 解码后按顺序追加到 staging 文件，得到的是 `entry_since` 之后的完整 entry 行。客户端只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标；中途断线必须回滚。`replay_chunk.data` 同样是 Base64 字节，同一个 `seq` 的 chunk 拼成一条原始 pi JSON 事件，`final: true` 表示该事件结束。
 
-1. 最近一次 `agent_settled` 后缓存的 `get_entries` 成功响应；
-2. `pi2ws/replay_begin`；
-3. 当前尚未 checkpoint 的 turn 事件，每条包装为 `pi2ws/replay`；
-4. `pi2ws/replay_end`；
-5. attach 高水位之后的实时 pi 事件。
-
-```json
-{"type":"response","command":"get_entries","success":true,"data":{"entries":[],"leafId":null}}
-{"type":"pi2ws","event":"replay_begin","from_seq":42,"through_seq":45}
-{"type":"pi2ws","event":"replay","seq":42,"payload":{"type":"agent_start"}}
-{"type":"pi2ws","event":"replay","seq":45,"payload":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}}
-{"type":"pi2ws","event":"replay_end","through_seq":45}
-```
-
-客户端看到 `history: true` 时不应再主动发送首次 `get_entries`；应先用缓存响应重建稳定历史，再按顺序处理各个 `replay.payload`。网关在同一临界区内截取 replay 高水位并注册实时广播，因此 attach 期间的输出不会漏失或重复。
+每个 chunk 最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会再被一个 WebSocket 帧或旧的 64 MiB 内存回放上限截断。活动事件先落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
 
 历史 session 必须由当前 `--data-dir` 对应的 pi2ws 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
 
@@ -271,8 +273,8 @@ pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等�
 注意：
 
 - 输出是 session 级广播，不是按发送者私有路由。多个客户端应给 RPC `id` 加各自的唯一前缀。
-- attach 自动发送稳定的 `get_entries` 历史和当前活动 turn 的事件回放。客户端仍可在连接后主动发送 `get_state`、`get_messages`、`get_entries` 或 `get_tree`。
-- 普通 pi 事件（包括可能正阻塞 pi 的 `extension_ui_request`）都会进入活动 turn 回放；RPC `response` 不回放，避免 attach 客户端误处理并非由它发起的旧命令响应。回放内存超过 `--max-replay-bytes` 时会发送 `pi2ws/replay_unavailable`，客户端应立即请求一次 `get_entries`，并在下一次 `agent_settled` 后再次同步；磁盘 WAL 不受该内存上限影响。
+- attach 从 pi 的 append-only session JSONL 按 entry 游标发送稳定历史，并从磁盘 WAL 发送当前活动 turn；不再调用或内嵌整包 `get_entries`。客户端仍可在 `ready` 后主动发送其他 pi RPC。
+- 普通 pi 事件（包括可能正阻塞 pi 的 `extension_ui_request`）都会进入活动 turn WAL；RPC `response` 不回放，避免 attach 客户端误处理并非由它发起的旧命令响应。
 - `abort`、`steer` 等命令会影响整个共享 session。
 - `new_session`、`switch_session`、`fork`、`clone` 会破坏网关的 session 与子进程映射，因此会被网关拒绝。新 session 应通过新的 `action=create` 连接创建。
 - 格式错误的命令只会向发送方返回 `pi2ws/error`，不会转发给 pi。
@@ -320,7 +322,7 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 
 - 同一 session 在同一时间最多有一个 pi 子进程。
 - `pi2ws-session.json` 是会话列表元数据的权威来源，包含名称、工作区、创建时间和最近活跃时间；旧版元数据会兼容读取。
-- pi2ws 会在广播可回放事件前先追加 `pi2ws-replay.log`；`agent_settled` 后原子更新 `pi2ws-history.json` 并压缩 replay 日志。
+- pi2ws 会在广播可回放事件前先追加 `pi2ws-replay.log`；`agent_settled` 后在 `pi2ws-history.json` 中原子记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号，并压缩已经稳定的 replay 日志。正在 attach 时延迟压缩，避免读者丢失 WAL 尾部。
 - 所有 WebSocket 都断开后，pi 仍可继续运行；session 在 `agent_settled` 后连续 5 分钟没有新 RPC 输入时会被优雅关闭。
 - 空闲回收会以正常关闭码断开仍连接的 WebSocket，原因是 `pi session idle timeout`。session 文件全部保留，下一次 attach 会启动新的 pi 子进程。
 - pi 异常退出时，该 session 的 WebSocket 以 1011 关闭；下一次 attach 会启动新进程并恢复持久化会话。
@@ -338,8 +340,7 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 | `--pi` | `PI2WS_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
-| `--max-message-bytes` | 无 | `16777216` | 单条 WS 命令和 pi 事件上限 |
-| `--max-replay-bytes` | 无 | `67108864` | 每个活动 session 的 turn 回放内存上限；磁盘 WAL 仍持续记录 |
+| `--max-message-bytes` | 无 | `134217728` | 单条 WS 命令和 pi 事件上限 |
 | `--session-idle-timeout` | 无 | `5m` | `agent_settled` 后无新 RPC 输入的 pi 进程回收时间 |
 | `--shutdown-timeout` | 无 | `10s` | 优雅退出等待时间 |
 

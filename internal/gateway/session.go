@@ -18,23 +18,21 @@ import (
 )
 
 type piSession struct {
-	id          string
-	dir         string
-	command     string
-	args        []string
-	workDir     string
-	maxEvent    int64
-	maxReplay   int64
-	idleAfter   time.Duration
-	historyWait time.Duration
-	logger      *slog.Logger
-	onExit      func(*piSession, error)
-	onActivity  func() error
-	onName      func(string) error
-	input       chan []byte
-	inputMu     sync.Mutex
-	processEnd  chan struct{}
-	done        chan struct{}
+	id         string
+	dir        string
+	command    string
+	args       []string
+	workDir    string
+	maxEvent   int64
+	idleAfter  time.Duration
+	logger     *slog.Logger
+	onExit     func(*piSession, error)
+	onActivity func() error
+	onName     func(string) error
+	input      chan []byte
+	inputMu    sync.Mutex
+	processEnd chan struct{}
+	done       chan struct{}
 
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
@@ -50,16 +48,17 @@ type piSession struct {
 	clientsClosed bool
 	clients       map[*wsClient]uint64
 
-	replayMu        sync.Mutex
-	outputSeq       uint64
-	historyReady    bool
-	historyResponse []byte
-	historyThrough  uint64
-	replay          []replayRecord
-	replayBytes     int64
-	replayTruncated bool
-	replayFile      *os.File
-	historyInitMu   sync.Mutex
+	replayMu              sync.Mutex
+	outputSeq             uint64
+	historyReady          bool
+	historyFile           string
+	historyOffset         int64
+	historyEntryID        string
+	historyThrough        uint64
+	replayFile            *os.File
+	syncReaders           int
+	replayNeedsCompaction bool
+	historyInitMu         sync.Mutex
 
 	internalMu       sync.Mutex
 	internalSequence atomic.Uint64
@@ -80,10 +79,8 @@ type piSessionConfig struct {
 	Args           []string
 	WorkDir        string
 	MaxEventBytes  int64
-	MaxReplayBytes int64
 	InputQueueSize int
 	SessionIdle    time.Duration
-	HistoryTimeout time.Duration
 	NewSession     bool
 	Logger         *slog.Logger
 	OnExit         func(*piSession, error)
@@ -99,9 +96,7 @@ func newPiSession(cfg piSessionConfig) *piSession {
 		args:            append([]string(nil), cfg.Args...),
 		workDir:         cfg.WorkDir,
 		maxEvent:        cfg.MaxEventBytes,
-		maxReplay:       cfg.MaxReplayBytes,
 		idleAfter:       cfg.SessionIdle,
-		historyWait:     cfg.HistoryTimeout,
 		logger:          cfg.Logger.With("session_id", cfg.ID),
 		onExit:          cfg.OnExit,
 		onActivity:      cfg.OnActivity,
@@ -115,7 +110,6 @@ func newPiSession(cfg piSessionConfig) *piSession {
 	}
 	if cfg.NewSession {
 		session.historyReady = true
-		session.historyResponse = emptyHistoryResponse()
 	}
 	return session
 }

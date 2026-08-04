@@ -136,6 +136,7 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.websockets)
             implementation(libs.multiplatform.settings)
+            implementation("com.squareup.okio:okio:3.4.0")
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)

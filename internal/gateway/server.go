@@ -256,8 +256,17 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	}
 
 	sessionID := request.URL.Query().Get("session_id")
+	entrySince := request.URL.Query().Get("entry_since")
 	if action == "create" && sessionID != "" {
 		writeHTTPError(writer, http.StatusBadRequest, "unexpected_session_id", "create does not accept session_id")
+		return
+	}
+	if action == "create" && entrySince != "" {
+		writeHTTPError(writer, http.StatusBadRequest, "unexpected_entry_since", "create does not accept entry_since")
+		return
+	}
+	if len(entrySince) > 512 || strings.IndexFunc(entrySince, unicode.IsControl) >= 0 {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_entry_since", "entry_since is invalid")
 		return
 	}
 
@@ -330,19 +339,28 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		Action:    action,
 		SessionID: session.id,
 		WorkDir:   session.workDir,
-		History:   action == "attach",
 	})
-	if !session.addClient(client, ready, action == "attach") {
-		client.close(websocket.CloseInternalServerErr, "pi session is not running")
-		return
-	}
 	go client.writePump()
+	readerDone := make(chan struct{})
+	go func() {
+		g.readClient(client, session)
+		client.abort()
+		close(readerDone)
+	}()
 	defer func() {
 		session.removeClient(client)
 		client.abort()
 	}()
 
-	g.readClient(client, session)
+	if action == "attach" {
+		if err := session.syncAttach(client, ready, entrySince); err != nil {
+			g.cfg.Logger.Warn("sync attached session", "session_id", session.id, "error", err)
+			client.close(websocket.CloseInternalServerErr, "could not synchronize session")
+		}
+	} else if !session.addLiveClient(client, ready) {
+		client.close(websocket.CloseInternalServerErr, "pi session is not running")
+	}
+	<-readerDone
 }
 
 type initialSessionConfig struct {
@@ -581,11 +599,14 @@ type gatewayEvent struct {
 	WorkDir    string          `json:"work_dir,omitempty"`
 	Code       string          `json:"code,omitempty"`
 	Message    string          `json:"message,omitempty"`
-	History    bool            `json:"history,omitempty"`
 	FromSeq    uint64          `json:"from_seq,omitempty"`
 	ThroughSeq uint64          `json:"through_seq,omitempty"`
 	Seq        uint64          `json:"seq,omitempty"`
 	Payload    json.RawMessage `json:"payload,omitempty"`
+	Reset      *bool           `json:"reset,omitempty"`
+	EntryID    string          `json:"entry_id,omitempty"`
+	Data       string          `json:"data,omitempty"`
+	Final      bool            `json:"final,omitempty"`
 }
 
 func gatewayError(client *wsClient, code, message string) {
