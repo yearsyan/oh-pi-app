@@ -46,6 +46,7 @@ class AppViewModel(
 
     // ---- runtime state ----
     var activeChatId by mutableStateOf<String?>(null); private set
+    var sessionsLoading by mutableStateOf(false); private set
     var sshHostKeyPrompt by mutableStateOf<SshHostKeyPrompt?>(null); private set
     val toasts = mutableStateListOf<Toast>()
 
@@ -75,14 +76,31 @@ class AppViewModel(
     fun openChat(sessionId: String, isNew: Boolean = false, workDir: String = "") {
         activeChatId = sessionId
         val c = controllerFor(sessionId)
-        if (isNew) c.prepareCreate(workDir) else if (!c.active) c.connect("attach", sessionId)
+        if (isNew) {
+            c.prepareCreate(workDir)
+        } else if (!c.active) {
+            seedSessionName(c, sessionId)
+            c.connect("attach", sessionId)
+        }
     }
 
     fun selectChatWide(sessionId: String?, isNew: Boolean = false, workDir: String = "") {
         activeChatId = sessionId
         sessionId ?: return
         val c = controllerFor(sessionId)
-        if (isNew) c.prepareCreate(workDir) else if (!c.active) c.connect("attach", sessionId)
+        if (isNew) {
+            c.prepareCreate(workDir)
+        } else if (!c.active) {
+            seedSessionName(c, sessionId)
+            c.connect("attach", sessionId)
+        }
+    }
+
+    /** Shows the known list name while the attach fetches the authoritative one. */
+    private fun seedSessionName(controller: ChatController, sessionId: String) {
+        if (controller.sessionName.isNotBlank()) return
+        val name = sessions.firstOrNull { it.id == sessionId }?.name.orEmpty()
+        if (name.isNotBlank()) controller.setSessionNameLocally(name)
     }
 
     // ---- servers ----
@@ -154,7 +172,11 @@ class AppViewModel(
         val generation = ++sessionRefreshGeneration
         val server = activeServer
         if (clearExisting) sessions.clear()
-        if (server == null) return
+        if (server == null) {
+            sessionsLoading = false
+            return
+        }
+        sessionsLoading = true
         val legacySessions = store.loadLegacySessions(server.id)
         viewModelScope.launch {
             if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
@@ -197,6 +219,8 @@ class AppViewModel(
                         Toast.Kind.Error,
                     )
                 }
+            } finally {
+                if (generation == sessionRefreshGeneration) sessionsLoading = false
             }
         }
     }
@@ -323,10 +347,6 @@ class AppViewModel(
                 strings = {
                     val s = stringsProvider()
                     ChatController.ChatStrings(
-                        newSessionCreated = s.newSessionCreated,
-                        sessionAttached = s.sessionAttached,
-                        piCrashed = s.piCrashed,
-                        connectionClosed = s.connectionClosed,
                         commandRejected = s.commandRejected,
                         abortSent = s.abortSent,
                         imageAttachment = s.imageAttachment,

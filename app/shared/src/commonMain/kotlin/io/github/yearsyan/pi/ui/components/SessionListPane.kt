@@ -1,5 +1,11 @@
 package io.github.yearsyan.pi.ui.components
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +68,7 @@ fun SessionListPane(
     activeServer: ServerProfile?,
     activeChatId: String?,
     wide: Boolean,
+    sessionsLoading: Boolean,
     onNewChat: () -> Unit,
     onSelectSession: (SavedSession) -> Unit,
     onSelectServer: (String) -> Unit,
@@ -107,7 +115,7 @@ fun SessionListPane(
         Spacer(Modifier.height(4.dp))
 
         if (sessions.isEmpty()) {
-            EmptySessions()
+            if (sessionsLoading) SessionsLoading() else EmptySessions()
         } else {
             val groups = sessions
                 .groupBy { it.workDir }
@@ -249,6 +257,47 @@ private fun ServerChip(
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SessionsLoading() {
+    val transition = rememberInfiniteTransition(label = "sessionsLoading")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "sessionsLoadingPulse",
+    )
+    val barColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    Column(Modifier.fillMaxSize()) {
+        repeat(6) { index ->
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp)) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(if (index % 2 == 0) 0.52f else 0.4f)
+                        .height(13.dp)
+                        .alpha(pulse)
+                        .background(barColor, RoundedCornerShape(6.dp)),
+                )
+                Spacer(Modifier.height(7.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.3f)
+                        .height(9.dp)
+                        .alpha(pulse * 0.75f)
+                        .background(barColor, RoundedCornerShape(4.dp)),
+                )
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant,
+                thickness = 0.5.dp,
+            )
         }
     }
 }

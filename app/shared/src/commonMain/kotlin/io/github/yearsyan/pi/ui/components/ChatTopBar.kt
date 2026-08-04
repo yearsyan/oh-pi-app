@@ -1,16 +1,17 @@
 package io.github.yearsyan.pi.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
@@ -62,15 +63,32 @@ fun ChatTopBar(
                 Spacer(Modifier.width(12.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(
-                    controller.sessionName.ifBlank { S.untitledSession },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val draft = controller.isDraft
+                val name = controller.sessionName
+                val namePending = name.isBlank() && !draft &&
+                    (controller.conn == ConnState.Connecting || controller.isLoadingHistory)
+                if (namePending) {
+                    Box(
+                        Modifier
+                            .padding(vertical = 3.dp)
+                            .width(132.dp)
+                            .height(15.dp)
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                    )
+                } else {
+                    Text(
+                        name.ifBlank { if (draft) S.newChat else S.untitledSession },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 Spacer(Modifier.size(2.dp))
-                ConnectionBadge(controller.conn)
+                if (!draft || controller.conn != ConnState.Disconnected) {
+                    ConnectionBadge(controller.conn)
+                }
             }
             if (controller.isStreaming) {
                 Text(

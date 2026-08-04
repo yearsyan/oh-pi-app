@@ -126,10 +126,6 @@ class ChatController(
 
     /** Small string contract so the controller stays UI-independent. */
     data class ChatStrings(
-        val newSessionCreated: String,
-        val sessionAttached: String,
-        val piCrashed: String,
-        val connectionClosed: String,
         val commandRejected: String,
         val abortSent: String,
         val imageAttachment: (Int) -> String,
@@ -454,10 +450,8 @@ class ChatController(
         if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Disconnected
             isLoadingHistory = false
-            reportConnectionClosed(code)
             return
         }
-        if (reconnectAttempt == 0) reportConnectionClosed(code)
         println("[PiChat] connection closed code=$code reason=$reason; scheduling reconnect")
         scheduleReconnect()
     }
@@ -480,15 +474,6 @@ class ChatController(
     /** Retrying an unacknowledged create could allocate duplicate server sessions. */
     private fun hasSafeReconnectTarget(): Boolean =
         lastAction == "attach" && !lastSessionId.isNullOrBlank()
-
-    private fun reportConnectionClosed(code: Short) {
-        val s = strings()
-        when (code.toInt()) {
-            1011 -> status(s.piCrashed, TimelineItem.StatusItem.Tone.Error)
-            1000 -> status(s.connectionClosed)
-            else -> status("${s.connectionClosed} ($code)", TimelineItem.StatusItem.Tone.Warn)
-        }
-    }
 
     private fun scheduleReconnect() {
         if (!reconnectEnabled || reconnectJob != null) return
@@ -714,10 +699,6 @@ class ChatController(
                 if (created) draftWorkDir = null
                 println("[PiChat] ready sid=$sid action=${msg.str("action")} workDir=$workDir")
                 onSessionReady(sid, created, workDir)
-                status(
-                    if (created) strings().newSessionCreated
-                    else strings().sessionAttached,
-                )
                 if (created && sessionName.isNotBlank()) {
                     autoNamed = true
                     sendCommand { put("type", "set_session_name"); put("name", sessionName) }

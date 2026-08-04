@@ -117,10 +117,6 @@ interface Strings {
     val loadingModels: String
     val retryModels: String
     val modelOptionsFailed: (String) -> String
-    val newSessionCreated: String
-    val sessionAttached: String
-    val piCrashed: String
-    val connectionClosed: String
     val commandRejected: String
     val notConnected: String
     val abortSent: String
@@ -278,10 +274,6 @@ object EnStrings : Strings {
     override val loadingModels = "Loading models…"
     override val retryModels = "Retry models"
     override val modelOptionsFailed = { reason: String -> "Could not load model options: $reason" }
-    override val newSessionCreated = "New chat created"
-    override val sessionAttached = "Session restored"
-    override val piCrashed = "The pi process exited unexpectedly. Reconnect to resume."
-    override val connectionClosed = "Connection closed"
     override val commandRejected = "Command rejected"
     override val notConnected = "Not connected"
     override val abortSent = "Stop requested"
@@ -436,10 +428,6 @@ object ZhStrings : Strings {
     override val loadingModels = "正在加载模型…"
     override val retryModels = "重试加载模型"
     override val modelOptionsFailed = { reason: String -> "无法加载模型选项：$reason" }
-    override val newSessionCreated = "已创建新会话"
-    override val sessionAttached = "已恢复历史会话"
-    override val piCrashed = "pi 进程异常退出，重新连接可自动恢复。"
-    override val connectionClosed = "连接已关闭"
     override val commandRejected = "命令被拒绝"
     override val notConnected = "尚未连接"
     override val abortSent = "已发送中止请求"
