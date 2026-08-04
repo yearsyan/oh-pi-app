@@ -71,6 +71,8 @@ interface Strings {
     val deleteSessionTitle: String
     val deleteSessionBody: String
     val untitledSession: String
+    val sessionRunning: String
+    val sessionOutputting: String
 
     // workspaces
     val workspaceDialogTitle: String
@@ -94,6 +96,15 @@ interface Strings {
     val imageReadFailed: String
     val thinking: String
     val thinkingInProgress: String
+    val processThoughtTimes: (Int) -> String
+    val processThoughtOnce: String
+    val processWroteFiles: (Int) -> String
+    val processReadFiles: (Int) -> String
+    val processRanCommands: (Int) -> String
+    val processSearchedTimes: (Int) -> String
+    val processListedDirectories: (Int) -> String
+    val processCalledTools: (Int) -> String
+    val processSummarySeparator: String
     val toolRunning: String
     val toolInput: String
     val toolOutput: String
@@ -121,6 +132,23 @@ interface Strings {
     val notConnected: String
     val abortSent: String
     val agentWorking: String
+    val agentWorkingTool: String
+    val sessionUsageTitle: String
+    val contextUsage: String
+    val contextWindow: String
+    val contextUsed: String
+    val contextRemaining: String
+    val contextUnknown: String
+    val cacheUsage: String
+    val cacheHitRate: String
+    val cacheRead: String
+    val cacheWrite: String
+    val tokenUsage: String
+    val inputTokens: String
+    val outputTokens: String
+    val totalTokens: String
+    val usageUnavailable: String
+    val usageRefreshing: String
     val emptyChatTitle: String
     val emptyChatBody: String
     val copied: String
@@ -230,6 +258,8 @@ object EnStrings : Strings {
     override val deleteSessionTitle = "Delete chat?"
     override val deleteSessionBody = "This permanently deletes the chat and its history from the server. This cannot be undone."
     override val untitledSession = "Untitled chat"
+    override val sessionRunning = "Running"
+    override val sessionOutputting = "Outputting"
 
     override val workspaceDialogTitle = "Choose a workspace"
     override val workspaceLabel = "Workspace"
@@ -251,6 +281,17 @@ object EnStrings : Strings {
     override val imageReadFailed = "Could not read this image"
     override val thinking = "Thinking"
     override val thinkingInProgress = "Thinking…"
+    override val processThoughtTimes = { n: Int -> "Thought $n ${if (n == 1) "time" else "times"}" }
+    override val processThoughtOnce = "thought"
+    override val processWroteFiles = { n: Int -> "wrote $n ${if (n == 1) "file" else "files"}" }
+    override val processReadFiles = { n: Int -> "read $n ${if (n == 1) "file" else "files"}" }
+    override val processRanCommands = { n: Int -> "ran $n ${if (n == 1) "command" else "commands"}" }
+    override val processSearchedTimes = { n: Int -> "searched $n ${if (n == 1) "time" else "times"}" }
+    override val processListedDirectories = { n: Int ->
+        "listed $n ${if (n == 1) "directory" else "directories"}"
+    }
+    override val processCalledTools = { n: Int -> "used $n ${if (n == 1) "tool" else "tools"}" }
+    override val processSummarySeparator = ", "
     override val toolRunning = "Running"
     override val toolInput = "Input"
     override val toolOutput = "Output"
@@ -278,6 +319,23 @@ object EnStrings : Strings {
     override val notConnected = "Not connected"
     override val abortSent = "Stop requested"
     override val agentWorking = "Working"
+    override val agentWorkingTool = "Running"
+    override val sessionUsageTitle = "Session usage"
+    override val contextUsage = "Context usage"
+    override val contextWindow = "Context window"
+    override val contextUsed = "Used"
+    override val contextRemaining = "Remaining"
+    override val contextUnknown = "Available after the next model response"
+    override val cacheUsage = "Prompt cache"
+    override val cacheHitRate = "Cache hit rate (total)"
+    override val cacheRead = "Cache read"
+    override val cacheWrite = "Cache write"
+    override val tokenUsage = "Token usage"
+    override val inputTokens = "Input"
+    override val outputTokens = "Output"
+    override val totalTokens = "Total"
+    override val usageUnavailable = "Usage data is not available yet"
+    override val usageRefreshing = "Refreshing usage…"
     override val emptyChatTitle = "How can I help?"
     override val emptyChatBody = "Ask anything, or let the agent inspect your project."
     override val copied = "Copied"
@@ -384,6 +442,8 @@ object ZhStrings : Strings {
     override val deleteSessionTitle = "删除会话？"
     override val deleteSessionBody = "这会永久删除服务器上的会话及其历史记录，且无法撤销。"
     override val untitledSession = "未命名会话"
+    override val sessionRunning = "运行中"
+    override val sessionOutputting = "输出中"
 
     override val workspaceDialogTitle = "选择工作区"
     override val workspaceLabel = "工作区"
@@ -405,16 +465,25 @@ object ZhStrings : Strings {
     override val imageReadFailed = "无法读取这张图片"
     override val thinking = "思考"
     override val thinkingInProgress = "正在思考…"
+    override val processThoughtTimes = { n: Int -> "思考 $n 次" }
+    override val processThoughtOnce = "进行了思考"
+    override val processWroteFiles = { n: Int -> "写入 $n 个文件" }
+    override val processReadFiles = { n: Int -> "读取 $n 个文件" }
+    override val processRanCommands = { n: Int -> "执行 $n 条命令" }
+    override val processSearchedTimes = { n: Int -> "搜索 $n 次" }
+    override val processListedDirectories = { n: Int -> "查看 $n 个目录" }
+    override val processCalledTools = { n: Int -> "调用 $n 次工具" }
+    override val processSummarySeparator = "，"
     override val toolRunning = "运行中"
     override val toolInput = "输入"
     override val toolOutput = "输出"
-    override val toolExecuted = { target: String -> "执行了 $target" }
-    override val toolRead = { target: String -> "读取了 $target" }
-    override val toolWrote = { target: String -> "写入了 $target" }
-    override val toolEdited = { target: String -> "编辑了 $target" }
-    override val toolSearched = { target: String -> "搜索了 $target" }
-    override val toolListed = { target: String -> "查看了 $target" }
-    override val toolCalled = { target: String -> "调用了 $target" }
+    override val toolExecuted = { target: String -> "执行 $target" }
+    override val toolRead = { target: String -> "读取 $target" }
+    override val toolWrote = { target: String -> "写入 $target" }
+    override val toolEdited = { target: String -> "编辑 $target" }
+    override val toolSearched = { target: String -> "搜索 $target" }
+    override val toolListed = { target: String -> "查看 $target" }
+    override val toolCalled = { target: String -> "调用 $target" }
     override val connected = "在线"
     override val connecting = "连接中"
     override val disconnected = "离线"
@@ -432,6 +501,23 @@ object ZhStrings : Strings {
     override val notConnected = "尚未连接"
     override val abortSent = "已发送中止请求"
     override val agentWorking = "运行中"
+    override val agentWorkingTool = "执行中"
+    override val sessionUsageTitle = "会话用量"
+    override val contextUsage = "上下文占用"
+    override val contextWindow = "上下文窗口"
+    override val contextUsed = "已占用"
+    override val contextRemaining = "剩余"
+    override val contextUnknown = "将在下一次模型响应后更新"
+    override val cacheUsage = "提示词缓存"
+    override val cacheHitRate = "缓存命中率（累计）"
+    override val cacheRead = "缓存读取"
+    override val cacheWrite = "缓存写入"
+    override val tokenUsage = "Token 用量"
+    override val inputTokens = "输入"
+    override val outputTokens = "输出"
+    override val totalTokens = "总计"
+    override val usageUnavailable = "暂时没有可用的用量数据"
+    override val usageRefreshing = "正在刷新用量…"
     override val emptyChatTitle = "有什么可以帮你？"
     override val emptyChatBody = "随便问点什么，或让智能体检查当前项目。"
     override val copied = "已复制"

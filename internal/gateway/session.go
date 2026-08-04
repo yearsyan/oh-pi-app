@@ -244,6 +244,12 @@ func (s *piSession) isDone() bool {
 	}
 }
 
+func (s *piSession) isOutputting() bool {
+	s.idleMu.Lock()
+	defer s.idleMu.Unlock()
+	return !s.settled
+}
+
 func (s *piSession) writeInput() {
 	defer s.ioWG.Done()
 	for {

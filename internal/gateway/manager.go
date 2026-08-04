@@ -13,8 +13,9 @@ import (
 var errSessionDeleting = errors.New("session is being deleted")
 
 type managedSession struct {
-	Metadata sessionMetadata
-	Running  bool
+	Metadata   sessionMetadata
+	Running    bool
+	Outputting bool
 }
 
 type sessionManager struct {
@@ -122,9 +123,11 @@ func (m *sessionManager) list() ([]managedSession, error) {
 			continue
 		}
 		current := m.sessions[meta.ID]
+		running := current != nil && !current.isDone() && !current.stopping.Load()
 		result = append(result, managedSession{
-			Metadata: meta,
-			Running:  current != nil && !current.isDone() && !current.stopping.Load(),
+			Metadata:   meta,
+			Running:    running,
+			Outputting: running && current.isOutputting(),
 		})
 	}
 	m.mu.Unlock()
@@ -148,10 +151,13 @@ func (m *sessionManager) get(id string) (managedSession, error) {
 	deleting := false
 	if _, deleting = m.deleting[id]; !deleting {
 		current := m.sessions[id]
+		running := current != nil && !current.isDone() && !current.stopping.Load()
+		outputting := running && current.isOutputting()
 		m.mu.Unlock()
 		return managedSession{
-			Metadata: meta,
-			Running:  current != nil && !current.isDone() && !current.stopping.Load(),
+			Metadata:   meta,
+			Running:    running,
+			Outputting: outputting,
 		}, nil
 	}
 	m.mu.Unlock()
@@ -173,6 +179,7 @@ func (m *sessionManager) rename(id, name string, forward bool) (managedSession, 
 	m.mu.Lock()
 	current := m.sessions[id]
 	running := current != nil && !current.isDone() && !current.stopping.Load()
+	outputting := running && current.isOutputting()
 	m.mu.Unlock()
 	if forward && running {
 		command, _ := json.Marshal(map[string]string{"type": "set_session_name", "name": name})
@@ -180,7 +187,7 @@ func (m *sessionManager) rename(id, name string, forward bool) (managedSession, 
 			m.cfg.Logger.Warn("forward session name to pi", "session_id", id, "error", err)
 		}
 	}
-	return managedSession{Metadata: meta, Running: running}, nil
+	return managedSession{Metadata: meta, Running: running, Outputting: outputting}, nil
 }
 
 func (m *sessionManager) touch(id string) error {

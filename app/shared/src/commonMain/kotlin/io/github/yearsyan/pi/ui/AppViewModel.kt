@@ -168,6 +168,11 @@ class AppViewModel(
 
     // ---- sessions ----
 
+    /** Refreshes server-owned sessions without blanking the current list. */
+    fun refreshSessions() {
+        if (!sessionsLoading) loadSessionsForActive(clearExisting = false)
+    }
+
     private fun loadSessionsForActive(clearExisting: Boolean = true) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
@@ -208,7 +213,11 @@ class AppViewModel(
 
                 if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
                 sessions.clear()
-                sessions.addAll(loaded.sortedByDescending { it.lastActive })
+                sessions.addAll(
+                    loaded
+                        .map(::mergeControllerStatus)
+                        .sortedByDescending { it.createdAt },
+                )
                 if (migrationComplete) store.clearLegacySessions(server.id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -234,11 +243,37 @@ class AppViewModel(
                 lastActive = now,
                 name = name.ifBlank { s.name },
                 workDir = workDir.ifBlank { s.workDir },
+                running = true,
             )
-            sessions.sortByDescending { it.lastActive }
+            sessions.sortByDescending { it.createdAt }
         } else {
-            sessions.add(0, SavedSession(id, name, now, now, workDir))
+            sessions.add(
+                SavedSession(
+                    id = id,
+                    name = name,
+                    createdAt = now,
+                    lastActive = now,
+                    workDir = workDir,
+                    running = true,
+                ),
+            )
+            sessions.sortByDescending { it.createdAt }
         }
+    }
+
+    private fun mergeControllerStatus(session: SavedSession): SavedSession {
+        val controller = controllers[session.id] ?: return session
+        if (!controller.active) return session
+        return session.copy(
+            running = true,
+            outputting = controller.isStreaming,
+        )
+    }
+
+    private fun updateSessionStreaming(id: String, streaming: Boolean) {
+        val index = sessions.indexOfFirst { it.id == id }
+        if (index < 0) return
+        sessions[index] = sessions[index].copy(running = true, outputting = streaming)
     }
 
     fun renameSession(id: String, name: String) {
@@ -261,7 +296,7 @@ class AppViewModel(
                 val current = sessions.indexOfFirst { it.id == id }
                 if (current >= 0) sessions[current] = updated
                 controllers[id]?.setSessionNameLocally(updated.name)
-                sessions.sortByDescending { it.lastActive }
+                sessions.sortByDescending { it.createdAt }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -305,7 +340,7 @@ class AppViewModel(
                 if (activeServerId == server.id) {
                     if (removed != null && sessions.none { it.id == id }) {
                         sessions.add(removed)
-                        sessions.sortByDescending { it.lastActive }
+                        sessions.sortByDescending { it.createdAt }
                     }
                     toast(
                         "Could not delete session: ${failure.message ?: "unknown error"}",
@@ -344,6 +379,7 @@ class AppViewModel(
                         addOrTouchSession(sid, name = title)
                     }
                 },
+                onStreamingChanged = ::updateSessionStreaming,
                 strings = {
                     val s = stringsProvider()
                     ChatController.ChatStrings(

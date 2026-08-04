@@ -45,6 +45,10 @@ data class SavedSession(
     val lastActive: Long = 0L,
     /** Workspace (pi working directory) reported by the gateway; blank = unknown/default. */
     val workDir: String = "",
+    /** Whether the gateway currently owns a live pi process for this session. */
+    val running: Boolean = false,
+    /** Whether that process is between agent_start and agent_settled. */
+    val outputting: Boolean = false,
 )
 
 enum class ThemeMode { System, Light, Dark }

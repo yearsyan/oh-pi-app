@@ -30,6 +30,7 @@ private data class GatewaySession(
     @SerialName("created_at") val createdAt: Long = 0L,
     @SerialName("last_active") val lastActive: Long = 0L,
     val running: Boolean = false,
+    val outputting: Boolean = false,
 ) {
     fun summary(): SavedSession = SavedSession(
         id = id,
@@ -37,6 +38,8 @@ private data class GatewaySession(
         createdAt = createdAt,
         lastActive = lastActive,
         workDir = workDir,
+        running = running,
+        outputting = outputting,
     )
 }
 

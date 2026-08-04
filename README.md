@@ -110,13 +110,16 @@ GET /api/sessions
       "work_dir": "/path/to/project",
       "created_at": 1785736800000,
       "last_active": 1785738600000,
-      "running": true
+      "running": true,
+      "outputting": false
     }
   ]
 }
 ```
 
 `running` 表示网关当前是否持有正在运行的 pi 子进程，不表示是否有 WebSocket 客户端连接。
+`outputting` 表示该进程当前处于 `agent_start` 到 `agent_settled` 之间；它为 `true` 时
+`running` 也一定为 `true`。
 
 ### 查询、重命名和删除 session
 

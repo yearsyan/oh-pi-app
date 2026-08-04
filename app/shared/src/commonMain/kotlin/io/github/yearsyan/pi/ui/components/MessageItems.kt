@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -51,23 +52,33 @@ import androidx.compose.ui.unit.sp
 import io.github.yearsyan.pi.chat.AssistantProcessDetail
 import io.github.yearsyan.pi.chat.AssistantRenderChunk
 import io.github.yearsyan.pi.chat.AssistantBlock
+import io.github.yearsyan.pi.chat.ProcessSummary
 import io.github.yearsyan.pi.chat.TimelineItem
+import io.github.yearsyan.pi.chat.ToolAction
 import io.github.yearsyan.pi.chat.ToolCallView
 import io.github.yearsyan.pi.chat.ToolActionKind
+import io.github.yearsyan.pi.chat.ToolInputView
 import io.github.yearsyan.pi.chat.ToolState
 import io.github.yearsyan.pi.chat.chunkAssistantRun
+import io.github.yearsyan.pi.chat.summarizeProcessDetails
 import io.github.yearsyan.pi.chat.toolAction
-import io.github.yearsyan.pi.chat.toolCommandArgument
+import io.github.yearsyan.pi.chat.toolInputView
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.i18n.Strings
 import io.github.yearsyan.pi.markdown.MarkdownView
 import io.github.yearsyan.pi.theme.piExtras
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Create
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Terminal
 
 @Composable
 fun UserMessageRow(item: TimelineItem.UserItem) {
@@ -98,11 +109,16 @@ private fun AgentProcessBlock(
     var expanded by remember { mutableStateOf(false) }
     val showDetails = expanded
     val strings = S
-    // collapsed header always reflects the latest detail: a tool action or the thinking state
+    // streaming shows the live latest activity; a completed block collapses
+    // into an aggregated summary (思考 2 次，写入 1 个文件，…)
     val summary =
-        when (val latest = details.lastOrNull()) {
-            is AssistantProcessDetail.Tool -> friendlyToolAction(strings, latest.tool)
-            else -> if (isStreaming) strings.thinkingInProgress else strings.thinking
+        if (isStreaming) {
+            when (val latest = details.lastOrNull()) {
+                is AssistantProcessDetail.Tool -> friendlyToolAction(strings, latest.tool)
+                else -> strings.thinkingInProgress
+            }
+        } else {
+            completedProcessSummary(strings, summarizeProcessDetails(details))
         }
     Column(
         modifier =
@@ -235,16 +251,17 @@ private fun ThinkingDetail(block: AssistantBlock) {
 @Composable
 private fun ToolDetail(tool: ToolCallView) {
     val strings = S
+    val action = toolAction(tool.name, tool.args)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            Icons.Filled.Build,
+            toolActionIcon(action.kind),
             contentDescription = null,
             modifier = Modifier.size(14.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            friendlyToolAction(strings, tool),
+            friendlyToolAction(strings, action),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
@@ -252,15 +269,25 @@ private fun ToolDetail(tool: ToolCallView) {
         )
         ToolStateBadge(tool)
     }
-    if (tool.args.isNotBlank()) {
-        Spacer(Modifier.height(8.dp))
-        val command = toolCommandArgument(tool.name, tool.args)
-        if (command != null) {
-            BashCommandBlock(command)
-        } else {
-            ToolSectionLabel(S.toolInput)
-            ToolCodeBlock(tool.args)
+    when (val input = toolInputView(tool.name, tool.args)) {
+        is ToolInputView.Command -> {
+            Spacer(Modifier.height(8.dp))
+            BashCommandBlock(input.command)
         }
+        is ToolInputView.FileContent -> {
+            Spacer(Modifier.height(8.dp))
+            ToolCodeBlock(input.content)
+        }
+        is ToolInputView.FileEdit -> {
+            Spacer(Modifier.height(8.dp))
+            EditDiffBlock(input.hunks)
+        }
+        is ToolInputView.Raw -> {
+            Spacer(Modifier.height(8.dp))
+            ToolSectionLabel(S.toolInput)
+            ToolCodeBlock(input.args)
+        }
+        ToolInputView.Hidden -> Unit
     }
     if (tool.output.isNotBlank()) {
         Spacer(Modifier.height(8.dp))
@@ -269,9 +296,11 @@ private fun ToolDetail(tool: ToolCallView) {
     }
 }
 
-private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String {
-    val action = toolAction(tool.name, tool.args)
-    return when (action.kind) {
+private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String =
+    friendlyToolAction(strings, toolAction(tool.name, tool.args))
+
+private fun friendlyToolAction(strings: Strings, action: ToolAction): String =
+    when (action.kind) {
         ToolActionKind.Execute -> strings.toolExecuted(action.target)
         ToolActionKind.Read -> strings.toolRead(action.target)
         ToolActionKind.Write -> strings.toolWrote(action.target)
@@ -280,6 +309,35 @@ private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String {
         ToolActionKind.List -> strings.toolListed(action.target)
         ToolActionKind.Call -> strings.toolCalled(action.target)
     }
+
+private fun toolActionIcon(kind: ToolActionKind): ImageVector =
+    when (kind) {
+        ToolActionKind.Execute -> Icons.Outlined.Terminal
+        ToolActionKind.Read -> Icons.Outlined.Description
+        ToolActionKind.Write -> Icons.Outlined.Create
+        ToolActionKind.Edit -> Icons.Outlined.Edit
+        ToolActionKind.Search -> Icons.Outlined.Search
+        ToolActionKind.List -> Icons.Outlined.Folder
+        ToolActionKind.Call -> Icons.Outlined.Build
+    }
+
+/** Aggregated one-line summary for a completed process block; thinking comes last. */
+internal fun completedProcessSummary(strings: Strings, summary: ProcessSummary): String {
+    val parts = mutableListOf<String>()
+    if (summary.filesWritten > 0) parts += strings.processWroteFiles(summary.filesWritten)
+    if (summary.filesRead > 0) parts += strings.processReadFiles(summary.filesRead)
+    if (summary.commandsRun > 0) parts += strings.processRanCommands(summary.commandsRun)
+    if (summary.searches > 0) parts += strings.processSearchedTimes(summary.searches)
+    if (summary.directoryListings > 0) parts += strings.processListedDirectories(summary.directoryListings)
+    if (summary.otherToolCalls > 0) parts += strings.processCalledTools(summary.otherToolCalls)
+    // the thinking part is always described last: 进行了思考 / 思考 n 次
+    if (summary.thinkingCount == 1) {
+        parts += strings.processThoughtOnce
+    } else if (summary.thinkingCount > 1) {
+        parts += strings.processThoughtTimes(summary.thinkingCount)
+    }
+    if (parts.isEmpty()) return strings.thinking
+    return parts.joinToString(strings.processSummarySeparator)
 }
 
 @Composable
@@ -348,6 +406,60 @@ private fun ToolCodeBlock(text: String) {
             maxLines = 40,
         )
     }
+}
+
+private const val MAX_DIFF_LINES = 18
+private const val MAX_DIFF_HUNKS = 6
+
+/** Removed/added line pairs for edit tool payloads, styled like a unified diff. */
+@Composable
+private fun EditDiffBlock(hunks: List<ToolInputView.EditHunk>) {
+    Surface(
+        color = piExtras.codeBackground,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            hunks.take(MAX_DIFF_HUNKS).forEachIndexed { index, hunk ->
+                if (index > 0) {
+                    HorizontalDivider(color = piExtras.onCode.copy(alpha = 0.12f))
+                }
+                DiffLines(hunk.oldText, prefix = "-", color = MaterialTheme.colorScheme.error)
+                DiffLines(hunk.newText, prefix = "+", color = piExtras.success)
+            }
+            if (hunks.size > MAX_DIFF_HUNKS) {
+                Text(
+                    "\u2026",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = piExtras.onCode,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffLines(
+    text: String,
+    prefix: String,
+    color: Color,
+) {
+    if (text.isEmpty()) return
+    val lines = text.lines()
+    val shown = lines.take(MAX_DIFF_LINES)
+    Text(
+        shown.joinToString("\n") { "$prefix $it" } + if (lines.size > shown.size) "\n…" else "",
+        style =
+            MaterialTheme.typography.bodySmall.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.5.sp,
+                lineHeight = 16.sp,
+            ),
+        color = color,
+    )
 }
 
 /** Terminal-style block for shell commands: green "$" prompt plus the command text. */

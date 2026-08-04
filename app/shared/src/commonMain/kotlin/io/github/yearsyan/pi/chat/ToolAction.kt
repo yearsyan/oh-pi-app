@@ -2,6 +2,7 @@ package io.github.yearsyan.pi.chat
 
 import io.github.yearsyan.pi.net.PiJson
 import io.github.yearsyan.pi.net.str
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 internal enum class ToolActionKind {
@@ -59,10 +60,73 @@ internal fun toolAction(name: String, args: String): ToolAction {
     )
 }
 
-/** Full untruncated shell command for Execute-kind tools, or null when unavailable. */
-internal fun toolCommandArgument(name: String, args: String): String? {
-    if (toolKind(name) != ToolActionKind.Execute) return null
-    return parseToolArgs(args)?.argument("command", "cmd", "script")?.trim()
+/** How a tool's raw JSON arguments should be rendered in the detail view. */
+internal sealed interface ToolInputView {
+    /** Shell command shown terminal-style. */
+    data class Command(val command: String) : ToolInputView
+
+    /** File content being written, shown as a plain code block. */
+    data class FileContent(val content: String) : ToolInputView
+
+    /** One removed/added line pair inside an edit payload. */
+    data class EditHunk(val oldText: String, val newText: String)
+
+    /** Edit payload shown as removed/added line pairs. */
+    data class FileEdit(val hunks: List<EditHunk>) : ToolInputView
+
+    /** Nothing extra to show: the header label already carries the target. */
+    data object Hidden : ToolInputView
+
+    /** Unparsed arguments shown as raw JSON (unknown tools). */
+    data class Raw(val args: String) : ToolInputView
+}
+
+internal fun toolInputView(name: String, args: String): ToolInputView {
+    if (args.isBlank()) return ToolInputView.Hidden
+    val kind = toolKind(name)
+    val arguments = parseToolArgs(args)
+
+    fun argument(vararg keys: String): String? = arguments?.argument(*keys)
+
+    return when (kind) {
+        ToolActionKind.Execute ->
+            argument("command", "cmd", "script")?.trim()?.takeIf { it.isNotBlank() }
+                ?.let { ToolInputView.Command(it) }
+                ?: ToolInputView.Raw(args)
+        ToolActionKind.Write ->
+            argument("content", "text", "contents")
+                ?.let { ToolInputView.FileContent(it) }
+                ?: ToolInputView.Raw(args)
+        ToolActionKind.Edit -> {
+            val hunks = mutableListOf<ToolInputView.EditHunk>()
+            val editsArray = arguments?.get("edits") as? JsonArray
+            if (editsArray != null) {
+                // pi schema: { "path": …, "edits": [{ "oldText": …, "newText": … }] }
+                editsArray.forEach { element ->
+                    val hunk = element as? JsonObject ?: return@forEach
+                    val oldText = hunk.argument("oldText", "old_string", "old").orEmpty()
+                    val newText = hunk.argument("newText", "new_string", "new").orEmpty()
+                    if (oldText.isNotEmpty() || newText.isNotEmpty()) {
+                        hunks += ToolInputView.EditHunk(oldText, newText)
+                    }
+                }
+            } else {
+                val oldText = argument("oldText", "old_string", "old")
+                val newText = argument("newText", "new_string", "new")
+                if (oldText != null || newText != null) {
+                    hunks += ToolInputView.EditHunk(oldText.orEmpty(), newText.orEmpty())
+                }
+            }
+            if (hunks.isNotEmpty()) {
+                ToolInputView.FileEdit(hunks)
+            } else {
+                ToolInputView.Raw(args)
+            }
+        }
+        // the collapsed header already shows the path/pattern as the target
+        ToolActionKind.Read, ToolActionKind.Search, ToolActionKind.List -> ToolInputView.Hidden
+        ToolActionKind.Call -> ToolInputView.Raw(args)
+    }
 }
 
 private fun compactToolTarget(raw: String): String {

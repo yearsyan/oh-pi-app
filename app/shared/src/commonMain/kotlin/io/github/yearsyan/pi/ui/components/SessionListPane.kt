@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -69,6 +71,7 @@ fun SessionListPane(
     activeChatId: String?,
     wide: Boolean,
     sessionsLoading: Boolean,
+    onRefresh: () -> Unit,
     onNewChat: () -> Unit,
     onSelectSession: (SavedSession) -> Unit,
     onSelectServer: (String) -> Unit,
@@ -114,26 +117,29 @@ fun SessionListPane(
 
         Spacer(Modifier.height(4.dp))
 
-        if (sessions.isEmpty()) {
-            if (sessionsLoading) SessionsLoading() else EmptySessions()
-        } else {
-            val groups = sessions
-                .groupBy { it.workDir }
-                .map { (dir, list) -> WorkspaceGroup(dir, list.sortedByDescending { it.lastActive }) }
-                .sortedByDescending { g -> g.sessions.maxOf { it.lastActive } }
-            LazyColumn(Modifier.fillMaxSize()) {
-                groups.forEach { group ->
-                    item(key = "ws-${group.workDir}") {
-                        WorkspaceHeader(group.workDir)
-                    }
-                    items(group.sessions, key = { it.id }) { session ->
-                        SessionRow(
-                            session = session,
-                            active = wide && session.id == activeChatId,
-                            onClick = { onSelectSession(session) },
-                            onRename = { onRenameSession(session) },
-                            onDelete = { deleteCandidate = session },
-                        )
+        PlatformPullToRefreshBox(
+            isRefreshing = sessionsLoading,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        ) {
+            if (sessions.isEmpty()) {
+                if (sessionsLoading) SessionsLoading() else EmptySessions()
+            } else {
+                val groups = groupSessionsByCreation(sessions)
+                LazyColumn(Modifier.fillMaxSize()) {
+                    groups.forEach { group ->
+                        item(key = "ws-${group.workDir}") {
+                            WorkspaceHeader(group.workDir)
+                        }
+                        items(group.sessions, key = { it.id }) { session ->
+                            SessionRow(
+                                session = session,
+                                active = wide && session.id == activeChatId,
+                                onClick = { onSelectSession(session) },
+                                onRename = { onRenameSession(session) },
+                                onDelete = { deleteCandidate = session },
+                            )
+                        }
                     }
                 }
             }
@@ -149,7 +155,13 @@ fun SessionListPane(
     }
 }
 
-private data class WorkspaceGroup(val workDir: String, val sessions: List<SavedSession>)
+internal data class WorkspaceGroup(val workDir: String, val sessions: List<SavedSession>)
+
+internal fun groupSessionsByCreation(sessions: List<SavedSession>): List<WorkspaceGroup> =
+    sessions
+        .groupBy { it.workDir }
+        .map { (dir, list) -> WorkspaceGroup(dir, list.sortedByDescending { it.createdAt }) }
+        .sortedByDescending { group -> group.sessions.maxOf { it.createdAt } }
 
 @Composable
 private fun WorkspaceHeader(workDir: String) {
@@ -304,29 +316,34 @@ private fun SessionsLoading() {
 
 @Composable
 private fun EmptySessions() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
+        contentPadding = PaddingValues(32.dp),
     ) {
-        Icon(
-            Icons.AutoMirrored.Outlined.Chat,
-            contentDescription = null,
-            modifier = Modifier.size(40.dp),
-            tint = MaterialTheme.colorScheme.outline,
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            S.noSessions,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            S.noSessionsHint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-        )
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.Chat,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.outline,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    S.noSessions,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    S.noSessionsHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+        }
     }
 }
 
@@ -350,13 +367,20 @@ private fun SessionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                session.name.ifBlank { S.untitledSession },
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (session.running) {
+                    SessionStatus(outputting = session.outputting)
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    session.name.ifBlank { S.untitledSession },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 "${session.id.take(8)} · ${relativeTime(session.lastActive)}",
@@ -392,6 +416,39 @@ private fun SessionRow(
         color = MaterialTheme.colorScheme.outlineVariant,
         thickness = 0.5.dp,
     )
+}
+
+@Composable
+private fun SessionStatus(outputting: Boolean) {
+    val color = if (outputting) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+    Surface(
+        shape = RoundedCornerShape(7.dp),
+        color = color.copy(alpha = 0.12f),
+        contentColor = color,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (outputting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(9.dp),
+                    color = color,
+                    strokeWidth = 1.5.dp,
+                )
+            } else {
+                Box(Modifier.size(6.dp).background(color, CircleShape))
+            }
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (outputting) S.sessionOutputting else S.sessionRunning,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                color = color,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 @Composable

@@ -99,6 +99,7 @@ type sessionResponse struct {
 	CreatedAt  int64  `json:"created_at"`
 	LastActive int64  `json:"last_active"`
 	Running    bool   `json:"running"`
+	Outputting bool   `json:"outputting"`
 }
 
 type sessionListResponse struct {
@@ -226,6 +227,7 @@ func makeSessionResponse(session managedSession) sessionResponse {
 		CreatedAt:  meta.CreatedAt.UnixMilli(),
 		LastActive: meta.UpdatedAt.UnixMilli(),
 		Running:    session.Running,
+		Outputting: session.Outputting,
 	}
 }
 

@@ -153,6 +153,52 @@ func TestSessionManagementAPIRejectsInvalidUpdates(t *testing.T) {
 	}
 }
 
+func TestSessionAPIReportsOutputtingStatus(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer client.Close()
+	readEvent(t, client)
+
+	listed := getSessionList(t, server)
+	if len(listed.Sessions) != 1 || !listed.Sessions[0].Running || listed.Sessions[0].Outputting {
+		t.Fatalf("idle running session = %#v", listed.Sessions)
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "start-output", "type": "fake_emit",
+		"events": []any{map[string]any{"type": "agent_start"}},
+	})
+	if event := readEvent(t, client); event.string("type") != "agent_start" {
+		t.Fatalf("start event = %#v", event)
+	}
+	if response := readEvent(t, client); response.string("id") != "start-output" {
+		t.Fatalf("start response = %#v", response)
+	}
+	listed = getSessionList(t, server)
+	if !listed.Sessions[0].Running || !listed.Sessions[0].Outputting {
+		t.Fatalf("outputting session = %#v", listed.Sessions[0])
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "settle-output", "type": "fake_emit",
+		"events": []any{map[string]any{"type": "agent_settled"}},
+	})
+	if event := readEvent(t, client); event.string("type") != "agent_settled" {
+		t.Fatalf("settled event = %#v", event)
+	}
+	if response := readEvent(t, client); response.string("id") != "settle-output" {
+		t.Fatalf("settled response = %#v", response)
+	}
+	listed = getSessionList(t, server)
+	if !listed.Sessions[0].Running || listed.Sessions[0].Outputting {
+		t.Fatalf("settled running session = %#v", listed.Sessions[0])
+	}
+}
+
 func TestSessionListSurvivesGatewayRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	firstGateway, firstServer := startTestGateway(t, dataDir)
@@ -184,6 +230,9 @@ func TestSessionListSurvivesGatewayRestart(t *testing.T) {
 	}
 	if listed.Sessions[0].Running {
 		t.Fatalf("restarted session running = true, want false before attach")
+	}
+	if listed.Sessions[0].Outputting {
+		t.Fatalf("restarted session outputting = true, want false before attach")
 	}
 
 	attached := dialWebSocket(t, secondServer, url.Values{

@@ -38,6 +38,7 @@ import kotlin.random.Random
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
+private const val RateWindowMillis = 500L
 private val OrderedThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 internal data class DecodedEntryCache(
@@ -116,6 +117,7 @@ class ChatController(
     private val onToast: (String, Toast.Kind) -> Unit,
     private val onSessionReady: (sessionId: String, isNew: Boolean, workDir: String) -> Unit,
     private val onAutoName: (sessionId: String, title: String) -> Unit,
+    private val onStreamingChanged: (sessionId: String, streaming: Boolean) -> Unit,
     private val strings: () -> ChatStrings,
     private val loadCapabilities: suspend (workDir: String) -> GatewayCapabilities,
     private val resolveGateway: suspend () -> String = { gateway },
@@ -157,6 +159,12 @@ class ChatController(
     var capabilitiesLoading by mutableStateOf(false); private set
     var capabilitiesError by mutableStateOf<String?>(null); private set
     var isStreaming by mutableStateOf(false); private set
+    var sessionStats by mutableStateOf<SessionStats?>(null); private set
+    var sessionStatsLoading by mutableStateOf(false); private set
+    var charRate by mutableStateOf(0f); private set
+    var runningToolCount by mutableStateOf(0); private set
+    private var rateWindowStart = 0L
+    private var rateWindowChars = 0
     var isLoadingHistory by mutableStateOf(false); private set
     var steeringQueue = mutableStateListOf<String>(); private set
     var followUpQueue = mutableStateListOf<String>(); private set
@@ -202,6 +210,7 @@ class ChatController(
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
+    private var sessionStatsRefreshQueued = false
     private var activeEntryCacheKey = ""
     private var requestedEntryCursor = ""
     private var historyTargetCursor = ""
@@ -220,6 +229,7 @@ class ChatController(
     /** Prepares a local-only chat. Its first prompt starts the create connection. */
     fun prepareCreate(workDir: String = "") {
         disconnect()
+        sessionStats = null
         sessionId = ""
         this.workDir = workDir
         draftWorkDir = workDir
@@ -300,6 +310,9 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         confirmedPromptForAutoName = null
+        sessionStats = null
+        sessionStatsLoading = false
+        sessionStatsRefreshQueued = false
         beginConnection(action, sessionId, workDir, clearTimeline = true)
     }
 
@@ -449,7 +462,13 @@ class ChatController(
         historyUpdating = false
         client.disconnect()
         conn = ConnState.Disconnected
+        sessionStatsLoading = false
+        sessionStatsRefreshQueued = false
         isStreaming = false
+        runningToolCount = 0
+        charRate = 0f
+        rateWindowStart = 0L
+        rateWindowChars = 0
         isLoadingHistory = false
         pendingCreatePrompt = null
         pendingPrompt = null
@@ -460,6 +479,9 @@ class ChatController(
         entryCache.abort()
         historyUpdating = false
         isStreaming = false
+        sessionStatsLoading = false
+        sessionStatsRefreshQueued = false
+        runningToolCount = 0
         val retryable = when (code.toInt()) {
             1000, 1002, 1003, 1007, 1008, 1009 -> false
             else -> true
@@ -477,6 +499,9 @@ class ChatController(
         entryCache.abort()
         historyUpdating = false
         isStreaming = false
+        sessionStatsLoading = false
+        sessionStatsRefreshQueued = false
+        runningToolCount = 0
         if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Error
             isLoadingHistory = false
@@ -511,6 +536,26 @@ class ChatController(
     }
 
     // ---------- public actions ----------
+
+    /** Refreshes context and token usage for the attached session. */
+    fun refreshSessionStats(): Boolean {
+        if (conn != ConnState.Ready) return false
+        if (sessionStatsLoading) {
+            sessionStatsRefreshQueued = true
+            return true
+        }
+        sessionStatsLoading = true
+        val sent = sendCommand { put("type", "get_session_stats") }
+        if (!sent) sessionStatsLoading = false
+        return sent
+    }
+
+    private fun finishSessionStatsRefresh(runQueuedRefresh: Boolean) {
+        sessionStatsLoading = false
+        val refreshAgain = runQueuedRefresh && sessionStatsRefreshQueued && conn == ConnState.Ready
+        sessionStatsRefreshQueued = false
+        if (refreshAgain) refreshSessionStats()
+    }
 
     fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): String? {
         val trimmed = text.trim()
@@ -657,9 +702,9 @@ class ChatController(
             "tool_execution_start" -> handleToolStart(msg)
             "tool_execution_update" -> handleToolUpdate(msg)
             "tool_execution_end" -> handleToolEnd(msg)
-            "agent_start" -> isStreaming = true
+            "agent_start" -> updateServerStreaming(true)
             "agent_settled" -> {
-                isStreaming = false
+                updateServerStreaming(false)
                 for (item in items) {
                     if (item is TimelineItem.AssistantItem) {
                         for (blk in item.blocks) {
@@ -670,6 +715,7 @@ class ChatController(
                         }
                     }
                 }
+                refreshSessionStats()
             }
             "turn_start" -> Unit
             "queue_update" -> {
@@ -677,7 +723,10 @@ class ChatController(
                 followUpQueue.clear(); msg.arr("followUp")?.mapNotNull { it.toString().trim('"').ifBlank { null } }?.let { followUpQueue.addAll(it) }
             }
             "compaction_start" -> status(strings().compacting, TimelineItem.StatusItem.Tone.Warn)
-            "compaction_end" -> status(strings().compacted)
+            "compaction_end" -> {
+                status(strings().compacted)
+                refreshSessionStats()
+            }
             "auto_retry_start" -> status(
                 "${strings().turnStart}: ${msg.strOrEmpty("errorMessage")}",
                 TimelineItem.StatusItem.Tone.Warn,
@@ -751,6 +800,7 @@ class ChatController(
                 sendCommand { put("type", "get_state"); this }
                 sendCommand { put("type", "get_available_models"); this }
                 sendCommand { put("type", "get_available_thinking_levels"); this }
+                refreshSessionStats()
                 flushPendingCreatePrompt()
             }
             "error" -> onToast(
@@ -826,6 +876,7 @@ class ChatController(
         val success = msg.bool("success") == true
         val data = msg.obj("data")
         if (!success) {
+            if (command == "get_session_stats") finishSessionStatsRefresh(runQueuedRefresh = false)
             val responseID = msg.strOrEmpty("id")
             val pending = pendingPrompt
             if (command in setOf("prompt", "steer", "follow_up") &&
@@ -842,6 +893,10 @@ class ChatController(
             return
         }
         when (command) {
+            "get_session_stats" -> {
+                sessionStats = data?.let(::parseSessionStats)
+                finishSessionStatsRefresh(runQueuedRefresh = true)
+            }
             "get_state" -> if (data != null) {
                 sessionName = data.strOrEmpty("sessionName")
                 val modelObj = data.obj("model")
@@ -853,7 +908,7 @@ class ChatController(
                     ModelInfo(m.strOrEmpty("id"), m.strOrEmpty("name"), m.strOrEmpty("provider"))
                 }?.takeIf { it.id.isNotBlank() }
                 thinkingLevel = data.strOrEmpty("thinkingLevel")
-                isStreaming = data.bool("isStreaming") == true
+                updateServerStreaming(data.bool("isStreaming") == true)
             }
             "get_available_models" -> {
                 models.clear()
@@ -897,6 +952,18 @@ class ChatController(
         }
     }
 
+    private fun updateServerStreaming(streaming: Boolean) {
+        isStreaming = streaming
+        if (streaming) {
+            charRate = 0f
+            rateWindowStart = 0L
+            rateWindowChars = 0
+        } else {
+            runningToolCount = 0
+        }
+        sessionId.takeIf { it.isNotBlank() }?.let { onStreamingChanged(it, streaming) }
+    }
+
     // ---------- timeline: streaming ----------
 
     private fun status(text: String, tone: TimelineItem.StatusItem.Tone = TimelineItem.StatusItem.Tone.Info) {
@@ -932,6 +999,19 @@ class ChatController(
         return b
     }
 
+    /** Output character rate (chars/s), settled once per 500 ms window. */
+    private fun recordOutputChars(n: Int) {
+        if (n <= 0) return
+        val now = nowMillis()
+        if (rateWindowStart == 0L) rateWindowStart = now
+        rateWindowChars += n
+        if (now - rateWindowStart >= RateWindowMillis) {
+            charRate = rateWindowChars * 1000f / (now - rateWindowStart)
+            rateWindowStart = now
+            rateWindowChars = 0
+        }
+    }
+
     private fun handleDelta(delta: JsonObject) {
         val item = latestStreamingAssistant() ?: return
         val index = delta.long("contentIndex")?.toInt() ?: 0
@@ -945,10 +1025,18 @@ class ChatController(
                 }
             }
             "text_start" -> blockAt(item, index, BlockKind.Text)
-            "text_delta" -> blockAt(item, index, BlockKind.Text).text += delta.strOrEmpty("delta")
+            "text_delta" -> {
+                val chunk = delta.strOrEmpty("delta")
+                blockAt(item, index, BlockKind.Text).text += chunk
+                recordOutputChars(chunk.length)
+            }
             "text_end" -> blockAt(item, index, BlockKind.Text).text = delta.strOrEmpty("content")
             "thinking_start" -> blockAt(item, index, BlockKind.Thinking)
-            "thinking_delta" -> blockAt(item, index, BlockKind.Thinking).text += delta.strOrEmpty("delta")
+            "thinking_delta" -> {
+                val chunk = delta.strOrEmpty("delta")
+                blockAt(item, index, BlockKind.Thinking).text += chunk
+                recordOutputChars(chunk.length)
+            }
             "thinking_end" -> blockAt(item, index, BlockKind.Thinking).text = delta.strOrEmpty("content")
             "toolcall_start" -> blockAt(item, index, BlockKind.ToolCall)
             "toolcall_delta" -> blockAt(item, index, BlockKind.ToolCall).tool?.let { it.args += delta.strOrEmpty("delta") }
@@ -1071,6 +1159,7 @@ class ChatController(
         tc.name = toolName.ifBlank { tc.name }
         tc.args = argsToString(msg.obj("args")).ifBlank { tc.args }
         tc.argsDone = true
+        if (tc.state != ToolState.Running) runningToolCount++
         tc.state = ToolState.Running
         tc.startedAt = nowMillis()
     }
@@ -1086,6 +1175,7 @@ class ChatController(
         tc.output = plainText(msg.obj("result")?.get("content"))
         tc.outputDone = true
         tc.isError = msg.bool("isError") == true
+        if (tc.state == ToolState.Running) runningToolCount = (runningToolCount - 1).coerceAtLeast(0)
         tc.state = if (tc.isError) ToolState.Error else ToolState.Done
         tc.endedAt = nowMillis()
     }
