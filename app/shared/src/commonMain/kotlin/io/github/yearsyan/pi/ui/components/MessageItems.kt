@@ -1,6 +1,7 @@
 package io.github.yearsyan.pi.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -29,14 +30,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,11 +98,12 @@ private fun AgentProcessBlock(
     var expanded by remember { mutableStateOf(false) }
     val showDetails = expanded
     val strings = S
+    // collapsed header always reflects the latest detail: a tool action or the thinking state
     val summary =
-        details
-            .filterIsInstance<AssistantProcessDetail.Tool>()
-            .joinToString(" · ") { friendlyToolAction(strings, it.tool) }
-            .ifBlank { if (isStreaming) strings.thinkingInProgress else strings.thinking }
+        when (val latest = details.lastOrNull()) {
+            is AssistantProcessDetail.Tool -> friendlyToolAction(strings, latest.tool)
+            else -> if (isStreaming) strings.thinkingInProgress else strings.thinking
+        }
     Column(
         modifier =
             Modifier
@@ -112,20 +119,14 @@ private fun AgentProcessBlock(
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            PulsingDot(
-                active = isStreaming,
-                color = if (isStreaming) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                size = 6,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                summary,
-                style = MaterialTheme.typography.labelLarge,
+            SweepingText(
+                text = summary,
+                sweeping = isStreaming,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                highlightColor = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelLarge,
                 fontStyle = FontStyle.Italic,
                 modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Icon(
                 Icons.Filled.KeyboardArrowDown,
@@ -155,6 +156,62 @@ private fun AgentProcessBlock(
             }
         }
     }
+}
+
+/** One-line label with a light band sweeping across the text while [sweeping] is true. */
+@Composable
+private fun SweepingText(
+    text: String,
+    sweeping: Boolean,
+    color: Color,
+    highlightColor: Color,
+    style: TextStyle,
+    fontStyle: FontStyle? = null,
+    modifier: Modifier = Modifier,
+) {
+    var laidOutWidth by remember { mutableIntStateOf(0) }
+    val baseStyle = style.copy(color = color, fontStyle = fontStyle)
+    if (!sweeping) {
+        Text(
+            text,
+            style = baseStyle,
+            modifier = modifier,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+    val progress by
+        rememberInfiniteTransition(label = "sweep").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing), RepeatMode.Restart),
+            label = "sweepProgress",
+        )
+    val width = laidOutWidth
+    val brush =
+        if (width > 0) {
+            val band = width * 0.45f + 1f
+            val center = -band + progress * (width + 2 * band)
+            Brush.linearGradient(
+                colorStops =
+                    arrayOf(
+                        0.0f to color,
+                        0.5f to highlightColor,
+                        1.0f to color,
+                    ),
+                start = Offset(center - band, 0f),
+                end = Offset(center + band, 0f),
+            )
+        } else null
+    Text(
+        text,
+        style = if (brush != null) baseStyle.copy(brush = brush) else baseStyle,
+        modifier = modifier,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { laidOutWidth = it.size.width },
+    )
 }
 
 @Composable
