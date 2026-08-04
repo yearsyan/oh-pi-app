@@ -70,6 +70,8 @@ import io.github.yearsyan.pi.ui.components.ExtensionDialog
 import io.github.yearsyan.pi.ui.components.RenameDialog
 import io.github.yearsyan.pi.ui.components.StatusLine
 import io.github.yearsyan.pi.ui.components.UserMessageRow
+import io.github.yearsyan.pi.ui.components.animateScrollToBottom
+import io.github.yearsyan.pi.ui.components.scrollToBottom
 import kotlinx.coroutines.launch
 
 private enum class ChatBodyState {
@@ -232,27 +234,33 @@ private fun MessageList(
     val lastAssistantRunKey =
         renderGroups.lastOrNull { it is TimelineRenderGroup.AssistantRun }?.key
 
-    // track whether the user is near the bottom
+    // Track whether the user is near the bottom. The last render group is a
+    // single item that can be taller than the viewport (a long assistant run),
+    // so index proximity is not enough: require the tail of the last item to be
+    // within a small distance of the viewport's content end.
+    val pinnedThresholdPx = with(LocalDensity.current) { 96.dp.roundToPx() }
     LaunchedEffect(listState) {
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow true
-            val total = info.totalItemsCount
-            total == 0 || last.index >= total - 2
+            if (info.totalItemsCount == 0) return@snapshotFlow true
+            if (last.index < info.totalItemsCount - 1) return@snapshotFlow false
+            val contentEnd = info.viewportEndOffset - info.afterContentPadding
+            last.offset + last.size <= contentEnd + pinnedThresholdPx
         }.collect { pinned = it }
     }
 
     // auto-scroll when pinned and new content arrives
     val itemCount = renderGroups.size
     LaunchedEffect(itemCount) {
-        if (pinned && itemCount > 0) listState.scrollToItem(itemCount - 1)
+        if (pinned && itemCount > 0) listState.scrollToBottom(itemCount - 1)
     }
 
     // jump to the tail after the user sends a prompt, even when scrolled up
     LaunchedEffect(scrollToBottomTick) {
         if (scrollToBottomTick > 0 && renderGroups.isNotEmpty()) {
             pinned = true
-            listState.scrollToItem(renderGroups.lastIndex)
+            listState.scrollToBottom(renderGroups.lastIndex)
         }
     }
 
@@ -295,7 +303,7 @@ private fun MessageList(
             Surface(
                 onClick = {
                     pinned = true
-                    scope.launch { listState.animateScrollToItem(renderGroups.lastIndex) }
+                    scope.launch { listState.animateScrollToBottom(renderGroups.lastIndex) }
                 },
                 modifier = Modifier.size(38.dp),
                 shape = CircleShape,
@@ -315,11 +323,23 @@ private fun MessageList(
         }
     }
 
-    // keep the tail visible while streaming text grows
-    val lastItem = controller.items.lastOrNull()
-    LaunchedEffect(lastItem?.let { (it as? TimelineItem.AssistantItem)?.blocks?.size }) {
+    // keep the tail visible while streaming content grows; the tail signature
+    // changes on new blocks and on every text/output delta of the last item
+    val tailItem = controller.items.lastOrNull()
+    val tailSignature: Any? =
+        when (tailItem) {
+            is TimelineItem.AssistantItem ->
+                Triple(
+                    tailItem.blocks.size,
+                    tailItem.blocks.lastOrNull()?.text?.length ?: 0,
+                    tailItem.blocks.lastOrNull()?.tool?.output?.length ?: 0,
+                )
+            is TimelineItem.ToolItem -> tailItem.tool.output.length
+            else -> tailItem?.key
+        }
+    LaunchedEffect(tailSignature) {
         if (pinned && controller.items.isNotEmpty()) {
-            listState.scrollToItem(renderGroups.lastIndex)
+            listState.scrollToBottom(renderGroups.lastIndex)
         }
     }
 }
