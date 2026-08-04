@@ -121,10 +121,24 @@ fun isValidGatewayUrl(raw: String): Boolean {
     return parseGatewayAddress(raw) != null
 }
 
-fun buildWsUrl(base: String, token: String, action: String, sessionId: String?, workDir: String = ""): String {
+fun buildWsUrl(
+    base: String,
+    token: String,
+    action: String,
+    sessionId: String?,
+    workDir: String = "",
+    initialModel: String = "",
+    initialThinking: String = "",
+): String {
     val b = StringBuilder(normalizeGatewayUrl(base)).append("/ws?action=").append(action)
     if (!sessionId.isNullOrBlank()) b.append("&session_id=").append(urlEncode(sessionId))
     if (workDir.isNotBlank()) b.append("&work_dir=").append(urlEncode(workDir))
+    if (action == "create" && initialModel.isNotBlank()) {
+        b.append("&model=").append(urlEncode(initialModel))
+    }
+    if (action == "create" && initialThinking.isNotBlank()) {
+        b.append("&thinking=").append(urlEncode(initialThinking))
+    }
     if (token.isNotBlank()) b.append("&token=").append(urlEncode(token))
     return b.toString()
 }

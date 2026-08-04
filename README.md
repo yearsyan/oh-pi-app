@@ -48,6 +48,43 @@ curl http://127.0.0.1:8080/healthz
 
 生产环境应在 TLS 反向代理后提供 `wss://`。
 
+### macOS LaunchAgent 部署
+
+仓库提供可重复执行的生产部署脚本。首次执行时传入 token；脚本会构建去除本地路径和调试符号的二进制、安装到 `~/.local/bin/pi2ws`，然后创建并启动当前用户的 LaunchAgent：
+
+```bash
+PI2WS_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
+```
+
+之后更新代码时直接重复执行即可；现有 token 和部署配置会被保留：
+
+```bash
+./scripts/deploy-launchd.sh
+```
+
+首次部署或需要修改配置时，可通过环境变量覆盖默认值：
+
+```bash
+PI2WS_TOKEN="<TOKEN>" \
+PI2WS_LISTEN="0.0.0.0:18080" \
+PI2WS_DATA_DIR="$HOME/.local/state/pi2ws" \
+PI2WS_WORK_DIR="/path/to/project" \
+PI2WS_PI_COMMAND="/absolute/path/to/pi" \
+./scripts/deploy-launchd.sh
+```
+
+部署文件及运行状态：
+
+- 二进制：`~/.local/bin/pi2ws`
+- LaunchAgent：`~/Library/LaunchAgents/io.github.yearsyan.pi2ws.plist`
+- token：`~/.config/pi2ws/token`（权限 `0600`，不会写入 plist 或命令行）
+- session 与日志：`~/.local/state/pi2ws/`
+
+```bash
+launchctl print "gui/$(id -u)/io.github.yearsyan.pi2ws"
+curl http://127.0.0.1:8080/healthz
+```
+
 ## 会话管理 HTTP API
 
 除健康检查外，HTTP API 都需要鉴权。推荐使用请求头，避免 token 出现在普通 HTTP URL 和访问日志中：
@@ -98,6 +135,37 @@ DELETE /api/sessions/<SESSION_ID>
 
 `DELETE` 是永久操作：活动中的 pi 子进程和 WebSocket 会先被正常关闭，随后整个 `<data-dir>/sessions/<session-id>` 目录（包括 pi JSONL、历史快照和 replay WAL）都会被删除。成功返回 HTTP 204。
 
+### 查询新会话能力
+
+```http
+GET /api/capabilities?work_dir=/path/to/project
+Authorization: Bearer <TOKEN>
+```
+
+该接口用与正式会话相同的工作目录、环境和 `--pi-arg` 启动一个短生命周期的
+`pi --mode rpc --no-session` 探测进程，因此会加载该工作区可用的 provider、模型和扩展，但不会创建或持久化 session。结果按规范化后的工作目录短期缓存。
+
+```json
+{
+  "work_dir": "/path/to/project",
+  "default": {
+    "provider": "openai",
+    "model_id": "gpt-5",
+    "thinking_level": "medium"
+  },
+  "models": [
+    {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "provider": "openai",
+      "thinking_levels": ["off", "minimal", "low", "medium", "high"]
+    }
+  ]
+}
+```
+
+思考强度是模型级能力，客户端应在切换模型时改用该模型自己的 `thinking_levels`。
+
 ## WebSocket API
 
 ### 创建 session
@@ -105,11 +173,14 @@ DELETE /api/sessions/<SESSION_ID>
 连接（必须带 `work_dir` 指定工作区）：
 
 ```text
-ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project
+ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&model=openai/gpt-5&thinking=high
 ```
 
 `work_dir` 是该 session 的工作区（pi 子进程的工作目录），必须是已存在目录的绝对路径。
 省略 `work_dir` 或路径非法（相对路径、不存在、不是目录）时在 WebSocket 升级前返回 HTTP 400。
+可选的 `model` 必须使用 `provider/model-id` 格式；可选的 `thinking` 为
+`off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。它们只允许用于
+`action=create`，并在 pi 读取第一条 RPC 命令前作为该 session 的初始配置应用。
 
 连接成功后的第一条消息由网关发送：
 

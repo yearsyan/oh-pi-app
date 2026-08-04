@@ -19,6 +19,7 @@ import io.github.yearsyan.pi.net.FsListResponse
 import io.github.yearsyan.pi.net.GatewayTransport
 import io.github.yearsyan.pi.net.SshHostKeyPrompt
 import io.github.yearsyan.pi.net.deleteGatewaySession
+import io.github.yearsyan.pi.net.getGatewayCapabilities
 import io.github.yearsyan.pi.net.listGatewayDirs
 import io.github.yearsyan.pi.net.listGatewaySessions
 import io.github.yearsyan.pi.net.nowMillis
@@ -332,7 +333,11 @@ class AppViewModel(
                         agentDone = s.agentDone,
                         turnStart = s.turnStart,
                         notify = s.appName,
+                        modelOptionsFailed = s.modelOptionsFailed,
                     )
+                },
+                loadCapabilities = { workDir ->
+                    getGatewayCapabilities(transport.resolveGateway(), server.token, workDir)
                 },
                 resolveGateway = transport::resolveGateway,
             )

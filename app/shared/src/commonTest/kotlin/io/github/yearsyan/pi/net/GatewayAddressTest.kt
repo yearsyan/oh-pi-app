@@ -29,4 +29,31 @@ class GatewayAddressTest {
         assertEquals("wss://[2001:db8::1]:9443", buildGatewayUrl("2001:db8::1", 9443, tls = true))
         assertEquals("[2001:db8::1]:9443 · TLS", gatewayAddressLabel("wss://[2001:db8::1]:9443"))
     }
+
+    @Test
+    fun includesInitialModelOptionsOnlyWhenCreating() {
+        assertEquals(
+            "ws://gateway.test:8080/ws?action=create&work_dir=%2Fworkspace&model=router%2Fvendor%2Fmodel&thinking=xhigh&token=token",
+            buildWsUrl(
+                base = "ws://gateway.test:8080",
+                token = "token",
+                action = "create",
+                sessionId = null,
+                workDir = "/workspace",
+                initialModel = "router/vendor/model",
+                initialThinking = "xhigh",
+            ),
+        )
+        assertEquals(
+            "ws://gateway.test:8080/ws?action=attach&session_id=session&token=token",
+            buildWsUrl(
+                base = "ws://gateway.test:8080",
+                token = "token",
+                action = "attach",
+                sessionId = "session",
+                initialModel = "ignored/model",
+                initialThinking = "high",
+            ),
+        )
+    }
 }

@@ -23,39 +23,76 @@ const testToken = "test-token-that-is-not-secret"
 
 func TestPiHelperProcess(t *testing.T) {
 	sessionID, ok := argumentValue(os.Args, "--session-id")
-	if !ok {
+	inMemory := hasArgument(os.Args, "--no-session")
+	if !ok && !inMemory {
 		return
 	}
-	sessionDir, ok := argumentValue(os.Args, "--session-dir")
-	if !ok {
-		os.Exit(3)
+	if inMemory {
+		sessionID = "in-memory"
+		if probeLog := os.Getenv("PI2WS_TEST_PROBE_LOG"); probeLog != "" {
+			logFile, err := os.OpenFile(probeLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+			if err != nil {
+				os.Exit(3)
+			}
+			_, _ = fmt.Fprintln(logFile, os.Getpid())
+			_ = logFile.Close()
+		}
+	} else {
+		sessionDir, found := argumentValue(os.Args, "--session-dir")
+		if !found {
+			os.Exit(3)
+		}
+
+		startLog, err := os.OpenFile(
+			filepath.Join(sessionDir, "fake-starts.log"),
+			os.O_WRONLY|os.O_CREATE|os.O_APPEND,
+			0o600,
+		)
+		if err != nil {
+			os.Exit(4)
+		}
+		_, _ = fmt.Fprintln(startLog, os.Getpid())
+		_ = startLog.Close()
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			os.Exit(7)
+		}
+		cwdLog, err := os.OpenFile(
+			filepath.Join(sessionDir, "fake-cwd.log"),
+			os.O_WRONLY|os.O_CREATE|os.O_APPEND,
+			0o600,
+		)
+		if err != nil {
+			os.Exit(8)
+		}
+		_, _ = fmt.Fprintln(cwdLog, cwd)
+		_ = cwdLog.Close()
 	}
 
-	startLog, err := os.OpenFile(
-		filepath.Join(sessionDir, "fake-starts.log"),
-		os.O_WRONLY|os.O_CREATE|os.O_APPEND,
-		0o600,
-	)
-	if err != nil {
-		os.Exit(4)
+	qualifiedModel, found := argumentValue(os.Args, "--model")
+	if !found {
+		qualifiedModel = "fake/reasoning-model"
 	}
-	_, _ = fmt.Fprintln(startLog, os.Getpid())
-	_ = startLog.Close()
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		os.Exit(7)
+	provider, modelID, found := strings.Cut(qualifiedModel, "/")
+	if !found {
+		provider, modelID = "fake", qualifiedModel
 	}
-	cwdLog, err := os.OpenFile(
-		filepath.Join(sessionDir, "fake-cwd.log"),
-		os.O_WRONLY|os.O_CREATE|os.O_APPEND,
-		0o600,
-	)
-	if err != nil {
-		os.Exit(8)
+	thinkingLevel, found := argumentValue(os.Args, "--thinking")
+	if !found {
+		thinkingLevel = "medium"
 	}
-	_, _ = fmt.Fprintln(cwdLog, cwd)
-	_ = cwdLog.Close()
+	availableModels := []map[string]any{
+		{
+			"id": "reasoning-model", "name": "Reasoning Model", "provider": "fake", "reasoning": true,
+			"thinkingLevelMap": map[string]any{"minimal": nil, "xhigh": "xhigh", "max": nil},
+		},
+		{"id": "plain-model", "name": "Plain Model", "provider": "fake", "reasoning": false},
+		{
+			"id": "vendor/model", "name": "Qualified Model", "provider": "router", "reasoning": true,
+			"thinkingLevelMap": map[string]any{"max": "max"},
+		},
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Split(splitLF)
@@ -111,9 +148,142 @@ func TestPiHelperProcess(t *testing.T) {
 			}
 			response["data"] = map[string]any{"entries": entries, "leafId": leafID}
 		}
+		if commandType == "get_state" {
+			response["data"] = map[string]any{
+				"model": map[string]any{
+					"id": modelID, "name": modelID, "provider": provider,
+				},
+				"thinkingLevel": thinkingLevel,
+				"isStreaming":   false,
+			}
+		}
+		if commandType == "get_available_models" {
+			response["data"] = map[string]any{"models": availableModels}
+		}
+		if commandType == "get_available_thinking_levels" {
+			response["data"] = map[string]any{"levels": []string{"off", "low", "medium", "high"}}
+		}
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(6)
 		}
+	}
+}
+
+func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
+	probeLog := filepath.Join(t.TempDir(), "capability-probes.log")
+	t.Setenv("PI2WS_TEST_PROBE_LOG", probeLog)
+	app, server := startTestGateway(t, t.TempDir())
+	workDir := t.TempDir()
+	resolvedWorkDir, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		t.Fatalf("resolve test work directory: %v", err)
+	}
+	endpoint := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(workDir)
+
+	unauthorized, err := http.Get(endpoint)
+	if err != nil {
+		t.Fatalf("get unauthorized capabilities: %v", err)
+	}
+	_ = unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorized.StatusCode)
+	}
+
+	for requestNumber := 0; requestNumber < 2; requestNumber++ {
+		request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			t.Fatalf("create capabilities request: %v", err)
+		}
+		request.Header.Set("Authorization", "Bearer "+testToken)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("get capabilities: %v", err)
+		}
+		var payload capabilitiesResponse
+		decodeErr := json.NewDecoder(response.Body).Decode(&payload)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("capabilities status = %d, want 200", response.StatusCode)
+		}
+		if decodeErr != nil {
+			t.Fatalf("decode capabilities: %v", decodeErr)
+		}
+		if payload.WorkDir != resolvedWorkDir || payload.Default == nil {
+			t.Fatalf("capabilities metadata = %#v", payload)
+		}
+		if payload.Default.Provider != "fake" || payload.Default.ModelID != "reasoning-model" || payload.Default.ThinkingLevel != "medium" {
+			t.Fatalf("default selection = %#v", payload.Default)
+		}
+		if len(payload.Models) != 3 {
+			t.Fatalf("models = %#v, want three", payload.Models)
+		}
+		var reasoning capabilityModel
+		for _, model := range payload.Models {
+			if model.Provider == "fake" && model.ID == "reasoning-model" {
+				reasoning = model
+			}
+		}
+		wantLevels := []string{"off", "low", "medium", "high", "xhigh"}
+		if fmt.Sprint(reasoning.ThinkingLevels) != fmt.Sprint(wantLevels) {
+			t.Fatalf("thinking levels = %v, want %v", reasoning.ThinkingLevels, wantLevels)
+		}
+	}
+
+	probeData, err := os.ReadFile(probeLog)
+	if err != nil {
+		t.Fatalf("read probe log: %v", err)
+	}
+	if starts := strings.Fields(string(probeData)); len(starts) != 1 {
+		t.Fatalf("capability probe starts = %d, want one cached start", len(starts))
+	}
+	sessions, err := app.manager.list()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("capability discovery persisted sessions: %#v", sessions)
+	}
+}
+
+func TestCreateAppliesInitialModelAndThinking(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+		"model":    {"router/vendor/model"},
+		"thinking": {"xhigh"},
+	})
+	defer client.Close()
+	_ = readEvent(t, client)
+	writeJSON(t, client, map[string]any{"id": "state", "type": "get_state"})
+	state := readEvent(t, client)
+	data, _ := state["data"].(map[string]any)
+	model, _ := data["model"].(map[string]any)
+	if model["provider"] != "router" || model["id"] != "vendor/model" {
+		t.Fatalf("initial model state = %#v", model)
+	}
+	if data["thinkingLevel"] != "xhigh" {
+		t.Fatalf("initial thinking level = %#v, want xhigh", data["thinkingLevel"])
+	}
+}
+
+func TestCreateRejectsInvalidInitialConfiguration(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	tests := []url.Values{
+		{"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()}, "model": {"missing-provider"}},
+		{"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()}, "thinking": {"extreme"}},
+		{"action": {"attach"}, "token": {testToken}, "session_id": {"11111111-1111-4111-8111-111111111111"}, "thinking": {"high"}},
+	}
+	for _, query := range tests {
+		_, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, query), nil)
+		if err == nil {
+			t.Fatalf("invalid configuration unexpectedly connected: %v", query)
+		}
+		if response == nil || response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid configuration status = %v, want 400", responseStatus(response))
+		}
+		_ = response.Body.Close()
 	}
 }
 
@@ -1038,4 +1208,13 @@ func argumentValue(arguments []string, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func hasArgument(arguments []string, name string) bool {
+	for _, argument := range arguments {
+		if argument == name {
+			return true
+		}
+	}
+	return false
 }

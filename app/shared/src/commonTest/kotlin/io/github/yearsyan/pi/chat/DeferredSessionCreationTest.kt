@@ -40,4 +40,13 @@ class DeferredSessionCreationTest {
             promptDispatch(ConnState.Disconnected, isDraft = false, hasPendingCreatePrompt = false),
         )
     }
+
+    @Test
+    fun modelSwitchClampsThinkingLikePi() {
+        assertEquals(
+            "high",
+            clampDraftThinkingLevel("xhigh", listOf("off", "minimal", "low", "medium", "high")),
+        )
+        assertEquals("off", clampDraftThinkingLevel("medium", listOf("off")))
+    }
 }

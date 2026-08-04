@@ -11,8 +11,9 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
   运行中可随时中止（abort）或引导（steer）。
 - **思考过程**：可折叠的思考卡片，流式更新。
 - **工具调用**：工具卡片展示名称、参数与输出，运行/完成/错误状态实时更新。
-- **模型与思考强度切换**：顶栏下拉选择（`get_available_models` / `set_model`，
-  `get_available_thinking_levels` / `set_thinking_level`），失败自动回读状态。
+- **模型与思考强度切换**：输入框下方的下拉选择；新会话先通过 `/api/capabilities`
+  无 session 预取工作区选项，首条消息创建 session 时应用所选配置，已有会话继续使用
+  `get_available_models` / `set_model` 和 `get_available_thinking_levels` / `set_thinking_level`。
 - **自适应布局**：宽度 ≥ 840dp（平板/桌面）为「列表 + 详情」双栏；手机为单栏导航。
 - **多语言**：中文 / English / 跟随系统。
 - **深色 / 浅色**：跟随系统或手动指定。

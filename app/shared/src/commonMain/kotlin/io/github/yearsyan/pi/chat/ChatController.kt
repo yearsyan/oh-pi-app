@@ -5,9 +5,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.yearsyan.pi.data.ConnState
+import io.github.yearsyan.pi.net.GatewayCapabilities
+import io.github.yearsyan.pi.net.GatewayConnectionException
 import io.github.yearsyan.pi.net.PiClient
 import io.github.yearsyan.pi.net.PiJson
-import io.github.yearsyan.pi.net.GatewayConnectionException
 import io.github.yearsyan.pi.net.argsToString
 import io.github.yearsyan.pi.net.arr
 import io.github.yearsyan.pi.net.bool
@@ -33,6 +34,7 @@ import kotlinx.serialization.json.put
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
+private val OrderedThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 internal enum class PromptDispatch {
     ExistingSession,
@@ -63,6 +65,20 @@ internal fun reconnectDelayMillis(attempt: Int): Long {
     return delayMillis
 }
 
+internal fun clampDraftThinkingLevel(requested: String, available: List<String>): String {
+    if (available.isEmpty()) return ""
+    if (requested in available) return requested
+    val requestedIndex = OrderedThinkingLevels.indexOf(requested)
+    if (requestedIndex < 0) return available.first()
+    for (index in requestedIndex until OrderedThinkingLevels.size) {
+        OrderedThinkingLevels[index].takeIf { it in available }?.let { return it }
+    }
+    for (index in requestedIndex - 1 downTo 0) {
+        OrderedThinkingLevels[index].takeIf { it in available }?.let { return it }
+    }
+    return available.first()
+}
+
 /**
  * Owns one WebSocket connection to a pi2ws session and the reactive timeline
  * rendered by the chat UI. Mirrors the protocol handling of the web demo.
@@ -75,6 +91,7 @@ class ChatController(
     private val onSessionReady: (sessionId: String, isNew: Boolean, workDir: String) -> Unit,
     private val onAutoName: (sessionId: String, title: String) -> Unit,
     private val strings: () -> ChatStrings,
+    private val loadCapabilities: suspend (workDir: String) -> GatewayCapabilities,
     private val resolveGateway: suspend () -> String = { gateway },
 ) {
     private data class PendingPrompt(
@@ -99,6 +116,7 @@ class ChatController(
         val agentDone: String,
         val turnStart: String,
         val notify: String,
+        val modelOptionsFailed: (String) -> String,
     )
 
     var conn by mutableStateOf(ConnState.Disconnected); private set
@@ -110,6 +128,8 @@ class ChatController(
     var thinkingLevel by mutableStateOf(""); private set
     var models = mutableStateListOf<ModelInfo>(); private set
     var thinkingLevels = mutableStateListOf<String>(); private set
+    var capabilitiesLoading by mutableStateOf(false); private set
+    var capabilitiesError by mutableStateOf<String?>(null); private set
     var isStreaming by mutableStateOf(false); private set
     var isLoadingHistory by mutableStateOf(false); private set
     var steeringQueue = mutableStateListOf<String>(); private set
@@ -126,7 +146,13 @@ class ChatController(
 
     /** True when a prompt can be sent now or can create this local draft. */
     val canSendPrompt: Boolean
-        get() = promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
+        get() = !capabilitiesLoading &&
+            promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
+
+    /** True while a local draft can still change its startup model options. */
+    val canConfigureDraft: Boolean
+        get() = isDraft && !capabilitiesLoading && pendingCreatePrompt == null &&
+            (conn == ConnState.Disconnected || conn == ConnState.Error)
 
     /** A draft can retry only after its first create attempt has stopped. */
     val canReconnect: Boolean
@@ -142,6 +168,8 @@ class ChatController(
     private var autoNamed = false
     private var reconnectJob: Job? = null
     private var connectionSetupJob: Job? = null
+    private var capabilitiesJob: Job? = null
+    private var capabilitiesGeneration = 0L
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
@@ -158,9 +186,73 @@ class ChatController(
         this.workDir = workDir
         draftWorkDir = workDir
         pendingCreatePrompt = null
+        models.clear()
+        thinkingLevels.clear()
+        model = ""
+        currentModel = null
+        thinkingLevel = ""
+        capabilitiesError = null
         lastAction = "create"
         lastSessionId = null
         lastWorkDir = workDir
+        reloadCapabilities()
+    }
+
+    /** Retries sessionless model discovery for the current local draft. */
+    fun reloadCapabilities() {
+        val draft = draftWorkDir ?: return
+        if (capabilitiesLoading) return
+        capabilitiesJob?.cancel()
+        val generation = ++capabilitiesGeneration
+        capabilitiesLoading = true
+        capabilitiesError = null
+        capabilitiesJob = scope.launch {
+            try {
+                val capabilities = loadCapabilities(draft)
+                if (draftWorkDir != draft || generation != capabilitiesGeneration) return@launch
+                applyDraftCapabilities(capabilities)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (draftWorkDir != draft || generation != capabilitiesGeneration) return@launch
+                val message = failure.message ?: failure::class.simpleName ?: "unknown error"
+                capabilitiesError = message
+                onToast(strings().modelOptionsFailed(message), Toast.Kind.Error)
+            } finally {
+                if (draftWorkDir == draft && generation == capabilitiesGeneration) capabilitiesLoading = false
+            }
+        }
+    }
+
+    private fun applyDraftCapabilities(capabilities: GatewayCapabilities) {
+        val available = capabilities.models.mapNotNull { remote ->
+            remote.id.takeIf { it.isNotBlank() }?.let {
+                ModelInfo(
+                    id = remote.id,
+                    name = remote.name,
+                    provider = remote.provider,
+                    thinkingLevels = remote.thinkingLevels,
+                )
+            }
+        }
+        models.clear()
+        models.addAll(available)
+        val defaults = capabilities.defaultSelection
+        val selected = defaults?.let { selection ->
+            available.firstOrNull {
+                it.provider == selection.provider && it.id == selection.modelId
+            }
+        } ?: available.firstOrNull()
+        currentModel = selected
+        model = selected?.qualified.orEmpty()
+        replaceThinkingLevels(selected?.thinkingLevels.orEmpty())
+        val defaultThinking = defaults?.thinkingLevel.orEmpty()
+        thinkingLevel = clampDraftThinkingLevel(defaultThinking, thinkingLevels)
+    }
+
+    private fun replaceThinkingLevels(levels: List<String>) {
+        thinkingLevels.clear()
+        thinkingLevels.addAll(levels.distinct())
     }
 
     fun connect(action: String, sessionId: String?, workDir: String = "") {
@@ -175,6 +267,10 @@ class ChatController(
         workDir: String,
         clearTimeline: Boolean,
     ) {
+        capabilitiesJob?.cancel()
+        capabilitiesJob = null
+        capabilitiesGeneration++
+        capabilitiesLoading = false
         reconnectJob?.cancel()
         reconnectJob = null
         reconnectAttempt = 0
@@ -223,7 +319,15 @@ class ChatController(
                 }
             if (generation != connectionGeneration) return@launch
             client.connect(
-                buildWsUrl(resolvedGateway, token, lastAction, lastSessionId, lastWorkDir),
+                buildWsUrl(
+                    base = resolvedGateway,
+                    token = token,
+                    action = lastAction,
+                    sessionId = lastSessionId,
+                    workDir = lastWorkDir,
+                    initialModel = if (lastAction == "create") currentModel?.qualified.orEmpty() else "",
+                    initialThinking = if (lastAction == "create") thinkingLevel else "",
+                ),
                 object : PiClient.Listener {
                     override fun onOpen() {}
                     override fun onMessage(text: String) {
@@ -260,6 +364,10 @@ class ChatController(
         reconnectJob = null
         connectionSetupJob?.cancel()
         connectionSetupJob = null
+        capabilitiesJob?.cancel()
+        capabilitiesJob = null
+        capabilitiesGeneration++
+        capabilitiesLoading = false
         reconnectAttempt = 0
         connectionGeneration++
         client.disconnect()
@@ -379,8 +487,15 @@ class ChatController(
 
     fun setModel(info: ModelInfo) {
         if (info.provider.isBlank() || info.id.isBlank()) return
+        if (isDraft && !canConfigureDraft) return
         currentModel = info
         model = info.qualified
+        if (isDraft) {
+            val previousThinking = thinkingLevel
+            replaceThinkingLevels(info.thinkingLevels)
+            thinkingLevel = clampDraftThinkingLevel(previousThinking, thinkingLevels)
+            return
+        }
         sendCommand {
             put("type", "set_model")
             put("provider", info.provider)
@@ -389,7 +504,10 @@ class ChatController(
     }
 
     fun selectThinkingLevel(level: String) {
+        if (level !in thinkingLevels) return
+        if (isDraft && !canConfigureDraft) return
         thinkingLevel = level
+        if (isDraft) return
         sendCommand {
             put("type", "set_thinking_level")
             put("level", level)

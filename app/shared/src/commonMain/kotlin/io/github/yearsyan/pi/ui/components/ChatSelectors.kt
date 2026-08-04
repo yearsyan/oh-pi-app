@@ -63,11 +63,22 @@ private fun SelectorChip(
 @Composable
 internal fun ModelSelector(controller: ChatController) {
     var open by remember { mutableStateOf(false) }
+    val retry = controller.canConfigureDraft && controller.capabilitiesError != null && controller.models.isEmpty()
+    val enabled =
+        (controller.conn == ConnState.Ready && controller.models.isNotEmpty()) ||
+            (controller.canConfigureDraft && (controller.models.isNotEmpty() || retry))
+    val label = when {
+        controller.capabilitiesLoading -> S.loadingModels
+        retry -> S.retryModels
+        else -> controller.currentModel?.label ?: controller.model.ifBlank { S.noModel }
+    }
     Box {
         SelectorChip(
-            label = controller.currentModel?.label ?: controller.model.ifBlank { S.noModel },
-            enabled = controller.conn == ConnState.Ready && controller.models.isNotEmpty(),
-            onClick = { open = true },
+            label = label,
+            enabled = enabled,
+            onClick = {
+                if (retry) controller.reloadCapabilities() else open = true
+            },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             Text(
@@ -90,7 +101,10 @@ internal fun ModelSelector(controller: ChatController) {
                                     )
                                 }
                             }
-                            if (model.id == controller.currentModel?.id) {
+                            if (
+                                model.id == controller.currentModel?.id &&
+                                model.provider == controller.currentModel?.provider
+                            ) {
                                 Icon(
                                     Icons.Filled.Check,
                                     contentDescription = null,
@@ -113,10 +127,13 @@ internal fun ModelSelector(controller: ChatController) {
 @Composable
 internal fun ThinkingSelector(controller: ChatController) {
     var open by remember { mutableStateOf(false) }
+    val enabled =
+        controller.thinkingLevels.isNotEmpty() &&
+            (controller.conn == ConnState.Ready || controller.canConfigureDraft)
     Box {
         SelectorChip(
             label = controller.thinkingLevel.ifBlank { S.thinkingLevel },
-            enabled = controller.conn == ConnState.Ready && controller.thinkingLevels.isNotEmpty(),
+            enabled = enabled,
             onClick = { open = true },
         )
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

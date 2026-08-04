@@ -36,12 +36,14 @@ func newSessionManager(cfg Config, store *sessionStore) *sessionManager {
 	}
 }
 
-func (m *sessionManager) create(workDir string) (*piSession, error) {
+func (m *sessionManager) create(workDir string, initial initialSessionConfig) (*piSession, error) {
 	meta, dir, err := m.store.create(workDir)
 	if err != nil {
 		return nil, err
 	}
-	session, _, err := m.getOrStart(meta.ID, dir, meta.WorkDir, true)
+	args := append([]string(nil), m.cfg.PiArgs...)
+	args = append(args, initial.args()...)
+	session, _, err := m.getOrStart(meta.ID, dir, meta.WorkDir, args, true)
 	if err != nil {
 		if discardErr := m.store.discard(meta.ID); discardErr != nil {
 			m.cfg.Logger.Warn(
@@ -67,7 +69,7 @@ func (m *sessionManager) attach(id string) (*piSession, error) {
 		// gateway-wide working directory.
 		workDir = m.cfg.WorkDir
 	}
-	session, started, err := m.getOrStart(meta.ID, dir, workDir, false)
+	session, started, err := m.getOrStart(meta.ID, dir, workDir, m.cfg.PiArgs, false)
 	if err != nil {
 		return nil, fmt.Errorf("start existing session: %w", err)
 	}
@@ -236,7 +238,7 @@ func (m *sessionManager) delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *sessionManager) getOrStart(id, dir, workDir string, newSession bool) (*piSession, bool, error) {
+func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newSession bool) (*piSession, bool, error) {
 	for {
 		m.mu.Lock()
 		if m.closing {
@@ -270,7 +272,7 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, newSession bool) (*
 			ID:             id,
 			Dir:            dir,
 			Command:        m.cfg.PiCommand,
-			Args:           m.cfg.PiArgs,
+			Args:           args,
 			WorkDir:        workDir,
 			MaxEventBytes:  m.cfg.MaxMessageBytes,
 			MaxReplayBytes: m.cfg.MaxReplayBytes,

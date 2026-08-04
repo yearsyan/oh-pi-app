@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -30,10 +31,11 @@ const maxSessionNameRunes = 200
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
-	cfg      Config
-	manager  *sessionManager
-	upgrader websocket.Upgrader
-	handler  http.Handler
+	cfg          Config
+	manager      *sessionManager
+	capabilities *capabilitiesLoader
+	upgrader     websocket.Upgrader
+	handler      http.Handler
 }
 
 // New constructs a gateway and initializes its persistent session store.
@@ -48,8 +50,9 @@ func New(cfg Config) (*Gateway, error) {
 	}
 
 	gateway := &Gateway{
-		cfg:     cfg,
-		manager: newSessionManager(cfg, store),
+		cfg:          cfg,
+		manager:      newSessionManager(cfg, store),
+		capabilities: newCapabilitiesLoader(cfg),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -60,6 +63,7 @@ func New(cfg Config) (*Gateway, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", gateway.handleHealth)
 	mux.HandleFunc("/fs/list", gateway.handleFsList)
+	mux.HandleFunc("/api/capabilities", gateway.handleCapabilities)
 	mux.HandleFunc("/api/sessions", gateway.handleSessions)
 	mux.HandleFunc("/api/sessions/", gateway.handleSession)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
@@ -241,6 +245,15 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_action", `action must be "create" or "attach"`)
 		return
 	}
+	initial, err := parseInitialSessionConfig(request.URL.Query().Get("model"), request.URL.Query().Get("thinking"))
+	if err != nil {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_initial_config", err.Error())
+		return
+	}
+	if action != "create" && !initial.empty() {
+		writeHTTPError(writer, http.StatusBadRequest, "unexpected_initial_config", "model and thinking are only accepted when creating a session")
+		return
+	}
 
 	sessionID := request.URL.Query().Get("session_id")
 	if action == "create" && sessionID != "" {
@@ -281,7 +294,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 
 	var session *piSession
 	if action == "create" {
-		session, err = g.manager.create(workDir)
+		session, err = g.manager.create(workDir, initial)
 	} else {
 		session, err = g.manager.attach(sessionID)
 	}
@@ -330,6 +343,58 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	}()
 
 	g.readClient(client, session)
+}
+
+type initialSessionConfig struct {
+	model    string
+	thinking string
+}
+
+func (config initialSessionConfig) empty() bool {
+	return config.model == "" && config.thinking == ""
+}
+
+func (config initialSessionConfig) args() []string {
+	args := make([]string, 0, 4)
+	if config.model != "" {
+		args = append(args, "--model", config.model)
+	}
+	if config.thinking != "" {
+		args = append(args, "--thinking", config.thinking)
+	}
+	return args
+}
+
+func parseInitialSessionConfig(rawModel, rawThinking string) (initialSessionConfig, error) {
+	config := initialSessionConfig{
+		model:    strings.TrimSpace(rawModel),
+		thinking: strings.TrimSpace(rawThinking),
+	}
+	if config.model != "" {
+		provider, modelID, ok := strings.Cut(config.model, "/")
+		if !ok || provider == "" || modelID == "" {
+			return initialSessionConfig{}, errors.New(`model must use the "provider/model-id" form`)
+		}
+		if !utf8.ValidString(config.model) || utf8.RuneCountInString(config.model) > 300 ||
+			strings.IndexFunc(config.model, func(value rune) bool {
+				return unicode.IsControl(value) || unicode.IsSpace(value)
+			}) >= 0 {
+			return initialSessionConfig{}, errors.New("model is invalid")
+		}
+	}
+	if config.thinking != "" {
+		valid := false
+		for _, level := range orderedThinkingLevels {
+			if config.thinking == level {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return initialSessionConfig{}, fmt.Errorf("thinking must be one of %s", strings.Join(orderedThinkingLevels, ", "))
+		}
+	}
+	return config, nil
 }
 
 func (g *Gateway) readClient(client *wsClient, session *piSession) {

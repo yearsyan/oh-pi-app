@@ -151,8 +151,8 @@ fun Composer(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (controller.models.isNotEmpty()) ModelSelector(controller)
-                        if (controller.thinkingLevels.isNotEmpty()) ThinkingSelector(controller)
+                        if (controller.isDraft || controller.models.isNotEmpty()) ModelSelector(controller)
+                        if (controller.isDraft || controller.thinkingLevels.isNotEmpty()) ThinkingSelector(controller)
                     }
                     Spacer(Modifier.width(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {

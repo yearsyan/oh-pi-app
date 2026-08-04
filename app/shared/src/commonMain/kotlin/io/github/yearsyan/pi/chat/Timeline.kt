@@ -235,6 +235,7 @@ data class ModelInfo(
     val id: String,
     val name: String,
     val provider: String,
+    val thinkingLevels: List<String> = emptyList(),
 ) {
     val label: String get() = name.ifBlank { id }
     val qualified: String get() = if (provider.isNotBlank()) "$provider/$id" else id

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.yearsyan.pi2ws</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PI2WS_LAUNCHER__</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__PI2WS_PATH__</string>
+		<key>PI2WS_BINARY</key>
+		<string>__PI2WS_BINARY__</string>
+		<key>PI2WS_DATA_DIR</key>
+		<string>__PI2WS_DATA_DIR__</string>
+		<key>PI2WS_LISTEN</key>
+		<string>__PI2WS_LISTEN__</string>
+		<key>PI2WS_PI_COMMAND</key>
+		<string>__PI2WS_PI_COMMAND__</string>
+		<key>PI2WS_TOKEN_FILE</key>
+		<string>__PI2WS_TOKEN_FILE__</string>
+		<key>PI2WS_WORK_DIR</key>
+		<string>__PI2WS_WORK_DIR__</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>__PI2WS_WORK_DIR__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>__PI2WS_STDOUT_LOG__</string>
+	<key>StandardErrorPath</key>
+	<string>__PI2WS_STDERR_LOG__</string>
+</dict>
+</plist>

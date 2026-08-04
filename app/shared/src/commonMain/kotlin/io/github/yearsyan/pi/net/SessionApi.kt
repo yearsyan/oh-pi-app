@@ -43,6 +43,31 @@ private data class GatewaySession(
 @Serializable
 private data class SessionNameUpdate(val name: String)
 
+/** One selectable model returned by the sessionless capability probe. */
+@Serializable
+data class GatewayModelCapability(
+    val id: String,
+    val name: String = "",
+    val provider: String,
+    @SerialName("thinking_levels") val thinkingLevels: List<String> = emptyList(),
+)
+
+/** The defaults pi would use for a new session in this workspace. */
+@Serializable
+data class GatewayCapabilitySelection(
+    val provider: String,
+    @SerialName("model_id") val modelId: String,
+    @SerialName("thinking_level") val thinkingLevel: String = "",
+)
+
+/** Sessionless model and thinking options for one gateway workspace. */
+@Serializable
+data class GatewayCapabilities(
+    @SerialName("work_dir") val workDir: String,
+    @SerialName("default") val defaultSelection: GatewayCapabilitySelection? = null,
+    val models: List<GatewayModelCapability> = emptyList(),
+)
+
 /** Returns the server-owned sessions for one pi2ws gateway. */
 suspend fun listGatewaySessions(gateway: String, token: String): List<SavedSession> {
     val response = gatewayHttp.get("${gatewayHttpBase(gateway)}/api/sessions") {
@@ -52,6 +77,18 @@ suspend fun listGatewaySessions(gateway: String, token: String): List<SavedSessi
     return runCatching {
         PiJson.decodeFromString(GatewaySessionList.serializer(), body).sessions.map { it.summary() }
     }.getOrElse { throw SessionApiException("invalid session list from gateway") }
+}
+
+/** Loads model options without creating or persisting a gateway session. */
+suspend fun getGatewayCapabilities(gateway: String, token: String, workDir: String): GatewayCapabilities {
+    val response = gatewayHttp.get(
+        "${gatewayHttpBase(gateway)}/api/capabilities?work_dir=${urlEncode(workDir.trim())}",
+    ) {
+        authenticate(token)
+    }
+    val body = response.requireSuccess()
+    return runCatching { PiJson.decodeFromString(GatewayCapabilities.serializer(), body) }
+        .getOrElse { throw SessionApiException("invalid capabilities response from gateway") }
 }
 
 /** Changes a server-owned session name and returns the updated summary. */
