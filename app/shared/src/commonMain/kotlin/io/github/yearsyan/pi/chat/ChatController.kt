@@ -203,6 +203,19 @@ class ChatController(
 
     val items = mutableStateListOf<TimelineItem>()
 
+    /**
+     * Attach-sync staging buffer. While an attach sync is in flight, timeline
+     * mutations land here so the visible [items] keep showing the previous
+     * content; the buffer replaces [items] in a single update once the sync
+     * completes. The protocol orders history_begin before any pi output, so
+     * items shared with the visible list are never mutated while staging.
+     */
+    private var stagedItems: MutableList<TimelineItem>? = null
+
+    /** Timeline that event handlers mutate: the sync buffer while syncing, else [items]. */
+    private val timeline: MutableList<TimelineItem>
+        get() = stagedItems ?: items
+
     /** True while a connection attempt is in flight or established. */
     val active: Boolean get() = conn == ConnState.Ready || conn == ConnState.Connecting
 
@@ -400,6 +413,7 @@ class ChatController(
         client.disconnect()
         conn = ConnState.Connecting
         syncPhase = SessionSyncPhase.Idle
+        stagedItems = null
         if (clearTimeline) {
             items.clear()
         }
@@ -513,6 +527,7 @@ class ChatController(
         connectionGeneration++
         entryCache.abort()
         historyUpdating = false
+        stagedItems = null
         client.disconnect()
         conn = ConnState.Disconnected
         syncPhase = SessionSyncPhase.Idle
@@ -532,6 +547,7 @@ class ChatController(
     private fun handleConnectionClosed(code: Short, reason: String) {
         entryCache.abort()
         historyUpdating = false
+        stagedItems = null
         syncPhase = SessionSyncPhase.Idle
         isStreaming = false
         sessionStatsLoading = false
@@ -553,6 +569,7 @@ class ChatController(
     private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
         entryCache.abort()
         historyUpdating = false
+        stagedItems = null
         syncPhase = SessionSyncPhase.Idle
         isStreaming = false
         sessionStatsLoading = false
@@ -646,7 +663,7 @@ class ChatController(
             streaming = isStreaming,
             displayText = displayText,
             priorOccurrences =
-                items.count {
+                timeline.count {
                     it is TimelineItem.UserItem &&
                         it.text == displayText &&
                         it.images.size == images.size
@@ -801,7 +818,7 @@ class ChatController(
             "agent_start" -> updateServerStreaming(true)
             "agent_settled" -> {
                 updateServerStreaming(false)
-                for (item in items) {
+                for (item in timeline) {
                     if (item is TimelineItem.AssistantItem) {
                         for (blk in item.blocks) {
                             if (blk.kind == BlockKind.ToolCall && blk.tool?.state == ToolState.Pending) {
@@ -834,11 +851,11 @@ class ChatController(
             "bash_execution_update" -> {
                 val id = msg.str("id")
                 val delta = msg.strOrEmpty("delta")
-                val last = items.lastOrNull()
+                val last = timeline.lastOrNull()
                 if (last is TimelineItem.StatusItem && last.bashId != null && last.bashId == id) {
                     last.text += delta
                 } else {
-                    items.add(TimelineItem.StatusItem(keySeq++, delta, ts = nowMillis(), bashId = id))
+                    timeline.add(TimelineItem.StatusItem(keySeq++, delta, ts = nowMillis(), bashId = id))
                 }
             }
             "extension_ui_request" -> handleUiRequest(msg)
@@ -870,6 +887,7 @@ class ChatController(
                 isLoadingHistory = false
             }
             "ready" -> {
+                swapStagedTimeline()
                 val created = msg.str("action") == "create"
                 conn = ConnState.Ready
                 isLoadingHistory = false
@@ -907,6 +925,7 @@ class ChatController(
 
     private fun beginHistorySync(msg: JsonObject) {
         check(activeEntryCacheKey.isNotBlank()) { "attach cache key is missing" }
+        stagedItems = items.toMutableList()
         historyTargetCursor = msg.strOrEmpty("entry_id")
         val reset = msg.bool("reset") == true
         historyUpdating = reset || historyTargetCursor != requestedEntryCursor
@@ -951,9 +970,18 @@ class ChatController(
             ?: error("replay payload is not a JSON object")
     }
 
+    /** Swaps the attach-synced timeline into the visible list in one update. */
+    private fun swapStagedTimeline() {
+        val staged = stagedItems ?: return
+        stagedItems = null
+        items.clear()
+        items.addAll(staged)
+    }
+
     private fun failAttachSync(failure: Throwable) {
         entryCache.abort()
         historyUpdating = false
+        stagedItems = null
         activeEntryCacheKey.takeIf { it.isNotBlank() }?.let { key ->
             runCatching { entryCache.clear(key) }
         }
@@ -1090,11 +1118,11 @@ class ChatController(
 
     private fun status(text: String, tone: TimelineItem.StatusItem.Tone = TimelineItem.StatusItem.Tone.Info) {
         if (text.isBlank()) return
-        items.add(TimelineItem.StatusItem(keySeq++, text, tone, nowMillis()))
+        timeline.add(TimelineItem.StatusItem(keySeq++, text, tone, nowMillis()))
     }
 
     private fun latestStreamingAssistant(): TimelineItem.AssistantItem? =
-        items.asReversed().firstOrNull { it is TimelineItem.AssistantItem && it.streaming }
+        timeline.asReversed().firstOrNull { it is TimelineItem.AssistantItem && it.streaming }
             as? TimelineItem.AssistantItem
 
     private fun ensureAssistant(message: JsonObject): TimelineItem.AssistantItem {
@@ -1105,7 +1133,7 @@ class ChatController(
             stopReason = message.str("stopReason"),
             streaming = true,
         )
-        items.add(item)
+        timeline.add(item)
         return item
     }
 
@@ -1168,7 +1196,7 @@ class ChatController(
                 t.name = call?.strOrEmpty("name").orEmpty().ifBlank { t.name }
                 t.args = argsToString(call?.get("arguments")).ifBlank { t.args }
                 t.argsDone = true
-                reconcileStandaloneTool(items, t)
+                reconcileStandaloneTool(timeline, t)
             }
             "done", "error" -> item.stopReason = delta.str("reason")
         }
@@ -1189,7 +1217,7 @@ class ChatController(
                             t.name = b.strOrEmpty("name").ifBlank { t.name }
                             t.args = argsToString(b["arguments"]).ifBlank { t.args }
                             t.argsDone = true
-                            reconcileStandaloneTool(items, t)
+                            reconcileStandaloneTool(timeline, t)
                             if (t.state == ToolState.Streaming) t.state = ToolState.Pending
                         }
                     }
@@ -1214,7 +1242,7 @@ class ChatController(
         val content = userMessageContent(message["content"])
         val timestamp = message.long("timestamp") ?: nowMillis()
         val existing = sourceId.takeIf { it.isNotBlank() }?.let { wanted ->
-            items.asReversed().firstOrNull {
+            timeline.asReversed().firstOrNull {
                 it is TimelineItem.UserItem && it.sourceId == wanted
             } as? TimelineItem.UserItem
         }
@@ -1223,7 +1251,7 @@ class ChatController(
             existing.images = content.images
             existing.ts = timestamp
         } else {
-            items.add(
+            timeline.add(
                 TimelineItem.UserItem(
                     key = keySeq++,
                     text = content.text,
@@ -1248,8 +1276,8 @@ class ChatController(
 
     private fun findTool(toolCallId: String): ToolCallView? {
         if (toolCallId.isBlank()) return null
-        for (i in items.indices.reversed()) {
-            when (val it = items[i]) {
+        for (i in timeline.indices.reversed()) {
+            when (val it = timeline[i]) {
                 is TimelineItem.AssistantItem -> {
                     for (b in it.blocks) {
                         if (b.kind == BlockKind.ToolCall && b.tool?.id == toolCallId) return b.tool
@@ -1280,7 +1308,7 @@ class ChatController(
         var tc = findTool(callId) ?: findUnboundAssistantTool(toolName)
         if (tc == null) {
             tc = ToolCallView(id = callId, startedAt = nowMillis())
-            items.add(TimelineItem.ToolItem(keySeq++, tc))
+            timeline.add(TimelineItem.ToolItem(keySeq++, tc))
         }
         if (tc.id.isBlank() && callId.isNotBlank()) tc.id = callId
         tc.name = toolName.ifBlank { tc.name }
@@ -1310,7 +1338,7 @@ class ChatController(
     // ---------- history rebuild ----------
 
     private fun rebuildFromEntries(entries: JsonArray) {
-        items.clear()
+        timeline.clear()
         val toolByCallId = HashMap<String, ToolCallView>()
         for (raw in entries) {
             val entry = raw as? JsonObject ?: continue
@@ -1320,7 +1348,7 @@ class ChatController(
             when (msg.str("role")) {
                 "user" -> {
                     val content = userMessageContent(msg["content"])
-                    items.add(
+                    timeline.add(
                         TimelineItem.UserItem(
                             key = keySeq++,
                             text = content.text,
@@ -1357,7 +1385,7 @@ class ChatController(
                             }
                         }
                     }
-                    items.add(item)
+                    timeline.add(item)
                 }
                 "toolResult" -> {
                     val tc = msg.str("toolCallId")?.let { toolByCallId[it] }
@@ -1370,7 +1398,7 @@ class ChatController(
                         tc.state = if (isError) ToolState.Error else ToolState.Done
                         tc.endedAt = ts
                     } else {
-                        items.add(TimelineItem.ToolItem(keySeq++, ToolCallView(
+                        timeline.add(TimelineItem.ToolItem(keySeq++, ToolCallView(
                             id = msg.strOrEmpty("toolCallId"),
                             name = msg.strOrEmpty("toolName").ifBlank { "tool" },
                             output = output,
@@ -1382,7 +1410,7 @@ class ChatController(
                         )))
                     }
                 }
-                "bashExecution" -> items.add(TimelineItem.StatusItem(
+                "bashExecution" -> timeline.add(TimelineItem.StatusItem(
                     keySeq++,
                     "bash: ${msg.strOrEmpty("command")} (exit ${msg.long("exitCode") ?: "?"})",
                     if ((msg.long("exitCode") ?: 0L) == 0L) TimelineItem.StatusItem.Tone.Info
@@ -1396,7 +1424,7 @@ class ChatController(
 
     private fun reconcilePendingPromptFromHistory() {
         val pending = pendingPrompt ?: return
-        val matches = items.filterIsInstance<TimelineItem.UserItem>()
+        val matches = timeline.filterIsInstance<TimelineItem.UserItem>()
             .filter {
                 it.text == pending.displayText && it.images.size == pending.images.size
             }
