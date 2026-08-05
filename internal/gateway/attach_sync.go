@@ -3,7 +3,6 @@ package gateway
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,9 +262,9 @@ func (s *piSession) findHistoryStart(
 	return true, 0, transferBytes, err
 }
 
-// historyTransferBytes returns the exact decoded bytes sent in history_chunk
-// frames. A pi session file starts with one metadata record, which is not part
-// of the client entry cache.
+// historyTransferBytes returns the exact binary bytes sent after history_begin.
+// A pi session file starts with one metadata record, which is not part of the
+// client entry cache.
 func (s *piSession) historyTransferBytes(snapshot attachSnapshot, start int64) (int64, error) {
 	if snapshot.historyFile == "" || snapshot.historyOffset == 0 || start >= snapshot.historyOffset {
 		return 0, nil
@@ -317,13 +316,8 @@ func (s *piSession) streamHistory(client *wsClient, snapshot attachSnapshot, sta
 		if len(chunk) == 0 {
 			return nil
 		}
-		message := mustGatewayEvent(gatewayEvent{
-			Type:  "pi2ws",
-			Event: "history_chunk",
-			Data:  base64.StdEncoding.EncodeToString(chunk),
-		})
-		if !client.sendBlocking(message) {
-			return errors.New("client disconnected during history chunk")
+		if !client.sendBinaryBlocking(chunk) {
+			return errors.New("client disconnected during history binary stream")
 		}
 		chunk = chunk[:0]
 		return nil
@@ -408,24 +402,32 @@ func streamReplayRange(
 
 func streamReplayPayload(client *wsClient, seq uint64, payload []byte) error {
 	if len(payload) == 0 {
+		return errors.New("cannot stream an empty replay payload")
+	}
+	if len(payload) <= syncChunkBytes {
 		if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-			Type: "pi2ws", Event: "replay_chunk", Seq: seq, Final: true,
+			Type:       "pi2ws",
+			Event:      "replay_event",
+			Seq:        seq,
+			Payload:    payload,
+			TotalBytes: uint64(len(payload)),
 		})) {
-			return errors.New("client disconnected during replay chunk")
+			return errors.New("client disconnected during replay event")
 		}
 		return nil
 	}
+	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
+		Type:       "pi2ws",
+		Event:      "replay_binary_begin",
+		Seq:        seq,
+		TotalBytes: uint64(len(payload)),
+	})) {
+		return errors.New("client disconnected before replay binary payload")
+	}
 	for offset := 0; offset < len(payload); {
 		end := min(offset+syncChunkBytes, len(payload))
-		if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-			Type:       "pi2ws",
-			Event:      "replay_chunk",
-			Seq:        seq,
-			Data:       base64.StdEncoding.EncodeToString(payload[offset:end]),
-			Final:      end == len(payload),
-			TotalBytes: uint64(len(payload)),
-		})) {
-			return errors.New("client disconnected during replay chunk")
+		if !client.sendBinaryBlocking(payload[offset:end]) {
+			return errors.New("client disconnected during replay binary payload")
 		}
 		offset = end
 	}

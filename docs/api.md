@@ -201,25 +201,27 @@ ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_E
 
 `replay_base` 与 `replay_since` 必须成对出现。前者是本地 replay 缓存所基于的稳定历史 `through_seq`，后者是本地已经完整提交的 replay 高水位。仅当 `entry_since`、`replay_base` 都与服务端当前稳定边界完全一致，且 `replay_since` 未超过服务端高水位时，网关才从该序号后继续；否则会安全地从当前稳定历史边界重新回放。因此客户端可以持久化仍在进行中的 turn，重连或重启后只补缺失尾部。
 
-`replay_cursor=1` 表示客户端支持带序号的实时事件。启用后，可回放的 live pi 事件会封装为 `pi2ws/live`，使客户端能把每条事件及其 `seq` 原子写入本地 replay 缓存；未启用的旧客户端仍收到原始 pi 事件。
+`replay_cursor=1` 表示客户端需要带序号的实时事件。可回放的 live pi 事件会封装为 `pi2ws/live`，使客户端能把每条事件及其 `seq` 原子写入本地 replay 缓存。
 
 attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` 表示历史、活动事件和实时广播之间的无缝切换已经完成，此时客户端才应发送 `get_state` 等 RPC：
 
 1. `pi2ws/history_begin`
-2. 零到多个 `pi2ws/history_chunk`
+2. 零到多个 WebSocket Binary 消息，内容是原始稳定历史 JSONL 字节
 3. `pi2ws/history_end`
 4. `pi2ws/replay_begin`
-5. 零到多个 `pi2ws/replay_chunk`
+5. 零到多个 `pi2ws/replay_event`；超大单事件则是一个 `pi2ws/replay_binary_begin`，随后跟随多个 WebSocket Binary 消息
 6. `pi2ws/replay_end`
 7. `pi2ws/ready`
 8. attach 高水位之后的实时 pi 事件
 
 ```json
 {"type":"pi2ws","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41,"total_bytes":287104}
-{"type":"pi2ws","event":"history_chunk","data":"eyJ0eXBlIjoibWVzc2FnZSIsImlkIjoiZW50cnktNDUifQo="}
+<WebSocket Binary: raw JSONL bytes>
 {"type":"pi2ws","event":"history_end","entry_id":"entry-45","through_seq":41}
 {"type":"pi2ws","event":"replay_begin","from_seq":42,"through_seq":45}
-{"type":"pi2ws","event":"replay_chunk","seq":42,"data":"eyJ0eXBlIjoiYWdlbnRfc3RhcnQifQ==","final":true,"total_bytes":22}
+{"type":"pi2ws","event":"replay_event","seq":42,"payload":{"type":"agent_start"},"total_bytes":22}
+{"type":"pi2ws","event":"replay_binary_begin","seq":43,"total_bytes":734003}
+<WebSocket Binary: raw JSON event bytes>
 {"type":"pi2ws","event":"replay_end","through_seq":45}
 {
   "type": "pi2ws",
@@ -230,19 +232,21 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 }
 ```
 
-`history_chunk.data` 是 Base64 编码的原始 JSONL 字节。把所有 chunk 解码后按顺序追加到 staging 文件，得到的是 `entry_since` 之后的完整 entry 行。客户端只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标；中途断线必须回滚。
+`history_begin` 后、`history_end` 前的 Binary 消息直接携带原始 JSONL 字节。客户端应按收到顺序追加到 staging 文件；累计值必须等于 `history_begin.total_bytes`，并且只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标。中途断线或长度不符必须回滚。
 
-`history_begin.total_bytes` 是本阶段解码后的 JSONL 总字节数，可与客户端累计解码的 chunk 字节数计算恢复进度。值为零时字段可能省略。
+`history_begin.total_bytes` 是本阶段的 JSONL 总字节数，可与客户端累计写入的 Binary 字节数计算恢复进度。值为零时字段可能省略。
 
-`replay_chunk.data` 同样是 Base64 字节。同一个 `seq` 的 chunk 拼成一条网关已持久化的 JSON 事件（user 事件可能已增加 `source_id`），`final: true` 表示该事件结束，`total_bytes` 是该完整 JSON 事件的解码后大小。结合 `replay_begin.from_seq` / `through_seq`，客户端可显示事件级和大事件分块级进度。
+不超过 256 KiB 的 replay 记录通过 `replay_event.payload` 直接携带 JSON 对象。超大单事件先发送 `replay_binary_begin` 元信息，再用最多 256 KiB 的 Binary 消息发送原始 JSON 字节；Binary 消息没有 Base64 封装，也不独立携带序号。客户端按当前 `seq` 顺序写入临时文件，累计达到 `total_bytes` 后立即完成该事件并解析 JSON；超出声明长度、在完成前收到其他文本消息或在 `replay_end` 时仍不完整都属于协议错误。结合 `replay_begin.from_seq` / `through_seq`，客户端可显示事件级和大事件字节级进度。
 
-启用 `replay_cursor=1` 后，`ready` 之后的可回放事件格式如下；`payload` 就是旧客户端会直接收到的原始 pi JSON 对象：
+启用 `replay_cursor=1` 后，`ready` 之后的可回放事件格式如下。网关会删除 `message_update` 中不影响重建结果的累计 `message` 快照，并且除 `start` 外删除重复的 `partial`；`turn_end` 中与 `message_end` 相同的完整消息也会被删除：
 
 ```json
 {"type":"pi2ws","event":"live","seq":46,"payload":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"..."}}}
 ```
 
-每个 chunk 最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会被一个 WebSocket 帧或旧的 64 MiB 内存回放上限截断。活动事件先落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
+每个 Binary 消息最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会被一个 WebSocket 消息截断。活动事件先以紧凑形式落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
+
+replay 序号是单调高水位，不要求在磁盘中连续。网关在 assistant `message_end` 后只保留最终消息，在 `tool_execution_end` 后删除中间工具输出，并对 `queue_update`、会话名等状态采用 last-write-wins。被合并掉的序号不会造成缺口：带较旧 `replay_since` 的客户端会收到其后仍有效的最终状态，再由 `replay_end.through_seq` 提交新的高水位。启动恢复会用相同规则原子迁移旧 WAL。
 
 历史 session 必须由当前 `--data-dir` 对应的 pi2ws 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
 

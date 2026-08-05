@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Minimal WebSocket client for pi2ws gateways (one connection per instance).
@@ -26,6 +27,7 @@ class PiClient(private val scope: CoroutineScope) {
     interface Listener {
         fun onOpen()
         fun onMessage(text: String)
+        fun onBinary(bytes: ByteArray)
         fun onClose(code: Short, reason: String)
         fun onFailure(message: String)
     }
@@ -52,6 +54,14 @@ class PiClient(private val scope: CoroutineScope) {
         }
     }
 
+    /** Delivers replay/history frames with backpressure instead of retaining an
+     * unbounded queue of frame strings and main-thread coroutines. */
+    private suspend fun dispatchAndAwait(generation: Long, block: () -> Unit) {
+        withContext(scope.coroutineContext.minusKey(Job)) {
+            if (connectionGeneration == generation) block()
+        }
+    }
+
     fun connect(url: String, listener: Listener) {
         disconnect()
         val generation = ++connectionGeneration
@@ -72,7 +82,10 @@ class PiClient(private val scope: CoroutineScope) {
                             when (frame) {
                                 is Frame.Text -> {
                                     val text = frame.readText()
-                                    dispatch(generation) { listener.onMessage(text) }
+                                    dispatchAndAwait(generation) { listener.onMessage(text) }
+                                }
+                                is Frame.Binary -> {
+                                    dispatchAndAwait(generation) { listener.onBinary(frame.data) }
                                 }
                                 is Frame.Close -> break
                                 else -> Unit

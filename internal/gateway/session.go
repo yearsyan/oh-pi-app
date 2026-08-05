@@ -193,7 +193,7 @@ func (s *piSession) removeClient(client *wsClient) {
 	s.clientsMu.Unlock()
 }
 
-func (s *piSession) broadcast(message []byte, outputSeq uint64, replayable bool) {
+func (s *piSession) broadcast(message, replayMessage []byte, outputSeq uint64, replayable bool) {
 	s.clientsMu.Lock()
 	type target struct {
 		client    *wsClient
@@ -215,7 +215,7 @@ func (s *piSession) broadcast(message []byte, outputSeq uint64, replayable bool)
 				Type:    "pi2ws",
 				Event:   "live",
 				Seq:     outputSeq,
-				Payload: message,
+				Payload: replayMessage,
 			})
 		}
 		if !target.client.enqueue(outgoing) {

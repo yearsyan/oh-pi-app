@@ -8,6 +8,12 @@ import okio.buffer
 
 internal expect fun entryCacheRootPath(): String
 
+internal const val DefaultMaxReplayCacheBytes = 4L * 1024L * 1024L
+private const val ReplayCacheRecordEnvelopeReserveBytes = 256L
+
+internal class ReplayCacheCapacityExceededException(maxBytes: Long) :
+    IllegalStateException("replay cache exceeds $maxBytes bytes")
+
 internal data class EntryCacheSnapshot(
     val cursor: String,
     val entries: ByteArray,
@@ -17,12 +23,23 @@ internal data class EntryCacheSnapshot(
 internal class EntryCacheStore(
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     rootPath: String = entryCacheRootPath(),
+    private val maxReplayBytes: Long = DefaultMaxReplayCacheBytes,
 ) {
     private val root = rootPath.toPath()
     private var activeKey: String? = null
     private var activeStage: Path? = null
     private var replaySinkKey: String? = null
     private var replaySink: BufferedSink? = null
+    private var replaySinkBytes = 0L
+    private var replayPayloadKey: String? = null
+    private var replayPayloadStage: Path? = null
+    private var replayPayloadSink: BufferedSink? = null
+    private var replayPayloadExpectedBytes = 0L
+    private var replayPayloadReceivedBytes = 0L
+
+    init {
+        require(maxReplayBytes > 0L) { "maximum replay cache size must be positive" }
+    }
 
     fun snapshot(key: String): EntryCacheSnapshot {
         requireValidKey(key)
@@ -48,10 +65,22 @@ internal class EntryCacheStore(
         requireValidKey(key)
         closeReplaySink()
         fileSystem.createDirectories(root)
+        if (replayPayloadKey != key) {
+            // A process death may leave an uncommitted oversized payload. It
+            // has no cursor checkpoint and is never safe to resume.
+            fileSystem.delete(replayPayloadStagePath(key), mustExist = false)
+        }
         recoverFile(replayPath(key), replayBackupPath(key))
-        return replayPath(key).takeIf(fileSystem::exists)?.let { path ->
+        val path = replayPath(key)
+        if (!fileSystem.exists(path)) return ByteArray(0)
+        val size = fileSystem.metadata(path).size ?: 0L
+        if (size > maxReplayBytes) {
+            clearReplay(key)
+            return ByteArray(0)
+        }
+        return path.let {
             fileSystem.read(path) { readByteArray() }
-        } ?: ByteArray(0)
+        }
     }
 
     /** Replaces the replay log with a new stable-history base and opens it for appends. */
@@ -77,7 +106,81 @@ internal class EntryCacheStore(
             check(fileSystem.exists(replayPath(key))) { "replay cache has no base" }
             openReplaySink(key)
         }
+        if (record.size.toLong() > maxReplayBytes - replaySinkBytes) {
+            throw ReplayCacheCapacityExceededException(maxReplayBytes)
+        }
         replaySink?.write(record)
+        replaySinkBytes += record.size
+    }
+
+    /** Whether a payload can be encoded into the bounded replay cache without
+     * first allocating a record that is certain to be rejected. */
+    fun canAppendReplayPayload(key: String, payloadBytes: Long): Boolean {
+        requireValidKey(key)
+        if (payloadBytes < 0L) return false
+        val usedBytes = if (replaySinkKey == key && replaySink != null) {
+            replaySinkBytes
+        } else {
+            replayPath(key).takeIf(fileSystem::exists)?.let { fileSystem.metadata(it).size } ?: 0L
+        }
+        val remaining = maxReplayBytes - usedBytes
+        return remaining >= ReplayCacheRecordEnvelopeReserveBytes &&
+            payloadBytes <= remaining - ReplayCacheRecordEnvelopeReserveBytes
+    }
+
+    /** Starts a disk-backed transaction for one oversized replay JSON payload. */
+    fun beginReplayPayload(key: String, totalBytes: Long) {
+        requireValidKey(key)
+        require(totalBytes in 1L..Int.MAX_VALUE.toLong()) { "invalid replay payload size" }
+        abortReplayPayload()
+        fileSystem.createDirectories(root)
+        val stage = replayPayloadStagePath(key)
+        fileSystem.delete(stage, mustExist = false)
+        replayPayloadKey = key
+        replayPayloadStage = stage
+        replayPayloadExpectedBytes = totalBytes
+        replayPayloadReceivedBytes = 0L
+        replayPayloadSink = fileSystem.sink(stage).buffer()
+    }
+
+    /** Appends one WebSocket Binary frame and returns the cumulative byte count. */
+    fun appendReplayPayload(bytes: ByteArray): Long {
+        val sink = replayPayloadSink ?: error("replay payload transaction has not begun")
+        if (bytes.isEmpty()) return replayPayloadReceivedBytes
+        check(bytes.size.toLong() <= replayPayloadExpectedBytes - replayPayloadReceivedBytes) {
+            "replay payload exceeds its declared size"
+        }
+        sink.write(bytes)
+        replayPayloadReceivedBytes += bytes.size
+        return replayPayloadReceivedBytes
+    }
+
+    /** Commits a complete payload into memory for JSON parsing and removes its staging file. */
+    fun finishReplayPayload(): ByteArray {
+        val stage = replayPayloadStage ?: error("replay payload transaction has not begun")
+        val sink = replayPayloadSink ?: error("replay payload transaction has no sink")
+        check(replayPayloadReceivedBytes == replayPayloadExpectedBytes) {
+            "replay payload ended before its declared size"
+        }
+        replayPayloadSink = null
+        try {
+            sink.close()
+        } catch (failure: Throwable) {
+            clearReplayPayloadState(deleteStage = true)
+            throw failure
+        }
+        return try {
+            fileSystem.read(stage) { readByteArray() }
+        } finally {
+            clearReplayPayloadState(deleteStage = true)
+        }
+    }
+
+    /** Rolls back an interrupted oversized replay payload. */
+    fun abortReplayPayload() {
+        runCatching { replayPayloadSink?.close() }
+        replayPayloadSink = null
+        clearReplayPayloadState(deleteStage = true)
     }
 
     /** Flushes buffered replay records without closing the active log. */
@@ -154,15 +257,18 @@ internal class EntryCacheStore(
     fun clearReplay(key: String) {
         requireValidKey(key)
         if (replaySinkKey == key) closeReplaySink()
+        if (replayPayloadKey == key) abortReplayPayload()
         listOf(
             replayPath(key),
             replayBackupPath(key),
             replayStagePath(key),
+            replayPayloadStagePath(key),
         ).forEach { fileSystem.delete(it, mustExist = false) }
     }
 
     private fun openReplaySink(key: String) {
         replaySinkKey = key
+        replaySinkBytes = fileSystem.metadata(replayPath(key)).size ?: 0L
         replaySink = fileSystem.appendingSink(replayPath(key)).buffer()
     }
 
@@ -170,6 +276,16 @@ internal class EntryCacheStore(
         replaySink?.close()
         replaySink = null
         replaySinkKey = null
+        replaySinkBytes = 0L
+    }
+
+    private fun clearReplayPayloadState(deleteStage: Boolean) {
+        val stage = replayPayloadStage
+        replayPayloadKey = null
+        replayPayloadStage = null
+        replayPayloadExpectedBytes = 0L
+        replayPayloadReceivedBytes = 0L
+        if (deleteStage) stage?.let { fileSystem.delete(it, mustExist = false) }
     }
 
     private fun replaceWithBackup(source: Path, target: Path, backup: Path) {
@@ -209,6 +325,7 @@ internal class EntryCacheStore(
     private fun replayPath(key: String): Path = root / "$key.replay.jsonl"
     private fun replayBackupPath(key: String): Path = root / "$key.replay.backup"
     private fun replayStagePath(key: String): Path = root / "$key.replay.stage"
+    private fun replayPayloadStagePath(key: String): Path = root / "$key.replay-payload.stage"
 }
 
 internal fun entryCacheKey(gateway: String, sessionId: String): String {

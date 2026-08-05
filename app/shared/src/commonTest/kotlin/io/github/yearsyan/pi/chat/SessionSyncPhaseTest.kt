@@ -21,8 +21,9 @@ class SessionSyncPhaseTest {
 
     @Test
     fun ignoresEventsThatDoNotChangeThePhase() {
-        assertNull(sessionSyncPhaseForEvent("history_chunk"))
         assertNull(sessionSyncPhaseForEvent("history_end"))
+        assertNull(sessionSyncPhaseForEvent("replay_event"))
+        assertNull(sessionSyncPhaseForEvent("replay_binary_begin"))
         assertNull(sessionSyncPhaseForEvent("replay_end"))
     }
 }

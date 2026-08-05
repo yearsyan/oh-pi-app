@@ -2,7 +2,10 @@ package io.github.yearsyan.pi.chat
 
 import kotlin.random.Random
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlinx.serialization.json.buildJsonObject
@@ -90,6 +93,60 @@ class EntryCacheStoreTest {
     fun rejectsIncompleteReplayCacheTail() {
         val valid = encodeReplayCacheHeader("entry-1", 3L)
         assertNull(decodeReplayCache(valid + "{\"kind\":\"event\"".encodeToByteArray()))
+    }
+
+    @Test
+    fun boundsReplayCacheBeforeReadingOrAppendingIt() {
+        val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "pi-replay-limit-test-${Random.nextLong().toString(16)}"
+        val key = "server_session"
+        val store = EntryCacheStore(rootPath = root.toString(), maxReplayBytes = 128L)
+        try {
+            store.resetReplay(key, encodeReplayCacheHeader("entry-1", 3L))
+            assertFalse(store.canAppendReplayPayload(key, 1L))
+            assertFailsWith<ReplayCacheCapacityExceededException> {
+                store.appendReplay(key, ByteArray(128) { 'x'.code.toByte() })
+            }
+            store.closeReplay()
+
+            val replayPath = root / "$key.replay.jsonl"
+            FileSystem.SYSTEM.write(replayPath) { write(ByteArray(129) { 'x'.code.toByte() }) }
+            assertEquals(0, store.replaySnapshot(key).size)
+            assertFalse(FileSystem.SYSTEM.exists(replayPath))
+        } finally {
+            store.closeReplay()
+            FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
+        }
+    }
+
+    @Test
+    fun stagesOversizedReplayPayloadFramesTransactionally() {
+        val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
+            "pi-replay-payload-test-${Random.nextLong().toString(16)}"
+        val key = "server_session"
+        val store = EntryCacheStore(rootPath = root.toString())
+        try {
+            store.beginReplayPayload(key, 5L)
+            assertEquals(2L, store.appendReplayPayload("he".encodeToByteArray()))
+            assertEquals(5L, store.appendReplayPayload("llo".encodeToByteArray()))
+            assertContentEquals("hello".encodeToByteArray(), store.finishReplayPayload())
+            assertFalse(FileSystem.SYSTEM.exists(root / "$key.replay-payload.stage"))
+
+            store.beginReplayPayload(key, 3L)
+            store.appendReplayPayload("ab".encodeToByteArray())
+            assertFailsWith<IllegalStateException> { store.finishReplayPayload() }
+            store.abortReplayPayload()
+            assertFalse(FileSystem.SYSTEM.exists(root / "$key.replay-payload.stage"))
+
+            val staleStage = root / "$key.replay-payload.stage"
+            FileSystem.SYSTEM.write(staleStage) { writeUtf8("interrupted") }
+            assertEquals(0, store.replaySnapshot(key).size)
+            assertFalse(FileSystem.SYSTEM.exists(staleStage))
+        } finally {
+            store.abortReplayPayload()
+            store.closeReplay()
+            FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
+        }
     }
 
     private fun entry(id: String, content: String): ByteArray =

@@ -187,11 +187,28 @@ func (s *piSession) handleOutput(message []byte) {
 	s.outputSeq++
 	outputSeq := s.outputSeq
 	var replayErr error
+	replayMessage := message
 	if validJSON && replayableOutput(envelope.Type) {
-		record := replayRecord{Seq: outputSeq, Payload: bytes.Clone(message)}
-		replayErr = s.appendReplayLocked(record)
-		if replayErr == nil && (envelope.Type == "message_end" || envelope.Type == "tool_execution_end" || envelope.Type == "agent_settled") {
-			replayErr = s.syncReplayLocked()
+		var compactErr error
+		replayMessage, _, compactErr = compactReplayPayload(message)
+		if compactErr != nil {
+			replayErr = compactErr
+		} else {
+			record := replayRecord{Seq: outputSeq, Payload: replayMessage}
+			replayErr = s.appendReplayLocked(record)
+		}
+		if replayErr == nil {
+			switch envelope.Type {
+			case "message_end", "tool_execution_end":
+				if s.syncReaders == 0 {
+					replayErr = s.compactReplayLogLocked(s.historyThrough)
+				} else {
+					s.replayNeedsCompaction = true
+					replayErr = s.syncReplayLocked()
+				}
+			case "agent_settled":
+				replayErr = s.syncReplayLocked()
+			}
 		}
 	}
 	s.replayMu.Unlock()
@@ -219,7 +236,7 @@ func (s *piSession) handleOutput(message []byte) {
 	if checkpointToken != 0 {
 		s.scheduleCheckpoint(outputSeq, checkpointToken, checkpointSnapshot, checkpointSnapshotErr)
 	}
-	s.broadcast(message, outputSeq, validJSON && replayableOutput(envelope.Type))
+	s.broadcast(message, replayMessage, outputSeq, validJSON && replayableOutput(envelope.Type))
 }
 
 func (s *piSession) adoptObservedSessionName(message []byte) {

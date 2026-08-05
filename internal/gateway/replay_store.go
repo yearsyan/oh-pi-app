@@ -74,8 +74,10 @@ func (s *piSession) openReplayStore(newSession bool) error {
 	}
 
 	logPath := filepath.Join(s.dir, replayLogFileName)
-	if err := s.loadReplayLogLocked(logPath); err != nil {
-		return err
+	if !newSession {
+		if err := s.loadReplayLogLocked(logPath); err != nil {
+			return err
+		}
 	}
 	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
 	if newSession {
@@ -90,24 +92,37 @@ func (s *piSession) openReplayStore(newSession bool) error {
 }
 
 func (s *piSession) loadReplayLogLocked(path string) error {
+	lastSeq, err := rewriteReplayLog(path, s.historyThrough)
+	if err != nil {
+		return err
+	}
+	if lastSeq > s.outputSeq {
+		s.outputSeq = lastSeq
+	}
+	return nil
+}
+
+// rewriteReplayLog atomically recovers, normalizes, and semantically compacts
+// a replay WAL. A partial final append is discarded, while the highest fully
+// committed sequence remains the session high-water mark even when its record
+// is superseded by a later final state.
+func rewriteReplayLog(path string, throughSeq uint64) (uint64, error) {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return throughSeq, nil
 	}
 	if err != nil {
-		return fmt.Errorf("open replay log for recovery: %w", err)
+		return 0, fmt.Errorf("open replay log for recovery: %w", err)
 	}
 
 	reader := bufio.NewReader(file)
-	var offset int64
-	var lastCompleteOffset int64
 	var lastSeq uint64
+	compactor := replayLogCompactor{}
 	for {
 		line, readErr := reader.ReadBytes('\n')
-		offset += int64(len(line))
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			_ = file.Close()
-			return fmt.Errorf("read replay log: %w", readErr)
+			return 0, fmt.Errorf("read replay log: %w", readErr)
 		}
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			line = bytes.TrimSuffix(line, []byte{'\n'})
@@ -115,17 +130,19 @@ func (s *piSession) loadReplayLogLocked(path string) error {
 			var record persistedReplayRecord
 			if err := json.Unmarshal(line, &record); err != nil || record.Seq == 0 || !json.Valid(record.Payload) {
 				_ = file.Close()
-				return fmt.Errorf("decode replay record ending at byte %d", offset)
+				return 0, errors.New("decode replay record")
 			}
 			if record.Seq <= lastSeq {
 				_ = file.Close()
-				return fmt.Errorf("replay sequence %d is not greater than %d", record.Seq, lastSeq)
+				return 0, fmt.Errorf("replay sequence %d is not greater than %d", record.Seq, lastSeq)
 			}
 			lastSeq = record.Seq
-			if record.Seq > s.outputSeq {
-				s.outputSeq = record.Seq
+			if record.Seq > throughSeq {
+				if err := compactor.add(record); err != nil {
+					_ = file.Close()
+					return 0, err
+				}
 			}
-			lastCompleteOffset = offset
 		} else if len(line) > 0 {
 			// A process crash may leave one incomplete final append. It was never
 			// durable enough to replay, so discard only that partial record.
@@ -136,14 +153,49 @@ func (s *piSession) loadReplayLogLocked(path string) error {
 		}
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close replay log after recovery: %w", err)
+		return 0, fmt.Errorf("close replay log after recovery: %w", err)
 	}
-	if offset != lastCompleteOffset {
-		if err := os.Truncate(path, lastCompleteOffset); err != nil {
-			return fmt.Errorf("discard partial replay record: %w", err)
+
+	temp, err := os.CreateTemp(filepath.Dir(path), ".pi2ws-replay-*")
+	if err != nil {
+		return 0, fmt.Errorf("create replay log replacement: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("chmod replay log replacement: %w", err)
+	}
+	writer := bufio.NewWriter(temp)
+	for _, compacted := range compactor.records {
+		line, err := json.Marshal(compacted.record)
+		if err != nil {
+			_ = temp.Close()
+			return 0, fmt.Errorf("encode compacted replay record: %w", err)
+		}
+		if _, err := writer.Write(append(line, '\n')); err != nil {
+			_ = temp.Close()
+			return 0, fmt.Errorf("write compacted replay record: %w", err)
 		}
 	}
-	return nil
+	if err := writer.Flush(); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("flush replay log replacement: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return 0, fmt.Errorf("sync replay log replacement: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return 0, fmt.Errorf("close replay log replacement: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return 0, fmt.Errorf("replace replay log: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return 0, err
+	}
+	return max(lastSeq, throughSeq), nil
 }
 
 func (s *piSession) appendReplayLocked(record replayRecord) error {
@@ -305,93 +357,25 @@ func (s *piSession) writeHistoryCacheLocked(throughSeq uint64, boundary historyB
 
 func (s *piSession) compactReplayLogLocked(throughSeq uint64) error {
 	path := filepath.Join(s.dir, replayLogFileName)
-	input, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open replay log for compaction: %w", err)
-	}
-
-	temp, err := os.CreateTemp(s.dir, ".pi2ws-replay-*")
-	if err != nil {
-		_ = input.Close()
-		return fmt.Errorf("create replay log replacement: %w", err)
-	}
-	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	if err := temp.Chmod(0o600); err != nil {
-		_ = input.Close()
-		_ = temp.Close()
-		return fmt.Errorf("chmod replay log replacement: %w", err)
-	}
-
-	reader := bufio.NewReader(input)
-	for {
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			if line[len(line)-1] != '\n' {
-				_ = input.Close()
-				_ = temp.Close()
-				return errors.New("replay log ends with an incomplete record")
-			}
-			trimmed := bytes.TrimSuffix(line, []byte{'\n'})
-			trimmed = bytes.TrimSuffix(trimmed, []byte{'\r'})
-			var record persistedReplayRecord
-			if err := json.Unmarshal(trimmed, &record); err != nil || record.Seq == 0 || !json.Valid(record.Payload) {
-				_ = input.Close()
-				_ = temp.Close()
-				return errors.New("replay log contains an invalid record")
-			}
-			if record.Seq > throughSeq {
-				if _, err := temp.Write(line); err != nil {
-					_ = input.Close()
-					_ = temp.Close()
-					return fmt.Errorf("write replay log replacement: %w", err)
-				}
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				_ = input.Close()
-				_ = temp.Close()
-				return fmt.Errorf("read replay log for compaction: %w", readErr)
-			}
-			break
-		}
-	}
-	if err := input.Close(); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("close replay log after compaction: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		_ = temp.Close()
-		return fmt.Errorf("sync replay log replacement: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close replay log replacement: %w", err)
-	}
-
 	if s.replayFile != nil {
+		if err := s.replayFile.Sync(); err != nil {
+			return fmt.Errorf("sync replay log before compaction: %w", err)
+		}
 		if err := s.replayFile.Close(); err != nil {
 			return fmt.Errorf("close old replay log: %w", err)
 		}
 		s.replayFile = nil
 	}
-	if err := os.Rename(tempPath, path); err != nil {
-		file, openErr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		s.replayFile = file
-		if openErr != nil {
-			return errors.Join(fmt.Errorf("replace replay log: %w", err), fmt.Errorf("reopen replay log: %w", openErr))
-		}
-		return fmt.Errorf("replace replay log: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return fmt.Errorf("reopen compacted replay log: %w", err)
+	lastSeq, compactErr := rewriteReplayLog(path, throughSeq)
+	file, openErr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if openErr != nil {
+		return errors.Join(compactErr, fmt.Errorf("reopen compacted replay log: %w", openErr))
 	}
 	s.replayFile = file
-	return syncDirectory(s.dir)
+	if lastSeq > s.outputSeq {
+		s.outputSeq = lastSeq
+	}
+	return compactErr
 }
 
 func writeAtomicFile(dir, name string, data []byte) error {

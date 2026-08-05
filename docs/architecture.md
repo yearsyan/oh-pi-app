@@ -40,7 +40,7 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 
 - `pi2ws-session.json` 是会话列表元数据的权威来源，包含名称、工作区、创建时间和最近活跃时间；旧版元数据会兼容读取。
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
-- `pi2ws-replay.log` 是当前活动 turn 的事件 WAL。pi2ws 在广播可回放事件前先将其追加到该文件。
+- `pi2ws-replay.log` 是当前活动 turn 的紧凑事件 WAL。pi2ws 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
 - `pi2ws-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
 
 ## 会话标题
@@ -57,11 +57,11 @@ attach 分为稳定历史、活动 turn 回放和实时广播三个阶段：
 2. 当客户端的稳定基线完全匹配时，从 `replay_since` 之后读取活动事件；否则从磁盘 replay WAL 的稳定历史高水位之后读取。
 3. 在同一序列化临界区内结束 replay 并注册实时高水位，随后转入 live 广播。
 
-稳定历史和 replay 都以分块方式传输，不需要把完整历史读入内存。正在 attach 时会延迟压缩 WAL，避免读者丢失日志尾部。
+稳定历史直接以 WebSocket Binary 消息传输原始 JSONL 字节；普通 replay 记录作为嵌套 JSON 对象发送，超过 256 KiB 的单事件在文本元信息后以 Binary 消息传输原始 JSON 字节。两条路径都没有同步层 Base64。App 在接收协程中施加背压并顺序写入 staging 文件，以声明的原始字节数提交或回滚。正在 attach 时会延迟压缩 WAL，避免读者丢失日志尾部。
 
 支持 replay 游标的客户端会把活动事件与其网关序号一起持久化，并在 live 阶段接收带 `seq` 的 `pi2ws/live` 封装。稳定 entry 游标、稳定序号基线和 replay 高水位三者必须同时匹配才允许跳过旧 WAL；任一不匹配都会回退到安全的稳定边界。这既避免长时间运行的 turn 在每次重连时被完整重传，也不会以流量优化换取历史缺口。
 
-`agent_settled` 后，pi2ws 会在 `pi2ws-history.json` 中原子记录新的稳定边界，并压缩已经稳定的 replay 日志。详细消息顺序和 chunk 格式见 [attach 历史 session](api.md#连接历史-session)。
+assistant 消息和工具执行结束时，pi2ws 会原子合并被最终状态覆盖的流式更新；`agent_settled` 后再在 `pi2ws-history.json` 中记录新的稳定边界，并删除已经进入稳定历史的 replay。启动恢复同样会迁移旧格式或未压缩 WAL。详细消息顺序和 chunk 格式见 [attach 历史 session](api.md#连接历史-session)。
 
 ## 输入关联与共享控制
 

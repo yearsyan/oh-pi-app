@@ -3,7 +3,6 @@ package gateway
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -900,6 +899,7 @@ func TestAttachChunksLargeActiveReplayRecord(t *testing.T) {
 
 	attached := dialWebSocket(t, server, url.Values{
 		"action": {"attach"}, "session_id": {sessionID}, "token": {testToken},
+		"replay_cursor": {"1"},
 	})
 	defer attached.Close()
 	_, _, replay := readAttachHistory(t, attached)
@@ -1427,14 +1427,25 @@ type event map[string]any
 
 func readEvent(t *testing.T, conn *websocket.Conn) event {
 	t.Helper()
+	messageType, message := readWebSocketMessage(t, conn)
+	if messageType != websocket.TextMessage {
+		t.Fatalf("message type = %d, want text", messageType)
+	}
+	return decodeEvent(t, message)
+}
+
+func readWebSocketMessage(t *testing.T, conn *websocket.Conn) (int, []byte) {
+	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	messageType, message, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read WebSocket event: %v", err)
 	}
-	if messageType != websocket.TextMessage {
-		t.Fatalf("message type = %d, want text", messageType)
-	}
+	return messageType, message
+}
+
+func decodeEvent(t *testing.T, message []byte) event {
+	t.Helper()
 	var value event
 	if err := json.Unmarshal(message, &value); err != nil {
 		t.Fatalf("decode WebSocket event %q: %v", message, err)
@@ -1451,16 +1462,26 @@ func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []even
 	var historyJSONL []byte
 	var historyEnd event
 	historyChunkCount := 0
+	historyExpectedBytes := int(historyBegin.number("total_bytes"))
 	for {
-		message := readEvent(t, conn)
-		switch message.string("event") {
-		case "history_chunk":
+		messageType, raw := readWebSocketMessage(t, conn)
+		if messageType == websocket.BinaryMessage {
 			historyChunkCount++
-			chunk, err := base64.StdEncoding.DecodeString(message.string("data"))
-			if err != nil {
-				t.Fatalf("decode history chunk: %v", err)
+			historyJSONL = append(historyJSONL, raw...)
+			if len(historyJSONL) > historyExpectedBytes {
+				t.Fatalf(
+					"history binary stream exceeded declared size: %d > %d",
+					len(historyJSONL),
+					historyExpectedBytes,
+				)
 			}
-			historyJSONL = append(historyJSONL, chunk...)
+			continue
+		}
+		if messageType != websocket.TextMessage {
+			t.Fatalf("history message type = %d, want text or binary", messageType)
+		}
+		message := decodeEvent(t, raw)
+		switch message.string("event") {
 		case "history_end":
 			historyEnd = message
 			goto historyComplete
@@ -1470,6 +1491,13 @@ func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []even
 	}
 
 historyComplete:
+	if len(historyJSONL) != historyExpectedBytes {
+		t.Fatalf(
+			"history binary stream size = %d, declared %d",
+			len(historyJSONL),
+			historyExpectedBytes,
+		)
+	}
 	entries := make([]any, 0)
 	for _, line := range strings.Split(strings.TrimSpace(string(historyJSONL)), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -1498,36 +1526,75 @@ historyComplete:
 	var replaySeq float64
 	var replayPayload []byte
 	replayChunkCount := 0
+	replayTotalBytes := 0
 	for {
-		message := readEvent(t, conn)
-		if message.string("type") != "pi2ws" {
-			t.Fatalf("attach replay envelope = %#v", message)
-		}
-		switch message.string("event") {
-		case "replay_chunk":
+		messageType, raw := readWebSocketMessage(t, conn)
+		if messageType == websocket.BinaryMessage {
+			if replaySeq == 0 || replayTotalBytes <= 0 {
+				t.Fatal("replay binary frame arrived without metadata")
+			}
 			replayChunkCount++
-			seq := message.number("seq")
-			if replaySeq != 0 && replaySeq != seq {
-				t.Fatalf("replay sequence changed before final chunk: %v -> %v", replaySeq, seq)
+			replayPayload = append(replayPayload, raw...)
+			if len(replayPayload) > replayTotalBytes {
+				t.Fatalf(
+					"replay binary payload exceeded declared size: %d > %d",
+					len(replayPayload),
+					replayTotalBytes,
+				)
 			}
-			replaySeq = seq
-			chunk, err := base64.StdEncoding.DecodeString(message.string("data"))
-			if err != nil {
-				t.Fatalf("decode replay chunk: %v", err)
-			}
-			replayPayload = append(replayPayload, chunk...)
-			if message.boolean("final") {
+			if len(replayPayload) == replayTotalBytes {
 				var payload event
 				if err := json.Unmarshal(replayPayload, &payload); err != nil {
-					t.Fatalf("decode replay payload: %v", err)
+					t.Fatalf("decode replay binary payload: %v", err)
 				}
 				payload["_pi2ws_chunk_count"] = float64(replayChunkCount)
-				payload["_pi2ws_seq"] = seq
-				payload["_pi2ws_total_bytes"] = message["total_bytes"]
+				payload["_pi2ws_seq"] = replaySeq
+				payload["_pi2ws_total_bytes"] = float64(replayTotalBytes)
 				replay = append(replay, payload)
 				replaySeq = 0
 				replayPayload = nil
 				replayChunkCount = 0
+				replayTotalBytes = 0
+			}
+			continue
+		}
+		if messageType != websocket.TextMessage {
+			t.Fatalf("replay message type = %d, want text or binary", messageType)
+		}
+		message := decodeEvent(t, raw)
+		if message.string("type") != "pi2ws" {
+			t.Fatalf("attach replay envelope = %#v", message)
+		}
+		switch message.string("event") {
+		case "replay_event":
+			if replaySeq != 0 {
+				t.Fatal("direct replay event arrived inside a chunked payload")
+			}
+			payloadMap, ok := message["payload"].(map[string]any)
+			if !ok {
+				t.Fatalf("direct replay payload = %#v, want object", message["payload"])
+			}
+			payload := event(payloadMap)
+			payload["_pi2ws_chunk_count"] = float64(1)
+			payload["_pi2ws_seq"] = message.number("seq")
+			payload["_pi2ws_total_bytes"] = message["total_bytes"]
+			replay = append(replay, payload)
+		case "replay_binary_begin":
+			if replaySeq != 0 {
+				t.Fatal("replay binary metadata arrived inside another payload")
+			}
+			seq := message.number("seq")
+			if seq == 0 {
+				t.Fatal("replay binary metadata has no sequence")
+			}
+			replaySeq = seq
+			replayTotalBytes = int(message.number("total_bytes"))
+			if replayTotalBytes <= syncChunkBytes {
+				t.Fatalf(
+					"replay binary size = %d, want more than direct event limit %d",
+					replayTotalBytes,
+					syncChunkBytes,
+				)
 			}
 		case "replay_end":
 			if replaySeq != 0 {

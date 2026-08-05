@@ -645,8 +645,6 @@ type gatewayEvent struct {
 	Payload    json.RawMessage `json:"payload,omitempty"`
 	Reset      *bool           `json:"reset,omitempty"`
 	EntryID    string          `json:"entry_id,omitempty"`
-	Data       string          `json:"data,omitempty"`
-	Final      bool            `json:"final,omitempty"`
 	TotalBytes uint64          `json:"total_bytes,omitempty"`
 }
 

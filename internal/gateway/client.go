@@ -19,8 +19,9 @@ type wsClient struct {
 }
 
 type syncWrite struct {
-	message []byte
-	result  chan bool
+	messageType int
+	message     []byte
+	result      chan bool
 }
 
 func newWSClient(
@@ -44,7 +45,21 @@ func newWSClient(
 // applies backpressure instead of dropping a client when a history page fills
 // the live queue.
 func (c *wsClient) sendBlocking(message []byte) bool {
-	request := syncWrite{message: message, result: make(chan bool, 1)}
+	return c.sendFrameBlocking(websocket.TextMessage, message)
+}
+
+// sendBinaryBlocking writes one binary message while preserving attach-stream
+// ordering and backpressure across the preceding/following text metadata.
+func (c *wsClient) sendBinaryBlocking(message []byte) bool {
+	return c.sendFrameBlocking(websocket.BinaryMessage, message)
+}
+
+func (c *wsClient) sendFrameBlocking(messageType int, message []byte) bool {
+	request := syncWrite{
+		messageType: messageType,
+		message:     message,
+		result:      make(chan bool, 1),
+	}
 	select {
 	case c.syncSend <- request:
 	case <-c.done:
@@ -82,13 +97,13 @@ func (c *wsClient) writePump() {
 	for {
 		select {
 		case request := <-c.syncSend:
-			written := c.writeMessage(request.message)
+			written := c.writeMessage(request.messageType, request.message)
 			request.result <- written
 			if !written {
 				return
 			}
 		case message := <-c.send:
-			if !c.writeMessage(message) {
+			if !c.writeMessage(websocket.TextMessage, message) {
 				return
 			}
 		case <-ticker.C:
@@ -103,12 +118,12 @@ func (c *wsClient) writePump() {
 	}
 }
 
-func (c *wsClient) writeMessage(message []byte) bool {
+func (c *wsClient) writeMessage(messageType int, message []byte) bool {
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		c.abort()
 		return false
 	}
-	if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+	if err := c.conn.WriteMessage(messageType, message); err != nil {
 		c.abort()
 		return false
 	}
