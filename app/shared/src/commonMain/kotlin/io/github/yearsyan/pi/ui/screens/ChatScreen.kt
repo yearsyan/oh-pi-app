@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,8 +80,8 @@ import io.github.yearsyan.pi.ui.components.StreamingCaret
 import io.github.yearsyan.pi.ui.components.UserMessageRow
 import io.github.yearsyan.pi.ui.components.animateScrollToBottom
 import io.github.yearsyan.pi.ui.components.localizedLabel
+import io.github.yearsyan.pi.ui.components.requestScrollToBottom
 import io.github.yearsyan.pi.ui.components.resolveSessionStatus
-import io.github.yearsyan.pi.ui.components.scrollToBottom
 import kotlinx.coroutines.launch
 
 private enum class ChatBodyState {
@@ -239,16 +240,26 @@ private fun LoadingBar(
 }
 
 @Composable
-private fun MessageList(
+internal fun MessageList(
     controller: ChatController,
     bottomPadding: Dp,
     scrollToBottomTick: Int,
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberLazyListState()
+    // Each conversation gets its own list state: entering or switching to a
+    // session starts at the tail instead of inheriting the previous
+    // session's scroll position.
+    val listState = key(controller) { rememberLazyListState() }
     val focusManager = LocalFocusManager.current
+    // True once the user drags towards older messages. `pinned` alone cannot
+    // gate auto-scroll: growth of the bottom content padding (the composer
+    // height resolves a frame after entry, and grows with multiline input)
+    // shifts the content end and briefly reads as "away from the bottom"
+    // without any user scroll, which would leave a freshly opened session
+    // floating above its tail.
+    var userScrolledAway by remember(controller) { mutableStateOf(false) }
     val dismissKeyboardOnScroll =
-        remember(focusManager) {
+        remember(controller, focusManager) {
             object : NestedScrollConnection {
                 override fun onPreScroll(
                     available: Offset,
@@ -256,12 +267,13 @@ private fun MessageList(
                 ): Offset {
                     if (source == NestedScrollSource.UserInput && available.y != 0f) {
                         focusManager.clearFocus()
+                        if (available.y > 0f) userScrolledAway = true
                     }
                     return Offset.Zero
                 }
             }
         }
-    var pinned by remember { mutableStateOf(true) }
+    var pinned by remember(controller) { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val renderGroups = groupTimelineItems(controller.items)
     val lastGroupKey = renderGroups.lastOrNull()?.key
@@ -288,20 +300,38 @@ private fun MessageList(
             if (last.index < info.totalItemsCount - 1) return@snapshotFlow false
             val contentEnd = info.viewportEndOffset - info.afterContentPadding
             last.offset + last.size <= contentEnd + pinnedThresholdPx
-        }.collect { pinned = it }
+        }.collect {
+            pinned = it
+            if (it) userScrolledAway = false
+        }
     }
 
-    // auto-scroll when pinned and new content arrives
+    // Follow the tail until the user scrolls towards older messages; being at
+    // the bottom (tracked by `pinned`) always re-engages following.
+    val followingTail = !userScrolledAway || pinned
+
+    // Auto-scroll while following the tail: entering a session and every new
+    // content lands at the bottom until the user scrolls up. Use the
+    // non-suspending requestScrollToBottom: suspending scrolls launched from
+    // recomposition-driven effects (controller switch) can starve and never
+    // run, leaving a freshly opened session stuck at the top.
     val itemCount = renderGroups.size
-    LaunchedEffect(itemCount) {
-        if (pinned && itemCount > 0) listState.scrollToBottom(itemCount - 1)
+    LaunchedEffect(controller, itemCount) {
+        if (followingTail && itemCount > 0) listState.requestScrollToBottom(itemCount - 1)
+    }
+
+    // the composer height (including multiline growth) changes the bottom
+    // content padding after entry; keep the tail visible while following
+    LaunchedEffect(controller, bottomPadding) {
+        if (followingTail && itemCount > 0) listState.requestScrollToBottom(itemCount - 1)
     }
 
     // jump to the tail after the user sends a prompt, even when scrolled up
     LaunchedEffect(scrollToBottomTick) {
         if (scrollToBottomTick > 0 && renderGroups.isNotEmpty()) {
             pinned = true
-            listState.scrollToBottom(renderGroups.lastIndex)
+            userScrolledAway = false
+            listState.requestScrollToBottom(renderGroups.lastIndex)
         }
     }
 
@@ -340,7 +370,7 @@ private fun MessageList(
         }
 
         AnimatedVisibility(
-            visible = !pinned,
+            visible = !pinned && userScrolledAway,
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)
@@ -351,6 +381,7 @@ private fun MessageList(
             Surface(
                 onClick = {
                     pinned = true
+                    userScrolledAway = false
                     scope.launch { listState.animateScrollToBottom(renderGroups.lastIndex) }
                 },
                 modifier = Modifier.size(38.dp),
@@ -384,9 +415,9 @@ private fun MessageList(
             is TimelineItem.ToolItem -> tailItem.tool.output.length
             else -> tailItem?.key
         }
-    LaunchedEffect(tailSignature) {
-        if (pinned && controller.items.isNotEmpty()) {
-            listState.scrollToBottom(renderGroups.lastIndex)
+    LaunchedEffect(controller, tailSignature) {
+        if (followingTail && controller.items.isNotEmpty()) {
+            listState.requestScrollToBottom(renderGroups.lastIndex)
         }
     }
 }

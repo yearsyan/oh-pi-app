@@ -20,3 +20,14 @@ internal suspend fun LazyListState.scrollToBottom(lastIndex: Int) {
 internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
     if (lastIndex >= 0) animateScrollToItem(lastIndex, scrollOffset = Int.MAX_VALUE)
 }
+
+/**
+ * Non-suspending variant of [scrollToBottom]: records the scroll request
+ * synchronously so it is applied during the next layout pass. Prefer this in
+ * `LaunchedEffect`s driven by recomposition (e.g. entering a session): a
+ * suspending scroll launched from such an effect may never resume before the
+ * composition goes idle, leaving the list stuck at the top.
+ */
+internal fun LazyListState.requestScrollToBottom(lastIndex: Int) {
+    if (lastIndex >= 0) requestScrollToItem(lastIndex, scrollOffset = Int.MAX_VALUE)
+}
