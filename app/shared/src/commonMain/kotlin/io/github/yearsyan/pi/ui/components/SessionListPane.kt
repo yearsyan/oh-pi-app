@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,12 +28,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,11 +46,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.pi.data.SavedSession
 import io.github.yearsyan.pi.data.ServerProfile
+import io.github.yearsyan.pi.getPlatform
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.net.gatewayAddressLabel
 import io.github.yearsyan.pi.net.nowMillis
@@ -379,6 +385,7 @@ private fun EmptySessions() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionRow(
     session: SavedSession,
@@ -388,13 +395,23 @@ private fun SessionRow(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var actionSheetOpen by remember { mutableStateOf(false) }
+    val ios = getPlatform().isIos
     val bg = if (active) MaterialTheme.colorScheme.surfaceContainerHigh
     else MaterialTheme.colorScheme.surface
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(bg)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = if (ios) {
+                    {
+                        longPressHaptic()
+                        actionSheetOpen = true
+                    }
+                } else null,
+            )
             .padding(horizontal = 16.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -420,26 +437,78 @@ private fun SessionRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Box {
-            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Filled.MoreVert,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        if (!ios) {
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(S.rename) },
+                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
+                        onClick = { onRename(); menuOpen = false },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(S.delete) },
+                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
+                        onClick = { onDelete(); menuOpen = false },
+                    )
+                }
             }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text(S.rename) },
-                    leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                    onClick = { onRename(); menuOpen = false },
+        }
+    }
+    if (ios && actionSheetOpen) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { actionSheetOpen = false },
+            sheetState = sheetState,
+            dragHandle = null,
+            shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                Text(
+                    session.name.ifBlank { S.untitledSession },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
                 )
-                DropdownMenuItem(
-                    text = { Text(S.delete) },
-                    leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                    onClick = { onDelete(); menuOpen = false },
-                )
+                SheetAction(
+                    icon = { tint -> Icon(Icons.Filled.Edit, null, Modifier.size(19.dp), tint = tint) },
+                    label = S.rename,
+                ) {
+                    actionSheetOpen = false
+                    onRename()
+                }
+                SheetAction(
+                    icon = { tint -> Icon(Icons.Filled.Delete, null, Modifier.size(19.dp), tint = tint) },
+                    label = S.delete,
+                    destructive = true,
+                ) {
+                    actionSheetOpen = false
+                    onDelete()
+                }
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { actionSheetOpen = false }
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        S.cancel,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }
@@ -448,6 +517,33 @@ private fun SessionRow(
         color = MaterialTheme.colorScheme.outlineVariant,
         thickness = 0.5.dp,
     )
+}
+
+@Composable
+private fun SheetAction(
+    icon: @Composable (Color) -> Unit,
+    label: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tint = if (destructive) MaterialTheme.colorScheme.error
+    else MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { icon(tint) }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable

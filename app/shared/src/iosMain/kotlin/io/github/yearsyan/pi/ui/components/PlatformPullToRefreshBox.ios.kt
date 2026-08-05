@@ -1,9 +1,11 @@
 package io.github.yearsyan.pi.ui.components
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal actual fun PlatformPullToRefreshBox(
     isRefreshing: Boolean,
@@ -11,5 +13,11 @@ internal actual fun PlatformPullToRefreshBox(
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {
-    Box(modifier) { content() }
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = modifier,
+    ) {
+        content()
+    }
 }

@@ -172,7 +172,6 @@ interface Strings {
     val outputTokens: String
     val totalTokens: String
     val usageUnavailable: String
-    val usageRefreshing: String
     val emptyChatTitle: String
     val emptyChatBody: String
     val copied: String
@@ -382,7 +381,6 @@ object EnStrings : Strings {
     override val outputTokens = "Output"
     override val totalTokens = "Total"
     override val usageUnavailable = "Usage data is not available yet"
-    override val usageRefreshing = "Refreshing usage…"
     override val emptyChatTitle = "How can I help?"
     override val emptyChatBody = "Ask anything, or let the agent inspect your project."
     override val copied = "Copied"
@@ -587,7 +585,6 @@ object ZhStrings : Strings {
     override val outputTokens = "输出"
     override val totalTokens = "总计"
     override val usageUnavailable = "暂时没有可用的用量数据"
-    override val usageRefreshing = "正在刷新用量…"
     override val emptyChatTitle = "有什么可以帮你？"
     override val emptyChatBody = "随便问点什么，或让智能体检查当前项目。"
     override val copied = "已复制"
