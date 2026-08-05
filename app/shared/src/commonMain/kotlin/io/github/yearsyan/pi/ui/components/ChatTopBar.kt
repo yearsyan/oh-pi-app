@@ -8,8 +8,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +20,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -35,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,8 +49,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -64,8 +69,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** Chat top bar: back (compact), title, status and overflow actions. */
@@ -78,6 +85,7 @@ fun ChatTopBar(
     onDelete: () -> Unit,
     onBrowseFiles: () -> Unit = {},
 ) {
+    var sessionInfoOpen by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
@@ -125,9 +133,19 @@ fun ChatTopBar(
                 onReconnect = { controller.reconnect() },
                 canReconnect = controller.canReconnect,
                 onBrowseFiles = onBrowseFiles,
+                onSessionInfo = { sessionInfoOpen = true },
+                sessionInfoEnabled = controller.sessionId.isNotBlank(),
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+
+    if (sessionInfoOpen) {
+        SessionInfoDialog(
+            sessionId = controller.sessionId,
+            workDir = controller.workDir,
+            onDismiss = { sessionInfoOpen = false },
+        )
     }
 }
 
@@ -359,12 +377,16 @@ private fun formatPercent(value: Double): String {
 
 @Composable
 private fun ConnectionBadge(controller: ChatController) {
-    val (color, label) = when (controller.conn) {
-        ConnState.Ready -> piExtras.success to S.connected
-        ConnState.Connecting -> piExtras.warning to S.connecting
-        ConnState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant to S.disconnected
-        ConnState.Error -> MaterialTheme.colorScheme.error to S.connectionError
+    val status = resolveSessionStatus(controller.conn, controller.syncPhase)
+    val color = when (status) {
+        SessionStatus.Connected -> piExtras.success
+        SessionStatus.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+        SessionStatus.ConnectionError -> MaterialTheme.colorScheme.error
+        SessionStatus.Connecting,
+        SessionStatus.RestoringSession,
+        SessionStatus.SyncingLatestActivity -> piExtras.warning
     }
+    val label = status.localizedLabel()
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
@@ -415,6 +437,8 @@ private fun OverflowMenu(
     onReconnect: () -> Unit,
     canReconnect: Boolean,
     onBrowseFiles: () -> Unit,
+    onSessionInfo: () -> Unit,
+    sessionInfoEnabled: Boolean,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -439,10 +463,122 @@ private fun OverflowMenu(
                 onClick = { onRename(); open = false },
             )
             DropdownMenuItem(
+                text = { Text(S.sessionInfo) },
+                leadingIcon = { Icon(Icons.Filled.Info, null, Modifier.size(18.dp)) },
+                onClick = { onSessionInfo(); open = false },
+                enabled = sessionInfoEnabled,
+            )
+            DropdownMenuItem(
                 text = { Text(S.delete) },
                 leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
                 onClick = { onDelete(); open = false },
             )
         }
+    }
+}
+
+@Composable
+private fun SessionInfoDialog(
+    sessionId: String,
+    workDir: String,
+    onDismiss: () -> Unit,
+) {
+    val sessionDir = "~/.local/state/pi2ws/sessions/$sessionId"
+    val resumeCommand =
+        "pi --session-dir ~/.local/state/pi2ws/sessions/$sessionId --session-id $sessionId"
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(S.sessionInfo) },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                InfoField(S.sessionId, sessionId)
+                InfoField(S.workDir, workDir)
+                InfoField("pi2ws session dir", sessionDir)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        S.resumeCommand,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        S.resumeCommandHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CopyableCode(resumeCommand)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(S.dialogOk) }
+        },
+    )
+}
+
+@Composable
+private fun InfoField(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SelectionContainer {
+                Text(
+                    value,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            CopyButton(value)
+        }
+    }
+}
+
+@Composable
+private fun CopyableCode(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SelectionContainer {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        CopyButton(text)
+    }
+}
+
+@Composable
+private fun CopyButton(text: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    if (copied) {
+        LaunchedEffect(copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    TextButton(
+        onClick = {
+            clipboard.setText(AnnotatedString(text))
+            copied = true
+        },
+    ) {
+        Text(
+            if (copied) S.copied else S.copy,
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }

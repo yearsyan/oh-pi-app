@@ -133,6 +133,8 @@ interface Strings {
     val toolCalled: (String) -> String
     val connected: String
     val connecting: String
+    val restoringSession: String
+    val syncingLatestActivity: String
     val disconnected: String
     val connectionError: String
     val reconnect: String
@@ -149,6 +151,11 @@ interface Strings {
     val abortSent: String
     val agentWorking: String
     val agentWorkingTool: String
+    val sessionInfo: String
+    val sessionId: String
+    val workDir: String
+    val resumeCommand: String
+    val resumeCommandHint: String
     val sessionUsageTitle: String
     val contextUsage: String
     val contextWindow: String
@@ -335,6 +342,8 @@ object EnStrings : Strings {
     override val toolCalled = { target: String -> "Used $target" }
     override val connected = "Online"
     override val connecting = "Connecting"
+    override val restoringSession = "Restoring session"
+    override val syncingLatestActivity = "Syncing latest activity"
     override val disconnected = "Offline"
     override val connectionError = "Connection failed"
     override val reconnect = "Reconnect"
@@ -351,6 +360,11 @@ object EnStrings : Strings {
     override val abortSent = "Stop requested"
     override val agentWorking = "Working"
     override val agentWorkingTool = "Running"
+    override val sessionInfo = "Session info"
+    override val sessionId = "Session ID"
+    override val workDir = "Working directory"
+    override val resumeCommand = "Resume in terminal"
+    override val resumeCommandHint = "Run on the machine running the pi2ws gateway"
     override val sessionUsageTitle = "Session usage"
     override val contextUsage = "Context usage"
     override val contextWindow = "Context window"
@@ -532,6 +546,8 @@ object ZhStrings : Strings {
     override val toolCalled = { target: String -> "调用 $target" }
     override val connected = "在线"
     override val connecting = "连接中"
+    override val restoringSession = "正在恢复会话"
+    override val syncingLatestActivity = "正在同步最新进度"
     override val disconnected = "离线"
     override val connectionError = "连接失败"
     override val reconnect = "重新连接"
@@ -548,6 +564,11 @@ object ZhStrings : Strings {
     override val abortSent = "已发送中止请求"
     override val agentWorking = "运行中"
     override val agentWorkingTool = "执行中"
+    override val sessionInfo = "会话信息"
+    override val sessionId = "会话 ID"
+    override val workDir = "工作目录"
+    override val resumeCommand = "命令行恢复指令"
+    override val resumeCommandHint = "在运行 pi2ws 网关的机器上执行"
     override val sessionUsageTitle = "会话用量"
     override val contextUsage = "上下文占用"
     override val contextWindow = "上下文窗口"
