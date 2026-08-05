@@ -54,13 +54,11 @@ chmod 600 app/keystore.properties
 
 Keep using the same keystore across releases: Android refuses update installs when the signing certificate changes, so losing it means users must uninstall first. Verify a built APK with `$ANDROID_HOME/build-tools/*/apksigner verify --print-certs <apk>`.
 
+#### Publishing release APKs
 
+Version rule: pushing a `v<major.minor.patch>` tag (e.g. `v1.10.1`) triggers the GitHub release workflow, which builds the APK with `-PversionName=<major.minor.patch>`. The Android `versionCode` is derived from the version name with each dot-segment as a two-digit field: `1.10.1` → `11001` (`major×10000 + minor×100 + patch`). Local builds without `-PversionName` fall back to the last released version.
 
-
-```bash
-  --file app/androidApp/build/outputs/apk/release/androidApp-release.apk \
-  --content-type application/vnd.android.package-archive
-```
+APK distribution (CDN bucket upload, wrangler commands, signing verification) is documented in the local, gitignored `ohpi-publish` skill at `~/.pi/agent/skills/ohpi-publish/SKILL.md` — operational details are intentionally not committed to this repository.
 
 ## Coding Style & Naming Conventions
 
