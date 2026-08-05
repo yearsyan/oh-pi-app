@@ -37,7 +37,7 @@ func run() int {
 	var allowedOrigins stringList
 
 	configFile := flag.String("config", envOr("PI2WS_CONFIG_FILE", defaultConfigFile()), "configuration file (or PI2WS_CONFIG_FILE)")
-	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	listen := flag.String("listen", "127.0.0.1:18080", "HTTP listen address")
 	token := flag.String("token", os.Getenv("PI2WS_TOKEN"), "URL authentication token (or PI2WS_TOKEN)")
 	dataDir := flag.String("data-dir", defaultDataDir(), "persistent data directory")
 	workDir := flag.String("work-dir", mustWorkingDir(), "working directory for pi processes")

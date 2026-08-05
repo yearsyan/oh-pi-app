@@ -16,7 +16,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 - 同一 session 支持多个 WebSocket 客户端共同输入并接收实时输出。
 - 严格保持 WebSocket 文本帧与 pi RPC JSONL 记录之间的一对一映射。
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。
-- 支持工作区能力探测、目录浏览和远程文件读取与下载。
+- 支持工作区能力探测、目录浏览与创建，以及远程文件读取与下载。
 - 用户提交首条请求后立即并行调用可配置的轻量模型生成会话标题，并同步到所有客户端。
 - 提供 token 鉴权、Origin 校验、消息大小限制、慢客户端隔离和优雅退出。
 
@@ -36,14 +36,14 @@ go build -o bin/pi2ws ./cmd/pi2ws
 
 export PI2WS_TOKEN="$(openssl rand -hex 32)"
 ./bin/pi2ws \
-  --listen 127.0.0.1:8080 \
+  --listen 127.0.0.1:18080 \
   --work-dir /path/to/project
 ```
 
-默认监听 `127.0.0.1:8080`。确认服务正常：
+默认监听 `127.0.0.1:18080`。确认服务正常：
 
 ```bash
-curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:18080/healthz
 ```
 
 生产环境应在 TLS 反向代理后提供 `wss://`。完整部署方式和配置项见[部署与配置](docs/deployment.md)。

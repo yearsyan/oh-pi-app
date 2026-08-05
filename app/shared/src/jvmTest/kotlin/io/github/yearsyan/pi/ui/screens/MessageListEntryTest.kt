@@ -45,7 +45,7 @@ class MessageListEntryTest {
                     retryOk = "",
                     retryFailed = "",
                     agentDone = "",
-                    turnStart = "",
+                    retrying = "",
                     notify = "",
                     modelOptionsFailed = { "" },
                 )

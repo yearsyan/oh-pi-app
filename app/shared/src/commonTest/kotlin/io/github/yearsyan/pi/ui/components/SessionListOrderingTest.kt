@@ -3,6 +3,8 @@ package io.github.yearsyan.pi.ui.components
 import io.github.yearsyan.pi.data.SavedSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class SessionListOrderingTest {
     @Test
@@ -20,5 +22,24 @@ class SessionListOrderingTest {
             listOf("workspace-a-new", "workspace-a-old"),
             groups.first().sessions.map { it.id },
         )
+    }
+
+    @Test
+    fun previewKeepsActiveSessionVisibleWithoutDuplicatingIt() {
+        val sessions =
+            (0 until 12).map { index ->
+                SavedSession(id = "session-$index", createdAt = 100L - index, workDir = "/workspace")
+            }
+
+        val withOlderActive = workspaceSessionPreview(sessions, activeChatId = "session-11", expanded = false)
+        assertEquals(11, withOlderActive.size)
+        assertTrue(withOlderActive.any { it.id == "session-11" })
+        assertFalse(withOlderActive.any { it.id == "session-10" })
+
+        val withRecentActive = workspaceSessionPreview(sessions, activeChatId = "session-2", expanded = false)
+        assertEquals(10, withRecentActive.size)
+        assertEquals(1, withRecentActive.count { it.id == "session-2" })
+
+        assertEquals(sessions, workspaceSessionPreview(sessions, activeChatId = "session-11", expanded = true))
     }
 }

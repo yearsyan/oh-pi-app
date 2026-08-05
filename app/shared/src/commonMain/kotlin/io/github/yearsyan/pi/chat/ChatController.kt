@@ -15,6 +15,7 @@ import io.github.yearsyan.pi.net.arr
 import io.github.yearsyan.pi.net.bool
 import io.github.yearsyan.pi.net.buildWsUrl
 import io.github.yearsyan.pi.net.contentText
+import io.github.yearsyan.pi.net.friendlyHttpError
 import io.github.yearsyan.pi.net.long
 import io.github.yearsyan.pi.net.nowMillis
 import io.github.yearsyan.pi.net.obj
@@ -185,7 +186,7 @@ class ChatController(
         val retryOk: String,
         val retryFailed: String,
         val agentDone: String,
-        val turnStart: String,
+        val retrying: String,
         val notify: String,
         val modelOptionsFailed: (String) -> String,
     )
@@ -283,6 +284,7 @@ class ChatController(
     private var replayBaseThroughSeq = 0L
     private var replayCacheThroughSeq = 0L
     private var replayCacheReady = false
+    private val replayCacheRecords = mutableListOf<CachedReplayRecord>()
     private var reuseCachedReplay = false
     private var historyBinaryActive = false
     private var replayBinarySeq: Long? = null
@@ -464,11 +466,7 @@ class ChatController(
                         } else {
                             EntryCacheSnapshot(entryCache.cursor(key), ByteArray(0))
                         }
-                        val replayBytes = entryCache.replaySnapshot(key)
-                        val replay = decodeReplayCache(replayBytes)
-                        if (replayBytes.isNotEmpty() && replay == null) {
-                            entryCache.clearReplay(key)
-                        }
+                        val replay = entryCache.loadReplay(key)
                         LoadedAttachCache(entries = entries, replay = replay)
                     }.getOrElse {
                         runCatching { entryCache.clear(key) }
@@ -494,12 +492,15 @@ class ChatController(
                 replayBaseThroughSeq = replay?.baseThroughSeq ?: 0L
                 replayCacheThroughSeq = replay?.throughSeq ?: 0L
                 replayCacheReady = replay != null
+                replayCacheRecords.clear()
+                replay?.records?.let(replayCacheRecords::addAll)
             } else {
                 activeEntryCacheKey = ""
                 replayBaseEntryId = ""
                 replayBaseThroughSeq = 0L
                 replayCacheThroughSeq = 0L
                 replayCacheReady = false
+                replayCacheRecords.clear()
             }
             requestedEntryCursor = entryCursor
             val resolvedGateway =
@@ -938,10 +939,15 @@ class ChatController(
                 status(strings().compacted)
                 refreshSessionStats()
             }
-            "auto_retry_start" -> status(
-                "${strings().turnStart}: ${msg.strOrEmpty("errorMessage")}",
-                TimelineItem.StatusItem.Tone.Warn,
-            )
+            "auto_retry_start" -> {
+                val attempt = msg.long("attempt")
+                val max = msg.long("maxAttempts")
+                val progress = if (attempt != null && max != null) " ($attempt/$max)" else ""
+                status(
+                    "${strings().retrying}$progress: ${friendlyHttpError(msg.strOrEmpty("errorMessage"))}",
+                    TimelineItem.StatusItem.Tone.Warn,
+                )
+            }
             "auto_retry_end" -> status(
                 if (msg.bool("success") == true) strings().retryOk else strings().retryFailed,
             )
@@ -1098,9 +1104,6 @@ class ChatController(
         val seq = msg.long("seq")?.takeIf { it > 0L } ?: error("replay binary payload has no sequence")
         val total = msg.long("total_bytes")?.takeIf { it > 0L }
             ?: error("replay binary payload has no size")
-        if (replayCacheReady && !entryCache.canAppendReplayPayload(activeEntryCacheKey, total)) {
-            disableReplayCache()
-        }
         entryCache.beginReplayPayload(activeEntryCacheKey, total)
         replayBinarySeq = seq
         replayBinaryTotalBytes = total
@@ -1202,13 +1205,39 @@ class ChatController(
         replayBaseThroughSeq = base
         replayCacheThroughSeq = base
         replayCacheReady = true
+        replayCacheRecords.clear()
     }
 
     private fun appendReplayEvent(seq: Long, payload: JsonObject) {
         check(replayCacheReady) { "replay cache has no stable base" }
         check(seq > replayCacheThroughSeq) { "replay sequence did not advance" }
+        val record = CachedReplayRecord(seq, payload)
+        if (payload.strOrEmpty("type") == "message_end" ||
+            payload.strOrEmpty("type") == "tool_execution_end"
+        ) {
+            val pending = replayCacheRecords + record
+            val compacted = compactReplayRecords(pending)
+            if (compacted.size < pending.size) {
+                rewriteReplayCache(compacted, throughSeq = seq)
+                replayCacheRecords.clear()
+                replayCacheRecords.addAll(compacted)
+                replayCacheThroughSeq = seq
+                return
+            }
+        }
         entryCache.appendReplay(activeEntryCacheKey, encodeReplayCacheRecord(seq, payload))
+        replayCacheRecords += record
         replayCacheThroughSeq = seq
+    }
+
+    private fun rewriteReplayCache(records: List<CachedReplayRecord>, throughSeq: Long) {
+        val frames = ArrayList<ByteArray>(records.size + 2)
+        frames += encodeReplayCacheHeader(replayBaseEntryId, replayBaseThroughSeq)
+        records.forEach { record ->
+            frames += encodeReplayCacheRecord(record.seq, record.payload)
+        }
+        frames += encodeReplayCacheCheckpoint(throughSeq)
+        entryCache.rewriteReplay(activeEntryCacheKey, frames)
     }
 
     private fun disableReplayCache() {
@@ -1219,6 +1248,7 @@ class ChatController(
         replayBaseThroughSeq = 0L
         replayCacheThroughSeq = 0L
         replayCacheReady = false
+        replayCacheRecords.clear()
         reuseCachedReplay = false
     }
 

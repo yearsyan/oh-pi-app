@@ -16,6 +16,7 @@ interface Strings {
     val serverNameLabel: String
     val serverHostLabel: String
     val serverPortLabel: String
+    val backendPortLabel: String
     val serverTlsLabel: String
     val serverTokenLabel: String
     val serverNamePlaceholder: String
@@ -28,6 +29,7 @@ interface Strings {
     val directConnection: String
     val sshConnection: String
     val sshGatewayPlaintextHint: String
+    val sshGatewayIosFixedHostHint: String
     val sshHostLabel: String
     val sshPortLabel: String
     val sshUsernameLabel: String
@@ -79,9 +81,15 @@ interface Strings {
     val workspaceLabel: String
     val workspaceHint: String
     val defaultWorkspace: String
+    val expandWorkspace: String
+    val collapseWorkspace: String
+    val showMoreSessions: (Int) -> String
+    val showLessSessions: String
     val selectThisDirectory: String
     val upLevel: String
     val noSubdirectories: String
+    val createFolder: String
+    val folderNameLabel: String
 
     // file browser
     val browseFiles: String
@@ -184,7 +192,6 @@ interface Strings {
     val retryOk: String
     val retryFailed: String
     val agentDone: String
-    val turnStart: String
     val stopLength: String
     val stopToolUse: String
     val stopError: String
@@ -211,6 +218,21 @@ interface Strings {
     val aboutSection: String
     val activeServerHint: String
 
+    // about / open-source licenses
+    val openSourceLicenses: String
+    val licensesIntro: String
+    val licenseApache20: String
+    val licenseMit: String
+    val licenseLgpl21: String
+    val licensesFrameworks: String
+    val licensesNative: String
+    val licensesThisApp: String
+    val licenseFullText: String
+    val licensesRelinkingTitle: String
+    val licensesRelinkingBody: String
+    val licensesVersion: String
+    val licenseCopyright: String
+
     // misc
     val back: String
     val justNow: String
@@ -228,6 +250,7 @@ object EnStrings : Strings {
     override val serverNameLabel = "Name"
     override val serverHostLabel = "Gateway host / IP"
     override val serverPortLabel = "Port"
+    override val backendPortLabel = "Backend port"
     override val serverTlsLabel = "Use TLS"
     override val serverTokenLabel = "Token"
     override val serverNamePlaceholder = "My workstation"
@@ -240,6 +263,7 @@ object EnStrings : Strings {
     override val directConnection = "Direct"
     override val sshConnection = "SSH tunnel"
     override val sshGatewayPlaintextHint = "Use the gateway host and port as seen by the SSH server. TLS is disabled because SSH encrypts the connection."
+    override val sshGatewayIosFixedHostHint = "The backend address is fixed to 127.0.0.1 on the SSH server; only the backend port is needed."
     override val sshHostLabel = "SSH host"
     override val sshPortLabel = "Port"
     override val sshUsernameLabel = "SSH username"
@@ -288,9 +312,15 @@ object EnStrings : Strings {
     override val workspaceLabel = "Workspace"
     override val workspaceHint = "Absolute path"
     override val defaultWorkspace = "Default workspace"
+    override val expandWorkspace = "Expand workspace"
+    override val collapseWorkspace = "Collapse workspace"
+    override val showMoreSessions = { count: Int -> "Show $count more" }
+    override val showLessSessions = "Show less"
     override val selectThisDirectory = "Select this directory"
     override val upLevel = "Up"
     override val noSubdirectories = "No subdirectories"
+    override val createFolder = "New folder"
+    override val folderNameLabel = "Folder name"
 
     override val browseFiles = "Browse files"
     override val filesEmptyFolder = "This folder is empty"
@@ -393,7 +423,6 @@ object EnStrings : Strings {
     override val retryOk = "Retry succeeded"
     override val retryFailed = "Retry failed"
     override val agentDone = "Done"
-    override val turnStart = "New turn"
     override val stopLength = "Reached length limit"
     override val stopToolUse = "Continue after tool calls"
     override val stopError = "Error"
@@ -418,6 +447,22 @@ object EnStrings : Strings {
     override val aboutSection = "About"
     override val activeServerHint = "Active"
 
+    override val openSourceLicenses = "Open-source licenses"
+    override val licensesIntro =
+        "This app is built on open-source software. We gratefully acknowledge the following projects and their contributors."
+    override val licenseApache20 = "Apache License 2.0"
+    override val licenseMit = "MIT License"
+    override val licenseLgpl21 = "GNU LGPL v2.1 or later"
+    override val licensesFrameworks = "Frameworks & libraries"
+    override val licensesNative = "Native libraries"
+    override val licensesThisApp = "This app"
+    override val licenseFullText = "Full license text"
+    override val licensesRelinkingTitle = "Relinkable LGPL components"
+    override val licensesRelinkingBody =
+        "libssh (LGPL 2.1+) is statically linked into this app. Under the LGPL you may request, for a charge no more than the cost of physically performing this, the object files and build scripts required to relink the app with a modified version of libssh. Contact the developer to receive them."
+    override val licensesVersion = "Version"
+    override val licenseCopyright = "Copyright"
+
     override val back = "Back"
     override val justNow = "just now"
     override val minutesAgo = { m: Int -> "${m}m ago" }
@@ -434,6 +479,7 @@ object ZhStrings : Strings {
     override val serverNameLabel = "名称"
     override val serverHostLabel = "网关主机 / IP"
     override val serverPortLabel = "端口"
+    override val backendPortLabel = "后端端口"
     override val serverTlsLabel = "启用 TLS"
     override val serverTokenLabel = "令牌"
     override val serverNamePlaceholder = "我的工作站"
@@ -446,6 +492,7 @@ object ZhStrings : Strings {
     override val directConnection = "直接连接"
     override val sshConnection = "SSH 隧道"
     override val sshGatewayPlaintextHint = "填写 SSH 服务器看到的网关主机和端口；连接已由 SSH 加密，因此不启用 TLS。"
+    override val sshGatewayIosFixedHostHint = "后端地址固定为 SSH 服务器上的 127.0.0.1，只需填写后端端口。"
     override val sshHostLabel = "SSH 主机"
     override val sshPortLabel = "端口"
     override val sshUsernameLabel = "SSH 用户名"
@@ -494,9 +541,15 @@ object ZhStrings : Strings {
     override val workspaceLabel = "工作区"
     override val workspaceHint = "绝对路径"
     override val defaultWorkspace = "默认工作区"
+    override val expandWorkspace = "展开工作区"
+    override val collapseWorkspace = "收起工作区"
+    override val showMoreSessions = { count: Int -> "展开剩余 $count 条" }
+    override val showLessSessions = "收起"
     override val selectThisDirectory = "选择此目录"
     override val upLevel = "上一级"
     override val noSubdirectories = "没有子目录"
+    override val createFolder = "新建文件夹"
+    override val folderNameLabel = "文件夹名称"
 
     override val browseFiles = "浏览文件"
     override val filesEmptyFolder = "此文件夹为空"
@@ -597,7 +650,6 @@ object ZhStrings : Strings {
     override val retryOk = "重试成功"
     override val retryFailed = "重试失败"
     override val agentDone = "本轮完成"
-    override val turnStart = "新一轮开始"
     override val stopLength = "已达长度上限"
     override val stopToolUse = "工具调用后继续"
     override val stopError = "出错"
@@ -621,6 +673,22 @@ object ZhStrings : Strings {
     override val languageSystem = "跟随系统"
     override val aboutSection = "关于"
     override val activeServerHint = "当前"
+
+    override val openSourceLicenses = "开源许可证"
+    override val licensesIntro =
+        "本应用基于开源软件构建。我们在此感谢以下项目及其贡献者。"
+    override val licenseApache20 = "Apache 许可证 2.0"
+    override val licenseMit = "MIT 许可证"
+    override val licenseLgpl21 = "GNU LGPL v2.1 及之后版本"
+    override val licensesFrameworks = "框架与库"
+    override val licensesNative = "原生库"
+    override val licensesThisApp = "本应用"
+    override val licenseFullText = "完整许可证文本"
+    override val licensesRelinkingTitle = "可重新链接的 LGPL 组件"
+    override val licensesRelinkingBody =
+        "libssh（LGPL 2.1+）以静态方式链接进本应用。依据 LGPL，你可以索取重新链接本应用所需的目标文件与构建脚本，以便用修改过的 libssh 重新链接，费用不超过物理传输的成本。请联系开发者获取。"
+    override val licensesVersion = "版本"
+    override val licenseCopyright = "版权"
 
     override val back = "返回"
     override val justNow = "刚刚"

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -648,6 +649,97 @@ func TestFsListEndpoint(t *testing.T) {
 	status, body = httpGet("http" + base + "?token=" + testToken)
 	if status != 200 || body["path"] != app.cfg.WorkDir {
 		t.Fatalf("fs/list default = (%d, %v), want (200, %q)", status, body["path"], app.cfg.WorkDir)
+	}
+}
+
+func TestFsMkdirEndpoint(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	root := t.TempDir()
+
+	httpDo := func(method, rawURL, body string) (int, map[string]any) {
+		t.Helper()
+		var reader io.Reader
+		if body != "" {
+			reader = strings.NewReader(body)
+		}
+		request, err := http.NewRequest(method, rawURL, reader)
+		if err != nil {
+			t.Fatalf("build %s %s: %v", method, rawURL, err)
+		}
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, rawURL, err)
+		}
+		defer response.Body.Close()
+		var parsed map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&parsed)
+		return response.StatusCode, parsed
+	}
+
+	base := strings.TrimPrefix(server.URL, "http") + "/fs/mkdir"
+	mkdirURL := "http" + base + "?token=" + testToken
+
+	requestBody := func(parent, name string) string {
+		return `{"parent":` + strconv.Quote(parent) + `,"name":` + strconv.Quote(name) + `}`
+	}
+
+	status, _ := httpDo(http.MethodPost, "http"+base, requestBody(root, "created"))
+	if status != 401 {
+		t.Fatalf("fs/mkdir without token status = %d, want 401", status)
+	}
+	status, _ = httpDo(http.MethodGet, mkdirURL, "")
+	if status != 405 {
+		t.Fatalf("fs/mkdir GET status = %d, want 405", status)
+	}
+	status, _ = httpDo(http.MethodPost, mkdirURL, requestBody("relative/dir", "child"))
+	if status != 400 {
+		t.Fatalf("fs/mkdir relative parent status = %d, want 400", status)
+	}
+	status, _ = httpDo(http.MethodPost, mkdirURL, `not-json`)
+	if status != 400 {
+		t.Fatalf("fs/mkdir malformed body status = %d, want 400", status)
+	}
+	for _, name := range []string{"", ".", "..", "nested/child", `..\outside`} {
+		status, body := httpDo(http.MethodPost, mkdirURL, requestBody(root, name))
+		if status != 400 || body["error"] != "invalid_name" {
+			t.Fatalf("fs/mkdir name %q response = (%d, %v), want 400 invalid_name", name, status, body)
+		}
+	}
+	status, _ = httpDo(http.MethodPost, mkdirURL, requestBody(filepath.Join(root, "missing"), "child"))
+	if status != 404 {
+		t.Fatalf("fs/mkdir missing parent status = %d, want 404", status)
+	}
+	parentFile := filepath.Join(root, "file")
+	if err := os.WriteFile(parentFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	status, _ = httpDo(http.MethodPost, mkdirURL, requestBody(parentFile, "child"))
+	if status != 400 {
+		t.Fatalf("fs/mkdir non-directory parent status = %d, want 400", status)
+	}
+
+	target := filepath.Join(root, "created")
+	status, body := httpDo(http.MethodPost, mkdirURL, requestBody(root, "created"))
+	if status != 201 {
+		t.Fatalf("fs/mkdir status = %d, want 201 (body %v)", status, body)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatalf("resolve created dir: %v", err)
+	}
+	if body["path"] != resolved || body["name"] != "created" {
+		t.Fatalf("fs/mkdir response = %v, want path %q name %q", body, resolved, "created")
+	}
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		t.Fatalf("created dir stat = (%v, %v), want an existing directory", info, err)
+	}
+
+	status, _ = httpDo(http.MethodPost, mkdirURL, requestBody(root, "created"))
+	if status != 409 {
+		t.Fatalf("fs/mkdir existing dir status = %d, want 409", status)
 	}
 }
 

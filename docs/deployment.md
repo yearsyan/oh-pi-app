@@ -38,7 +38,7 @@ PI2WS_PI_COMMAND="/absolute/path/to/pi" \
 
 ```bash
 launchctl print "gui/$(id -u)/io.github.yearsyan.pi2ws"
-curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:18080/healthz
 ```
 
 ## 配置
@@ -47,7 +47,7 @@ curl http://127.0.0.1:8080/healthz
 
 ```json
 {
-  "PI2WS_LISTEN": "127.0.0.1:8080",
+  "PI2WS_LISTEN": "127.0.0.1:18080",
   "PI2WS_DATA_DIR": "/path/to/state",
   "PI2WS_WORK_DIR": "/path/to/project",
   "PI2WS_TITLE_MODEL": "auto"
@@ -59,7 +59,7 @@ curl http://127.0.0.1:8080/healthz
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
 | `--config` | `PI2WS_CONFIG_FILE` | `$XDG_CONFIG_HOME/pi2ws/config.json` 或 `~/.config/pi2ws/config.json` | JSON 配置文件；默认文件不存在时忽略 |
-| `--listen` | `PI2WS_LISTEN` | `127.0.0.1:8080` | HTTP 监听地址 |
+| `--listen` | `PI2WS_LISTEN` | `127.0.0.1:18080` | HTTP 监听地址 |
 | `--token` | `PI2WS_TOKEN` | 无 | 必填鉴权 token |
 | `--data-dir` | `PI2WS_DATA_DIR` | `~/.local/state/pi2ws` | session 持久化目录 |
 | `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |

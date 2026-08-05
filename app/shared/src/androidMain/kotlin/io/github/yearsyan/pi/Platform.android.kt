@@ -5,6 +5,7 @@ import io.github.yearsyan.pi.data.AndroidAppContext
 
 class AndroidPlatform : Platform {
     override val name: String = "Android ${Build.VERSION.SDK_INT}"
+    override val target: PlatformTarget = PlatformTarget.Android
 }
 
 actual fun getPlatform(): Platform = AndroidPlatform()

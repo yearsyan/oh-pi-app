@@ -72,6 +72,9 @@ internal data class ChatRoute(val sessionId: String)
 internal data object SettingsRoute
 
 @Serializable
+internal data object LicensesRoute
+
+@Serializable
 internal data class FilesRoute(val path: String)
 
 /** Adaptive home: single-pane navigation on phones, list+detail on tablets/desktop. */
@@ -212,7 +215,12 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteServer = vm::deleteServer,
                     onThemeMode = vm::updateThemeMode,
                     onLanguage = vm::updateLanguage,
+                    onOpenLicenses = { navController.navigate(LicensesRoute) },
                 )
+            }
+
+            composable<LicensesRoute> {
+                LicensesScreen(onBack = { navController.popBackStack() })
             }
         }
     }
@@ -229,6 +237,7 @@ fun HomeScreen(vm: AppViewModel) {
         WorkspaceDialog(
             initial = vm.lastWorkspace,
             fetchDirs = { path -> vm.listDirs(path) },
+            createDir = { parent, name -> vm.createDir(parent, name) },
             onDismiss = { newChatWide = null },
             onConfirm = { workDir ->
                 val sessionId = vm.startNewChat(workDir)

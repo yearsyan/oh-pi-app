@@ -28,6 +28,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ fun SettingsScreen(
     onDeleteServer: (String) -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onLanguage: (AppLanguage) -> Unit,
+    onOpenLicenses: () -> Unit,
 ) {
     var editing by remember { mutableStateOf<ServerProfile?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -174,6 +176,38 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable(onClick = onOpenLicenses)
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            S.openSourceLicenses,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            S.licenseApache20 + " · " + S.licenseMit + " · " + S.licenseLgpl21,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = S.openSourceLicenses,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(48.dp))
         }
     }

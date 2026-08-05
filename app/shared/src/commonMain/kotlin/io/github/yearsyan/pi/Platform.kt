@@ -1,10 +1,13 @@
 package io.github.yearsyan.pi
 
+enum class PlatformTarget { Android, Ios, Desktop }
+
 interface Platform {
     val name: String
+    val target: PlatformTarget
 
     /** True when running on Apple iOS (UIKit). */
-    val isIos: Boolean get() = false
+    val isIos: Boolean get() = target == PlatformTarget.Ios
 }
 
 expect fun getPlatform(): Platform

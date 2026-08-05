@@ -31,11 +31,18 @@ import io.github.yearsyan.pi.data.ServerConnectionMode
 import io.github.yearsyan.pi.data.ServerProfile
 import io.github.yearsyan.pi.data.SshAuthentication
 import io.github.yearsyan.pi.data.SshServerProfile
+import io.github.yearsyan.pi.getPlatform
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.i18n.Strings
 import io.github.yearsyan.pi.net.buildGatewayUrl
 import io.github.yearsyan.pi.net.parseGatewayAddress
 import kotlin.random.Random
+
+/** Default pi2ws gateway port used for new server profiles on all platforms. */
+internal const val DefaultGatewayPort = 18080
+
+/** Fixed SSH-mode backend address on iOS: pi2ws as seen by the SSH server itself. */
+private const val FixedLoopbackHost = "127.0.0.1"
 
 internal class ServerEditorState(initial: ServerProfile?) {
     private val id = initial?.id ?: Random.nextLong().toString(16)
@@ -43,7 +50,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
 
     var name by mutableStateOf(initial?.name.orEmpty())
     var gatewayHost by mutableStateOf(initialGateway?.host.orEmpty())
-    var gatewayPort by mutableStateOf((initialGateway?.port ?: 8080).toString())
+    var gatewayPort by mutableStateOf((initialGateway?.port ?: DefaultGatewayPort).toString())
     var gatewayTls by mutableStateOf(initialGateway?.tls ?: false)
     var token by mutableStateOf(initial?.token.orEmpty())
     var connectionMode by mutableStateOf(initial?.connectionMode ?: ServerConnectionMode.Direct)
@@ -65,11 +72,17 @@ internal class ServerEditorState(initial: ServerProfile?) {
     fun build(strings: Strings): ServerProfile? {
         val parsedGatewayPort = gatewayPort.toIntOrNull()
         val parsedSshPort = sshPort.toIntOrNull()
+        // On iOS the SSH backend address is fixed to the loopback address: the
+        // tunnel reaches pi2ws exactly where the SSH server sees it.
+        val fixedLoopback = getPlatform().isIos && connectionMode == ServerConnectionMode.Ssh
+        val effectiveGatewayHost = if (fixedLoopback) FixedLoopbackHost else gatewayHost.trim()
+        val effectiveGatewayTls = if (fixedLoopback) false else gatewayTls
         error =
             when {
-                gatewayHost.isBlank() -> strings.serverHostRequired
+                effectiveGatewayHost.isBlank() -> strings.serverHostRequired
                 parsedGatewayPort !in 1..65535 -> strings.serverPortInvalid
-                connectionMode == ServerConnectionMode.Ssh && gatewayTls -> strings.sshGatewayTlsInvalid
+                !fixedLoopback && connectionMode == ServerConnectionMode.Ssh && effectiveGatewayTls ->
+                    strings.sshGatewayTlsInvalid
                 connectionMode == ServerConnectionMode.Ssh && sshHost.isBlank() -> strings.sshHostRequired
                 connectionMode == ServerConnectionMode.Ssh && parsedSshPort !in 1..65535 -> strings.sshPortInvalid
                 connectionMode == ServerConnectionMode.Ssh && sshUsername.isBlank() ->
@@ -108,7 +121,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
         return ServerProfile(
             id = id,
             name = name.trim(),
-            url = buildGatewayUrl(gatewayHost, parsedGatewayPort ?: 8080, gatewayTls),
+            url = buildGatewayUrl(effectiveGatewayHost, parsedGatewayPort ?: DefaultGatewayPort, effectiveGatewayTls),
             token = token.trim(),
             connectionMode = connectionMode,
             ssh = ssh,
@@ -158,46 +171,53 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
     }
     Spacer(Modifier.height(10.dp))
 
+    // On iOS the SSH backend address is fixed to 127.0.0.1, so the host field
+    // and the TLS switch are hidden; only the backend port stays editable.
+    val fixedLoopback = getPlatform().isIos && editor.connectionMode == ServerConnectionMode.Ssh
     Row(Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = editor.gatewayHost,
-            onValueChange = { editor.gatewayHost = it; editor.clearError() },
-            label = { Text(S.serverHostLabel) },
-            placeholder = { Text(S.serverHostPlaceholder) },
-            singleLine = true,
-            isError = editor.error == S.serverHostRequired,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(10.dp))
+        if (!fixedLoopback) {
+            OutlinedTextField(
+                value = editor.gatewayHost,
+                onValueChange = { editor.gatewayHost = it; editor.clearError() },
+                label = { Text(S.serverHostLabel) },
+                placeholder = { Text(S.serverHostPlaceholder) },
+                singleLine = true,
+                isError = editor.error == S.serverHostRequired,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(10.dp))
+        }
         OutlinedTextField(
             value = editor.gatewayPort,
             onValueChange = { editor.gatewayPort = it.filter(Char::isDigit); editor.clearError() },
-            label = { Text(S.serverPortLabel) },
+            label = { Text(if (fixedLoopback) S.backendPortLabel else S.serverPortLabel) },
             singleLine = true,
             isError = editor.error == S.serverPortInvalid,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.weight(0.38f),
+            modifier = Modifier.weight(if (fixedLoopback) 1f else 0.38f),
         )
     }
-    Spacer(Modifier.height(10.dp))
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            S.serverTlsLabel,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-        Switch(
-            checked = editor.gatewayTls,
-            onCheckedChange = { editor.gatewayTls = it; editor.clearError() },
-            enabled = editor.connectionMode == ServerConnectionMode.Direct,
-        )
+    if (!fixedLoopback) {
+        Spacer(Modifier.height(10.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                S.serverTlsLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = editor.gatewayTls,
+                onCheckedChange = { editor.gatewayTls = it; editor.clearError() },
+                enabled = editor.connectionMode == ServerConnectionMode.Direct,
+            )
+        }
     }
     if (editor.connectionMode == ServerConnectionMode.Ssh) {
         Text(
-            S.sshGatewayPlaintextHint,
+            if (fixedLoopback) S.sshGatewayIosFixedHostHint else S.sshGatewayPlaintextHint,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

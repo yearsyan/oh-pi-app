@@ -71,6 +71,24 @@ fun argsToString(element: JsonElement?): String = when (element) {
 fun parseMessage(text: String): JsonObject? =
     runCatching { PiJson.parseToJsonElement(text).jsonObject }.getOrNull()
 
+private val httpErrorPrefix = Regex("^(\\d{3})\\s+(\\{.*)$", RegexOption.DOT_MATCHES_ALL)
+
+/**
+ * Converts a provider HTTP error string such as
+ * `429 {"error":{"type":"rate_limit_error","message":"..."}}` into a short
+ * human-readable line like `429: The engine is currently overloaded`.
+ * Falls back to the trimmed raw text when the body is not recognizable JSON.
+ */
+fun friendlyHttpError(raw: String): String {
+    val text = raw.trim()
+    val match = httpErrorPrefix.find(text) ?: return text
+    val status = match.groupValues[1]
+    val body = runCatching { PiJson.parseToJsonElement(match.groupValues[2]).jsonObject }.getOrNull()
+        ?: return text
+    val detail = body.obj("error")?.str("message") ?: body.str("message") ?: return text
+    return "$status: $detail"
+}
+
 fun nowMillis(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
 /** Normalizes a user-entered gateway address into a ws(s) base URL. */

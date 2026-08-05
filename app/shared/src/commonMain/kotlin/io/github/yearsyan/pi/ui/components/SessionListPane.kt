@@ -41,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +58,7 @@ import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.net.gatewayAddressLabel
 import io.github.yearsyan.pi.net.nowMillis
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -66,8 +68,11 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+
+private const val WorkspacePreviewCount = 10
 
 @Composable
 fun SessionListPane(
@@ -88,6 +93,8 @@ fun SessionListPane(
     modifier: Modifier = Modifier,
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
+    var collapsedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var fullyExpandedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         // header
         Row(
@@ -165,17 +172,60 @@ fun SessionListPane(
                 val groups = groupSessionsByCreation(sessions)
                 LazyColumn(Modifier.fillMaxSize()) {
                     groups.forEach { group ->
+                        val collapsed = group.workDir in collapsedWorkspaces
+                        val showAll = group.workDir in fullyExpandedWorkspaces
                         item(key = "ws-${group.workDir}") {
-                            WorkspaceHeader(group.workDir)
-                        }
-                        items(group.sessions, key = { it.id }) { session ->
-                            SessionRow(
-                                session = session,
-                                active = wide && session.id == activeChatId,
-                                onClick = { onSelectSession(session) },
-                                onRename = { onRenameSession(session) },
-                                onDelete = { deleteCandidate = session },
+                            WorkspaceHeader(
+                                workDir = group.workDir,
+                                sessionCount = group.sessions.size,
+                                collapsed = collapsed,
+                                onToggle = {
+                                    collapsedWorkspaces =
+                                        if (collapsed) collapsedWorkspaces - group.workDir
+                                        else collapsedWorkspaces + group.workDir
+                                },
                             )
+                        }
+                        if (!collapsed) {
+                            val visible =
+                                workspaceSessionPreview(
+                                    sessions = group.sessions,
+                                    activeChatId = activeChatId,
+                                    expanded = showAll,
+                                )
+                            items(visible, key = { it.id }) { session ->
+                                SessionRow(
+                                    session = session,
+                                    active = wide && session.id == activeChatId,
+                                    onClick = { onSelectSession(session) },
+                                    onRename = { onRenameSession(session) },
+                                    onDelete = { deleteCandidate = session },
+                                )
+                            }
+                            val hiddenCount = group.sessions.size - visible.size
+                            if (hiddenCount > 0) {
+                                item(key = "more-${group.workDir}") {
+                                    WorkspaceListToggle(
+                                        text = S.showMoreSessions(hiddenCount),
+                                        expand = true,
+                                        onClick = {
+                                            fullyExpandedWorkspaces =
+                                                fullyExpandedWorkspaces + group.workDir
+                                        },
+                                    )
+                                }
+                            } else if (showAll && group.sessions.size > WorkspacePreviewCount) {
+                                item(key = "less-${group.workDir}") {
+                                    WorkspaceListToggle(
+                                        text = S.showLessSessions,
+                                        expand = false,
+                                        onClick = {
+                                            fullyExpandedWorkspaces =
+                                                fullyExpandedWorkspaces - group.workDir
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -200,11 +250,29 @@ internal fun groupSessionsByCreation(sessions: List<SavedSession>): List<Workspa
         .map { (dir, list) -> WorkspaceGroup(dir, list.sortedByDescending { it.createdAt }) }
         .sortedByDescending { group -> group.sessions.maxOf { it.createdAt } }
 
+/** Keeps the selected session visible even when it falls outside the newest preview. */
+internal fun workspaceSessionPreview(
+    sessions: List<SavedSession>,
+    activeChatId: String?,
+    expanded: Boolean,
+): List<SavedSession> {
+    if (expanded || sessions.size <= WorkspacePreviewCount) return sessions
+    val preview = sessions.take(WorkspacePreviewCount)
+    val active = activeChatId?.let { id -> sessions.firstOrNull { it.id == id } }
+    return if (active == null || preview.any { it.id == active.id }) preview else preview + active
+}
+
 @Composable
-private fun WorkspaceHeader(workDir: String) {
+private fun WorkspaceHeader(
+    workDir: String,
+    sessionCount: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onToggle)
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -234,8 +302,55 @@ private fun WorkspaceHeader(workDir: String) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+        } else {
+            Spacer(Modifier.weight(1f))
         }
+        Text(
+            "$sessionCount",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (collapsed) S.expandWorkspace else S.collapseWorkspace,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
+}
+
+@Composable
+private fun WorkspaceListToggle(
+    text: String,
+    expand: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (expand) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+            contentDescription = null,
+            modifier = Modifier.size(15.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 16.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+        thickness = 0.5.dp,
+    )
 }
 
 @Composable

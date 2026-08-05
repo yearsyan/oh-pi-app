@@ -105,7 +105,7 @@ elif [ -n "$existing_config_listen" ]; then
 elif [ -n "$existing_listen" ]; then
 	listen=$existing_listen
 else
-	listen=127.0.0.1:8080
+	listen=127.0.0.1:18080
 fi
 
 existing_config_data_dir=$(config_value PI2WS_DATA_DIR)

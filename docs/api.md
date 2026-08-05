@@ -121,6 +121,26 @@ Authorization: Bearer <TOKEN>
 
 省略 `path` 时从网关的 `--work-dir` 开始浏览。`path` 必须是绝对路径；不存在的路径返回 404，无权限读取返回 403。
 
+### 创建目录（工作区选择）
+
+```http
+POST /fs/mkdir
+Authorization: Bearer <TOKEN>
+Content-Type: application/json
+
+{"parent":"/path/to/project","name":"new-folder"}
+```
+
+`parent` 必须是网关主机上已存在的绝对目录。`name` 只能是一个非空目录名，不能是 `.`、`..`，也不能包含 `/`、`\` 或 NUL；服务端不会接受由客户端拼接的目标路径。接口只创建一层目录，不会递归创建缺失的父目录。
+
+成功时返回 HTTP 201 和创建后的目录：
+
+```json
+{"name":"new-folder","path":"/path/to/project/new-folder"}
+```
+
+父目录不存在时返回 404 `not_found`，名称或路径无效时返回 400 `invalid_name` / `invalid_path`，目标已存在时返回 409 `already_exists`，无法解析或无写权限时返回 403 `resolve_failed` / `mkdir_failed`。与目录浏览一致，该接口不限制在 `--work-dir` 下；鉴权调用方可在 pi2ws 进程有权限访问的任意绝对目录中创建子目录。
+
 ### 文件浏览（远程文件管理）
 
 `internal/filebrowser` 包提供完整的文件浏览 HTTP API。鉴权方式与 `/fs/list` 相同，所有接口仅支持 GET。
@@ -170,7 +190,7 @@ GET /api/files/download?path=<绝对路径>
 连接时必须用 `work_dir` 指定工作区：
 
 ```text
-ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&model=openai/gpt-5&thinking=high
+ws://127.0.0.1:18080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&model=openai/gpt-5&thinking=high
 ```
 
 `work_dir` 是 pi 子进程的工作目录，必须是已存在目录的绝对路径。省略 `work_dir` 或路径非法（相对路径、不存在、不是目录）时，在 WebSocket 升级前返回 HTTP 400。
@@ -194,7 +214,7 @@ ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&mod
 ### 连接历史 session
 
 ```text
-ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_ENTRY_ID>&replay_base=<STABLE_SEQ>&replay_since=<LAST_REPLAY_SEQ>&replay_cursor=1&token=<TOKEN>
+ws://127.0.0.1:18080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_ENTRY_ID>&replay_base=<STABLE_SEQ>&replay_since=<LAST_REPLAY_SEQ>&replay_cursor=1&token=<TOKEN>
 ```
 
 `entry_since` 可省略。客户端应把已经完整提交到本地缓存的最后一个 entry ID 放在这里；网关只同步这个 entry 后面的稳定记录。如果游标不存在于当前稳定历史中，`history_begin.reset` 为 `true`，客户端必须丢弃该 session 的旧缓存并从头接收。
@@ -295,7 +315,7 @@ skill、prompt template 会展开输入文本，extension 指令也可能不产�
 
 ```js
 const ws = new WebSocket(
-  "ws://127.0.0.1:8080/ws?action=create&token=" +
+  "ws://127.0.0.1:18080/ws?action=create&token=" +
     encodeURIComponent(token) +
     "&work_dir=" + encodeURIComponent("/path/to/project"),
 );

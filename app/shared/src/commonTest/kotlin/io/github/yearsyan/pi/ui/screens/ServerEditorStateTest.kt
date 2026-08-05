@@ -9,6 +9,11 @@ import kotlin.test.assertNull
 
 class ServerEditorStateTest {
     @Test
+    fun newProfilesUseGatewayDefaultPort() {
+        assertEquals("18080", ServerEditorState(null).gatewayPort)
+    }
+
+    @Test
     fun loadsLegacyUrlIntoSeparateFields() {
         val editor =
             ServerEditorState(

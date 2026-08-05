@@ -22,6 +22,7 @@ import io.github.yearsyan.pi.net.FsListException
 import io.github.yearsyan.pi.net.FsListResponse
 import io.github.yearsyan.pi.net.GatewayTransport
 import io.github.yearsyan.pi.net.SshHostKeyPrompt
+import io.github.yearsyan.pi.net.createGatewayDir
 import io.github.yearsyan.pi.net.deleteGatewaySession
 import io.github.yearsyan.pi.net.downloadGatewayFile
 import io.github.yearsyan.pi.net.getGatewayCapabilities
@@ -407,7 +408,7 @@ class AppViewModel(
                         retryOk = s.retryOk,
                         retryFailed = s.retryFailed,
                         agentDone = s.agentDone,
-                        turnStart = s.turnStart,
+                        retrying = s.retrying,
                         notify = s.appName,
                         modelOptionsFailed = s.modelOptionsFailed,
                     )
@@ -438,6 +439,13 @@ class AppViewModel(
         val server = activeServer ?: throw FsListException("no active server")
         val gateway = transportFor(server).resolveGateway()
         return listGatewayDirs(gateway, server.token, path)
+    }
+
+    /** Creates [name] below [parent] on the active gateway for the workspace browser. */
+    suspend fun createDir(parent: String, name: String) {
+        val server = activeServer ?: throw FsListException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        createGatewayDir(gateway, server.token, parent, name)
     }
 
     // ---- file browser ----

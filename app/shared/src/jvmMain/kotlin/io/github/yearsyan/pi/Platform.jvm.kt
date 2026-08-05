@@ -2,6 +2,7 @@ package io.github.yearsyan.pi
 
 class JVMPlatform: Platform {
     override val name: String = "Java ${System.getProperty("java.version")}"
+    override val target: PlatformTarget = PlatformTarget.Desktop
 }
 
 actual fun getPlatform(): Platform = JVMPlatform()

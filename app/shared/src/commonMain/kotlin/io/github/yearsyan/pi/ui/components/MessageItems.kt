@@ -585,6 +585,7 @@ fun StatusLine(item: TimelineItem.StatusItem) {
             style = MaterialTheme.typography.labelSmall,
             color = color,
             maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

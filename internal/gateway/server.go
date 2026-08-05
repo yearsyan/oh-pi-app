@@ -65,6 +65,7 @@ func New(cfg Config) (*Gateway, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", gateway.handleHealth)
 	mux.HandleFunc("/fs/list", gateway.handleFsList)
+	mux.HandleFunc("/fs/mkdir", gateway.handleFsMkdir)
 	mux.HandleFunc("/api/capabilities", gateway.handleCapabilities)
 	mux.HandleFunc("/api/sessions", gateway.handleSessions)
 	mux.HandleFunc("/api/sessions/", gateway.handleSession)

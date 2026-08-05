@@ -9,7 +9,6 @@ import okio.buffer
 internal expect fun entryCacheRootPath(): String
 
 internal const val DefaultMaxReplayCacheBytes = 4L * 1024L * 1024L
-private const val ReplayCacheRecordEnvelopeReserveBytes = 256L
 
 internal class ReplayCacheCapacityExceededException(maxBytes: Long) :
     IllegalStateException("replay cache exceeds $maxBytes bytes")
@@ -19,7 +18,7 @@ internal data class EntryCacheSnapshot(
     val entries: ByteArray,
 )
 
-/** Transactional stable-entry cache plus an append-only active replay cache. */
+/** Transactional stable-entry cache plus a recoverable active replay WAL. */
 internal class EntryCacheStore(
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     rootPath: String = entryCacheRootPath(),
@@ -60,8 +59,8 @@ internal class EntryCacheStore(
         }.orEmpty()
     }
 
-    /** Returns the locally committed active-turn replay log for [key]. */
-    fun replaySnapshot(key: String): ByteArray {
+    /** Streams and validates the locally committed active-turn replay log for [key]. */
+    fun loadReplay(key: String): DecodedReplayCache? {
         requireValidKey(key)
         closeReplaySink()
         fileSystem.createDirectories(root)
@@ -72,28 +71,64 @@ internal class EntryCacheStore(
         }
         recoverFile(replayPath(key), replayBackupPath(key))
         val path = replayPath(key)
-        if (!fileSystem.exists(path)) return ByteArray(0)
+        if (!fileSystem.exists(path)) return null
         val size = fileSystem.metadata(path).size ?: 0L
         if (size > maxReplayBytes) {
             clearReplay(key)
-            return ByteArray(0)
+            return null
         }
-        return path.let {
-            fileSystem.read(path) { readByteArray() }
+        val decoded = fileSystem.read(path) {
+            decodeReplayCache(this, maxFrameBytes = maxReplayBytes)
         }
+        val cache = decoded.cache
+        if (cache == null) {
+            clearReplay(key)
+            return null
+        }
+        if (decoded.validBytes < size) {
+            val handle = fileSystem.openReadWrite(path)
+            try {
+                handle.resize(decoded.validBytes)
+            } finally {
+                handle.close()
+            }
+        }
+        return cache
     }
 
     /** Replaces the replay log with a new stable-history base and opens it for appends. */
     fun resetReplay(key: String, header: ByteArray) {
-        requireValidKey(key)
         require(header.isNotEmpty()) { "replay cache header is empty" }
+        rewriteReplay(key, listOf(header))
+    }
+
+    /** Atomically replaces the replay log with already framed [records]. */
+    fun rewriteReplay(key: String, records: List<ByteArray>) {
+        requireValidKey(key)
+        require(records.isNotEmpty()) { "replay cache is empty" }
+        check(replayPayloadKey != key) { "cannot rewrite replay cache while a payload is active" }
         closeReplaySink()
         fileSystem.createDirectories(root)
         recoverFile(replayPath(key), replayBackupPath(key))
         val stage = replayStagePath(key)
         fileSystem.delete(stage, mustExist = false)
-        fileSystem.write(stage) { write(header) }
-        replaceWithBackup(stage, replayPath(key), replayBackupPath(key))
+        try {
+            var writtenBytes = 0L
+            fileSystem.write(stage) {
+                for (record in records) {
+                    if (record.isEmpty()) continue
+                    if (record.size.toLong() > maxReplayBytes - writtenBytes) {
+                        throw ReplayCacheCapacityExceededException(maxReplayBytes)
+                    }
+                    write(record)
+                    writtenBytes += record.size
+                }
+            }
+            replaceWithBackup(stage, replayPath(key), replayBackupPath(key))
+        } catch (failure: Throwable) {
+            fileSystem.delete(stage, mustExist = false)
+            throw failure
+        }
         openReplaySink(key)
     }
 
@@ -111,21 +146,6 @@ internal class EntryCacheStore(
         }
         replaySink?.write(record)
         replaySinkBytes += record.size
-    }
-
-    /** Whether a payload can be encoded into the bounded replay cache without
-     * first allocating a record that is certain to be rejected. */
-    fun canAppendReplayPayload(key: String, payloadBytes: Long): Boolean {
-        requireValidKey(key)
-        if (payloadBytes < 0L) return false
-        val usedBytes = if (replaySinkKey == key && replaySink != null) {
-            replaySinkBytes
-        } else {
-            replayPath(key).takeIf(fileSystem::exists)?.let { fileSystem.metadata(it).size } ?: 0L
-        }
-        val remaining = maxReplayBytes - usedBytes
-        return remaining >= ReplayCacheRecordEnvelopeReserveBytes &&
-            payloadBytes <= remaining - ReplayCacheRecordEnvelopeReserveBytes
     }
 
     /** Starts a disk-backed transaction for one oversized replay JSON payload. */

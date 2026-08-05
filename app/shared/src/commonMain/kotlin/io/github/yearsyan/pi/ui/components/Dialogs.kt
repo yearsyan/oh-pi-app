@@ -33,12 +33,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +53,7 @@ import androidx.compose.ui.window.Dialog
 import io.github.yearsyan.pi.chat.UiDialogRequest
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.net.FsListResponse
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.put
 
@@ -92,6 +95,7 @@ fun RenameDialog(
 fun WorkspaceDialog(
     initial: String,
     fetchDirs: suspend (String) -> FsListResponse,
+    createDir: suspend (parent: String, name: String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -100,6 +104,7 @@ fun WorkspaceDialog(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     var reloadKey by remember { mutableStateOf(0) }
+    var showCreateFolder by remember { mutableStateOf(false) }
 
     LaunchedEffect(reloadKey) {
         loading = true
@@ -143,6 +148,15 @@ fun WorkspaceDialog(
                             Icons.Filled.ArrowUpward,
                             contentDescription = S.upLevel,
                             tint = if (canGoUp) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                    val canCreate = !loading && current != null && error.isBlank()
+                    IconButton(onClick = { showCreateFolder = true }, enabled = canCreate) {
+                        Icon(
+                            Icons.Filled.CreateNewFolder,
+                            contentDescription = S.createFolder,
+                            tint = if (canCreate) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.outline,
                         )
                     }
@@ -211,6 +225,85 @@ fun WorkspaceDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(S.cancel) }
+        },
+    )
+
+    if (showCreateFolder) {
+        CreateFolderDialog(
+            onDismiss = { showCreateFolder = false },
+            onConfirm = { name ->
+                val base = current?.path ?: pathInput.trim()
+                createDir(base, name)
+                reloadKey++
+            },
+        )
+    }
+}
+
+/** Name prompt for the workspace picker's new-folder action. */
+@Composable
+private fun CreateFolderDialog(
+    onDismiss: () -> Unit,
+    onConfirm: suspend (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val trimmedName = name.trim()
+    val valid =
+        trimmedName.isNotEmpty() &&
+            trimmedName != "." &&
+            trimmedName != ".." &&
+            '/' !in trimmedName &&
+            '\\' !in trimmedName
+
+    fun submit() {
+        if (!valid || submitting) return
+        submitting = true
+        scope.launch {
+            try {
+                onConfirm(trimmedName)
+                onDismiss()
+            } catch (t: Throwable) {
+                error = t.message ?: "error"
+                submitting = false
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!submitting) onDismiss() },
+        title = { Text(S.createFolder) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; error = "" },
+                    label = { Text(S.folderNameLabel) },
+                    singleLine = true,
+                    isError = error.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                )
+                if (error.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = valid && !submitting) {
+                Text(S.confirm)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !submitting) { Text(S.cancel) }
         },
     )
 }
