@@ -81,7 +81,7 @@ func (m *sessionManager) attach(id string) (*piSession, error) {
 		session.stop(1000, "could not load session history")
 		return nil, fmt.Errorf("load existing session history: %w", err)
 	}
-	if started && meta.NameSet {
+	if started && meta.NameSet && meta.Name != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), m.cfg.HistoryTimeout)
 		err := session.setSessionName(ctx, meta.Name)
 		cancel()
@@ -290,7 +290,7 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newS
 			OnActivity: func() error {
 				return m.store.touch(id)
 			},
-			OnName: func(name string) error {
+			OnName: func(name string) (bool, error) {
 				return m.store.adoptName(id, name)
 			},
 		})

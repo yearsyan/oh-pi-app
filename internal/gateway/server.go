@@ -582,6 +582,9 @@ func normalizeSessionNameCommand(command []byte) ([]byte, *string, error) {
 
 func normalizeSessionName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", errors.New("name must not be empty")
+	}
 	if utf8.RuneCountInString(name) > maxSessionNameRunes {
 		return "", fmt.Errorf("name must not exceed %d characters", maxSessionNameRunes)
 	}

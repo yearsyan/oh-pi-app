@@ -40,12 +40,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,9 +57,13 @@ import io.github.yearsyan.pi.markdown.MarkdownView
 import io.github.yearsyan.pi.net.FileEntry
 import io.github.yearsyan.pi.net.FileListResponse
 import io.github.yearsyan.pi.net.FileReadResponse
+import io.github.yearsyan.pi.syntax.Syntax
+import io.github.yearsyan.pi.theme.piExtras
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** State for the bottom-sheet text preview of one remote file. */
 class FilePreview(
@@ -323,6 +329,9 @@ private fun FileRow(entry: FileEntry, onClick: () -> Unit) {
     }
 }
 
+/** Above this size preview text stays plain; highlighting is not worth the cost. */
+private const val MaxHighlightLength = 256 * 1024
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
@@ -396,18 +405,33 @@ private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
                             MarkdownView(preview.content)
                         }
                     } else {
+                        val spec = remember(preview.name) { Syntax.specForFileName(preview.name) }
+                        val syntaxColors = piExtras.syntax
+                        // Highlight off the main thread; plain text shows until ready.
+                        val highlighted by produceState<AnnotatedString?>(
+                            null,
+                            preview.content,
+                            spec,
+                            syntaxColors,
+                        ) {
+                            if (spec != null && preview.content.length <= MaxHighlightLength) {
+                                value = withContext(Dispatchers.Default) {
+                                    Syntax.highlight(preview.content, spec, syntaxColors)
+                                }
+                            }
+                        }
                         SelectionContainer(
                             Modifier
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState())
                                 .padding(horizontal = 20.dp, vertical = 14.dp),
                         ) {
-                            Text(
-                                preview.content,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                ),
+                            val style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
                             )
+                            val text = highlighted
+                            if (text != null) Text(text, style = style)
+                            else Text(preview.content, style = style)
                         }
                     }
             }

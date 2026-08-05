@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.yearsyan.pi.syntax.Syntax
 import io.github.yearsyan.pi.theme.piExtras
 
 private const val InlineCodeTag = "inline-code"
@@ -299,6 +300,9 @@ private fun DrawScope.drawInlineCodeBackgrounds(
     }
 }
 
+/** Above this size code fences stay plain; highlighting is not worth the cost. */
+private const val MaxHighlightLength = 256 * 1024
+
 /** Lightweight markdown renderer tuned for chat messages. */
 @Composable
 fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
@@ -322,8 +326,17 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        val codeSpec = remember(block.lang) { Syntax.specForLangName(block.lang) }
+                        val syntaxColors = piExtras.syntax
+                        val codeText = remember(block.code, codeSpec, syntaxColors) {
+                            if (codeSpec != null && block.code.length <= MaxHighlightLength) {
+                                Syntax.highlight(block.code, codeSpec, syntaxColors)
+                            } else {
+                                AnnotatedString(block.code)
+                            }
+                        }
                         Text(
-                            block.code,
+                            codeText,
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,

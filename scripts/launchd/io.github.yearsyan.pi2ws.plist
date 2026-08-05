@@ -14,16 +14,12 @@
 		<string>__PI2WS_PATH__</string>
 		<key>PI2WS_BINARY</key>
 		<string>__PI2WS_BINARY__</string>
-		<key>PI2WS_DATA_DIR</key>
-		<string>__PI2WS_DATA_DIR__</string>
-		<key>PI2WS_LISTEN</key>
-		<string>__PI2WS_LISTEN__</string>
+		<key>PI2WS_CONFIG_FILE</key>
+		<string>__PI2WS_CONFIG_FILE__</string>
 		<key>PI2WS_PI_COMMAND</key>
 		<string>__PI2WS_PI_COMMAND__</string>
 		<key>PI2WS_TOKEN_FILE</key>
 		<string>__PI2WS_TOKEN_FILE__</string>
-		<key>PI2WS_WORK_DIR</key>
-		<string>__PI2WS_WORK_DIR__</string>
 	</dict>
 	<key>WorkingDirectory</key>
 	<string>__PI2WS_WORK_DIR__</string>

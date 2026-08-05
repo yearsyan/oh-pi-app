@@ -122,6 +122,7 @@ func TestSessionManagementAPIRejectsInvalidUpdates(t *testing.T) {
 		body string
 	}{
 		{name: "missing name", body: `{}`},
+		{name: "empty name", body: `{"name":"  "}`},
 		{name: "unknown field", body: `{"name":"ok","extra":true}`},
 		{name: "trailing value", body: `{"name":"ok"} {}`},
 		{name: "too long", body: `{"name":"` + strings.Repeat("界", maxSessionNameRunes+1) + `"}`},
@@ -150,6 +151,60 @@ func TestSessionManagementAPIRejectsInvalidUpdates(t *testing.T) {
 	})
 	if event := readEvent(t, client); event.string("code") != "invalid_session_name" {
 		t.Fatalf("invalid WebSocket rename event = %#v", event)
+	}
+	writeJSON(t, client, map[string]any{
+		"id": "empty-name", "type": "set_session_name", "name": "  ",
+	})
+	if event := readEvent(t, client); event.string("code") != "invalid_session_name" {
+		t.Fatalf("empty WebSocket rename event = %#v", event)
+	}
+}
+
+func TestPiGeneratedSessionNameIsPersistedAndManualNameWins(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer client.Close()
+	_ = readEvent(t, client)
+
+	writeJSON(t, client, map[string]any{
+		"id": "generated-name", "type": "fake_emit",
+		"events": []any{map[string]any{
+			"type": "session_info_changed", "name": "generated title",
+		}},
+	})
+	if event := readEvent(t, client); event.string("type") != "session_info_changed" || event.string("name") != "generated title" {
+		t.Fatalf("generated name event = %#v", event)
+	}
+	if response := readEvent(t, client); response.string("id") != "generated-name" {
+		t.Fatalf("generated name response = %#v", response)
+	}
+	if got := getSessionList(t, server).Sessions[0].Name; got != "generated title" {
+		t.Fatalf("persisted generated name = %q", got)
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "manual-name", "type": "set_session_name", "name": "manual title",
+	})
+	if response := readEvent(t, client); response.string("id") != "manual-name" {
+		t.Fatalf("manual name response = %#v", response)
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "late-generated-name", "type": "fake_emit",
+		"events": []any{map[string]any{
+			"type": "session_info_changed", "name": "late generated title",
+		}},
+	})
+	// The conflicting event is suppressed; only fake_emit's response remains.
+	if response := readEvent(t, client); response.string("id") != "late-generated-name" {
+		t.Fatalf("late generated name response = %#v", response)
+	}
+	if got := getSessionList(t, server).Sessions[0].Name; got != "manual title" {
+		t.Fatalf("name after late generation = %q, want manual title", got)
 	}
 }
 

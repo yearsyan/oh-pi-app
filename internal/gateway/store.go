@@ -60,7 +60,6 @@ func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
 		now := time.Now().UTC()
 		meta := sessionMetadata{
 			ID:        id,
-			NameSet:   true,
 			CreatedAt: now,
 			UpdatedAt: now,
 			WorkDir:   workDir,
@@ -123,6 +122,15 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 		// Metadata created by older gateways did not record activity time.
 		meta.UpdatedAt = meta.CreatedAt
 	}
+	if strings.TrimSpace(meta.Name) == "" {
+		// A previous gateway wrote name_set=true for every newly-created,
+		// unnamed session. Treat that state as unset so pi can supply a title.
+		meta.Name = ""
+		meta.NameSet = false
+	} else if !meta.NameSet {
+		// Preserve non-empty names written before name_set was introduced.
+		meta.NameSet = true
+	}
 	return meta, dir, nil
 }
 
@@ -168,21 +176,24 @@ func (s *sessionStore) rename(id, name string) (sessionMetadata, error) {
 	return meta, nil
 }
 
-func (s *sessionStore) adoptName(id, name string) error {
+func (s *sessionStore) adoptName(id, name string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	meta, dir, err := s.loadLocked(id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if meta.NameSet {
-		return nil
+		return meta.Name == name, nil
 	}
 	meta.Name = name
 	meta.NameSet = true
 	meta.UpdatedAt = time.Now().UTC()
-	return replaceMetadata(dir, meta)
+	if err := replaceMetadata(dir, meta); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *sessionStore) touch(id string) error {

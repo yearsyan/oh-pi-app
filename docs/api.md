@@ -56,7 +56,7 @@ DELETE /api/sessions/<SESSION_ID>
 
 以上请求均须携带 `Authorization: Bearer <TOKEN>`。
 
-名称会去除首尾空白，最长 200 个 Unicode 字符。重命名会写入网关元数据，并同步到正在运行的 pi session；以后恢复停止的 session 时也会重新应用该名称。
+名称会去除首尾空白，不能为空，最长 200 个 Unicode 字符。重命名会写入网关元数据，并同步到正在运行的 pi session；以后恢复停止的 session 时也会重新应用该名称。
 
 `DELETE` 是永久操作：活动中的 pi 子进程和 WebSocket 会先被正常关闭，随后整个 `<data-dir>/sessions/<session-id>` 目录（包括 pi JSONL、历史快照和 replay WAL）都会被删除。成功返回 HTTP 204。
 
@@ -259,6 +259,12 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 skill、prompt template 会展开输入文本，extension 指令也可能不产生 user 事件。此类 slash prompt 可额外发送 `"pi2ws_confirm_on_response":true`；网关会在转发给 pi 前移除该字段，并在成功的 prompt response 到达时释放关联状态。客户端应以该 response 作为输入确认。
 
 除上述 user 事件关联字段外，pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等事件保持原协议。完整命令和事件格式以本机 pi 的 `docs/rpc.md` 为准。
+
+标题 extension 或手工重命名成功时，pi 会发送原生事件；客户端应使用它更新当前标题和 session 列表，而不是依赖 `set_session_name` response 中不存在的名称字段：
+
+```json
+{"type":"session_info_changed","name":"排查登录回调"}
+```
 
 注意：
 

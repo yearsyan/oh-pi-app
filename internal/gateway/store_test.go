@@ -22,6 +22,9 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	if created.WorkDir == "" {
 		t.Fatal("created session lost its work_dir")
 	}
+	if created.NameSet {
+		t.Fatal("new session unexpectedly has an authoritative name")
+	}
 	loaded, loadedDir, err := store.load(created.ID)
 	if err != nil {
 		t.Fatalf("load session: %v", err)
@@ -35,6 +38,45 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("metadata permissions = %o, want 600", got)
+	}
+}
+
+func TestSessionStoreAdoptsOnlyTheFirstObservedName(t *testing.T) {
+	store, err := newSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	created, _, err := store.create(t.TempDir())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	accepted, err := store.adoptName(created.ID, "generated title")
+	if err != nil || !accepted {
+		t.Fatalf("adopt first name = (%v, %v), want (true, nil)", accepted, err)
+	}
+	accepted, err = store.adoptName(created.ID, "late generated title")
+	if err != nil || accepted {
+		t.Fatalf("adopt conflicting name = (%v, %v), want (false, nil)", accepted, err)
+	}
+	accepted, err = store.adoptName(created.ID, "generated title")
+	if err != nil || !accepted {
+		t.Fatalf("accept matching name = (%v, %v), want (true, nil)", accepted, err)
+	}
+
+	if _, err := store.rename(created.ID, "manual title"); err != nil {
+		t.Fatalf("rename session: %v", err)
+	}
+	accepted, err = store.adoptName(created.ID, "generated title")
+	if err != nil || accepted {
+		t.Fatalf("adopt after manual rename = (%v, %v), want (false, nil)", accepted, err)
+	}
+	loaded, _, err := store.load(created.ID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	if loaded.Name != "manual title" || !loaded.NameSet {
+		t.Fatalf("loaded metadata = %#v, want authoritative manual title", loaded)
 	}
 }
 

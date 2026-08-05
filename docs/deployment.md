@@ -23,6 +23,7 @@ PI2WS_TOKEN="<TOKEN>" \
 PI2WS_LISTEN="0.0.0.0:18080" \
 PI2WS_DATA_DIR="$HOME/.local/state/pi2ws" \
 PI2WS_WORK_DIR="/path/to/project" \
+PI2WS_TITLE_MODEL="openai/gpt-5-nano" \
 PI2WS_PI_COMMAND="/absolute/path/to/pi" \
 ./scripts/deploy-launchd.sh
 ```
@@ -31,6 +32,7 @@ PI2WS_PI_COMMAND="/absolute/path/to/pi" \
 
 - 二进制：`~/.local/bin/pi2ws`
 - LaunchAgent：`~/Library/LaunchAgents/io.github.yearsyan.pi2ws.plist`
+- 配置文件：`~/.config/pi2ws/config.json`
 - token：`~/.config/pi2ws/token`（权限 `0600`，不会写入 plist 或命令行）
 - session 与日志：`~/.local/state/pi2ws/`
 
@@ -41,12 +43,27 @@ curl http://127.0.0.1:8080/healthz
 
 ## 配置
 
+部署脚本会创建并维护 `~/.config/pi2ws/config.json`。pi2ws 默认读取 `$XDG_CONFIG_HOME/pi2ws/config.json`，未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/pi2ws/config.json`；文件不存在时继续使用环境变量和内置默认值。也可以通过 `--config` 或 `PI2WS_CONFIG_FILE` 指定其他文件；显式指定的文件不存在或内容无效时，进程会拒绝启动。文件使用 JSON 对象格式：
+
+```json
+{
+  "PI2WS_LISTEN": "127.0.0.1:8080",
+  "PI2WS_DATA_DIR": "/path/to/state",
+  "PI2WS_WORK_DIR": "/path/to/project",
+  "PI2WS_TITLE_MODEL": "auto"
+}
+```
+
+配置文件只接受上面四个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
+
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
+| `--config` | `PI2WS_CONFIG_FILE` | `$XDG_CONFIG_HOME/pi2ws/config.json` 或 `~/.config/pi2ws/config.json` | JSON 配置文件；默认文件不存在时忽略 |
 | `--listen` | `PI2WS_LISTEN` | `127.0.0.1:8080` | HTTP 监听地址 |
 | `--token` | `PI2WS_TOKEN` | 无 | 必填鉴权 token |
 | `--data-dir` | `PI2WS_DATA_DIR` | `~/.local/state/pi2ws` | session 持久化目录 |
 | `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
+| `--title-model` | `PI2WS_TITLE_MODEL` | `auto` | 首轮结束后生成标题；见下文模型选择 |
 | `--pi` | `PI2WS_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
@@ -65,6 +82,23 @@ curl http://127.0.0.1:8080/healthz
 ```
 
 `--mode`、`--session*`、`--continue`、`--resume`、`--fork` 和 `--no-session` 由网关管理，不能通过 `--pi-arg` 覆盖。
+
+### 会话标题模型
+
+pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-title.ts`，并为每个 pi 子进程显式加载它。extension 在首个 `agent_settled` 后，用第一条用户消息和第一条助手回复生成标题；模型调用与主对话分离，不会写入对话上下文。生成结果经 pi 的 `session_info_changed` 事件回到网关，由网关持久化并广播。手工名称始终优先，生成失败则退化为第一条用户消息。
+
+`PI2WS_TITLE_MODEL` 支持：
+
+- `auto`（默认）：从当前会话 provider 已认证、可用的文本模型中选择稳定且较新的 `nano`、`mini`、`flash-lite`、`haiku` 等轻量模型；没有候选时回退当前会话模型，不会把标题内容自动切到另一家 provider。
+- `active`：始终使用当前会话模型。最省配置，但主模型较贵时标题也会调用该模型。
+- `provider/model-id`：固定模型，适合生产环境。provider 与认证完全复用 pi 的 model registry，网关不读取 API Key。
+- `off`：不加载标题 extension，也不自动生成标题。
+
+如果 pi 使用 OpenAI API Key，推荐固定为 `openai/gpt-5-nano`；使用 Google API Key 可固定为 `google/gemini-2.5-flash-lite`。如果使用 ChatGPT/Codex OAuth 或不确定当前认证支持哪些模型，保留 `auto`。OpenRouter 的模型 ID 本身可以含 `/`，例如 `openrouter/openai/gpt-5-nano`。
+
+先在终端启动一次 `pi` 并通过 `/login` 配好对应 provider；extension 读取的仍是 pi 自己的认证存储。不要把 OpenAI、Google 等 provider Key 写入 pi2ws 的 JSON 配置，LaunchAgent 也不需要新增一份 Key。
+
+标题请求限制为 128 个输出 token、10 秒超时且最多重试一次。模型支持 `minimal` reasoning 时使用该档位；不支持但允许关闭思考时关闭，只有无法关闭时才选择最低可用档位。实际选中的模型会记录为 pi stderr 日志中的 `[pi2ws-title] using provider/model-id`。
 
 ## 安全建议
 

@@ -74,7 +74,10 @@ fun RenameDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(value.trim()); onDismiss() }) {
+            TextButton(
+                onClick = { onConfirm(value.trim()); onDismiss() },
+                enabled = value.isNotBlank(),
+            ) {
                 Text(S.confirm)
             }
         },

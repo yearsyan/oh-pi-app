@@ -393,11 +393,8 @@ class AppViewModel(
                     }
                     loadSessionsForActive(clearExisting = false)
                 },
-                onAutoName = { sid, title ->
-                    val existing = sessions.firstOrNull { it.id == sid }
-                    if (existing == null || existing.name.isBlank()) {
-                        addOrTouchSession(sid, name = title)
-                    }
+                onSessionNameChanged = { sid, title ->
+                    addOrTouchSession(sid, name = title)
                 },
                 onStreamingChanged = ::updateSessionStreaming,
                 strings = {

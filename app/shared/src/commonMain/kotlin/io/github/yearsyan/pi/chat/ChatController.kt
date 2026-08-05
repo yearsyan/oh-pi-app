@@ -145,7 +145,7 @@ class ChatController(
     val token: String,
     private val onToast: (String, Toast.Kind) -> Unit,
     private val onSessionReady: (sessionId: String, isNew: Boolean, workDir: String) -> Unit,
-    private val onAutoName: (sessionId: String, title: String) -> Unit,
+    private val onSessionNameChanged: (sessionId: String, title: String) -> Unit,
     private val onStreamingChanged: (sessionId: String, streaming: Boolean) -> Unit,
     private val strings: () -> ChatStrings,
     private val loadCapabilities: suspend (workDir: String) -> GatewayCapabilities,
@@ -237,7 +237,6 @@ class ChatController(
     private var lastAction = "attach"
     private var lastSessionId: String? = null
     private var lastWorkDir = ""
-    private var autoNamed = false
     private var reconnectJob: Job? = null
     private var connectionSetupJob: Job? = null
     private var capabilitiesJob: Job? = null
@@ -257,7 +256,6 @@ class ChatController(
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingCompactId by mutableStateOf<String?>(null)
-    private var confirmedPromptForAutoName: String? = null
     var lastConfirmedPromptSourceId by mutableStateOf<String?>(null); private set
 
     // ---------- connection ----------
@@ -272,7 +270,6 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
-        confirmedPromptForAutoName = null
         models.clear()
         thinkingLevels.clear()
         slashCommands.clear()
@@ -364,7 +361,6 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
-        confirmedPromptForAutoName = null
         slashCommands.clear()
         sessionStats = null
         sessionStatsLoading = false
@@ -531,7 +527,6 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
-        confirmedPromptForAutoName = null
     }
 
     private fun handleConnectionClosed(code: Short, reason: String) {
@@ -713,16 +708,11 @@ class ChatController(
         return requestId
     }
 
-    /** Names an unnamed session after the first user message (first line, 30 chars). */
-    private fun maybeAutoName(text: String) {
-        if (autoNamed || sessionName.isNotBlank() || sessionId.isBlank()) return
-        autoNamed = true
-        val first = text.lineSequence().first().trim()
-        if (first.isEmpty()) return
-        val title = if (first.length > 30) first.take(30) + "…" else first
-        sessionName = title
-        sendCommand { put("type", "set_session_name"); put("name", title) }
-        onAutoName(sessionId, title)
+    private fun applyObservedSessionName(name: String) {
+        val normalized = name.trim()
+        if (normalized.isEmpty()) return
+        sessionName = normalized
+        sessionId.takeIf { it.isNotBlank() }?.let { onSessionNameChanged(it, normalized) }
     }
 
     fun abort() {
@@ -823,6 +813,7 @@ class ChatController(
                 }
                 refreshSessionStats()
             }
+            "session_info_changed" -> applyObservedSessionName(msg.strOrEmpty("name"))
             "turn_start" -> Unit
             "queue_update" -> {
                 steeringQueue.clear(); msg.arr("steering")?.mapNotNull { it.toString().trim('"').ifBlank { null } }?.let { steeringQueue.addAll(it) }
@@ -897,13 +888,8 @@ class ChatController(
                 println("[PiChat] ready sid=$sid action=${msg.str("action")} workDir=$workDir")
                 onSessionReady(sid, created, workDir)
                 if (created && sessionName.isNotBlank()) {
-                    autoNamed = true
                     sendCommand { put("type", "set_session_name"); put("name", sessionName) }
-                    onAutoName(sid, sessionName)
-                }
-                confirmedPromptForAutoName?.let { promptText ->
-                    confirmedPromptForAutoName = null
-                    maybeAutoName(promptText)
+                    onSessionNameChanged(sid, sessionName)
                 }
                 sendCommand { put("type", "get_state"); this }
                 sendCommand { put("type", "get_available_models"); this }
@@ -1019,7 +1005,7 @@ class ChatController(
                 finishSessionStatsRefresh(runQueuedRefresh = true)
             }
             "get_state" -> if (data != null) {
-                sessionName = data.strOrEmpty("sessionName")
+                applyObservedSessionName(data.strOrEmpty("sessionName"))
                 val modelObj = data.obj("model")
                 model = modelObj?.let { m ->
                     val id = m.strOrEmpty("id"); val p = m.strOrEmpty("provider")
@@ -1256,10 +1242,6 @@ class ChatController(
         if (pendingCreatePrompt?.sourceId == sourceId) pendingCreatePrompt = null
         pendingPrompt = null
         lastConfirmedPromptSourceId = sourceId
-        if (pending.text.isNotEmpty()) {
-            if (conn == ConnState.Ready) maybeAutoName(pending.text)
-            else confirmedPromptForAutoName = pending.text
-        }
     }
 
     // ---------- timeline: tools ----------

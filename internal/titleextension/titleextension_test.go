@@ -1,0 +1,37 @@
+package titleextension
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestInstallMaterializesEmbeddedExtension(t *testing.T) {
+	dataDir := t.TempDir()
+	path, err := Install(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dataDir, "runtime", extensionFileName); path != want {
+		t.Fatalf("Install path = %q, want %q", path, want)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(contents, extensionSource) {
+		t.Fatal("installed extension differs from embedded source")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("extension permissions = %o, want 600", got)
+	}
+
+	if _, err := Install(dataDir); err != nil {
+		t.Fatalf("second Install failed: %v", err)
+	}
+}

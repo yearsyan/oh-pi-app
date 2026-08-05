@@ -7,16 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A18D64000000000000000001 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */; };
-		A18D64000000000000000002 /* libssh-LGPL-2.1-or-later.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */; };
-		A18D64000000000000000003 /* mbedtls-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000013 /* mbedtls-LICENSE.txt */; };
+		A18D64000000000000000001 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000011 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md */; };
+		A18D64000000000000000002 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000012 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt */; };
+		A18D64000000000000000003 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = A18D64000000000000000013 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0F15DB9BC8DF494FE6D074CC /* PiApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
-		A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt; sourceTree = SOURCE_ROOT; };
-		A18D64000000000000000013 /* mbedtls-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt; sourceTree = SOURCE_ROOT; };
+		A18D64000000000000000011 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
+		A18D64000000000000000012 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt"; sourceTree = SOURCE_ROOT; };
+		A18D64000000000000000013 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "../../native/pi_ssh/licenses/mbedtls-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -30,17 +30,17 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		7552251DBECB0173E35CC86C /* Configuration */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Configuration;
+			sourceTree = "<group>";
+		};
 		ACBAD709715EEABC3E88E635 /* iosApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				B1E7B73AFCF446CA0218685C /* Exceptions for "iosApp" folder in "iosApp" target */,
 			);
 			path = iosApp;
-			sourceTree = "<group>";
-		};
-		7552251DBECB0173E35CC86C /* Configuration */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Configuration;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -56,6 +56,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A18D64000000000000000020 /* Third-Party Licenses */ = {
+			isa = PBXGroup;
+			children = (
+				A18D64000000000000000011 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md */,
+				A18D64000000000000000012 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt */,
+				A18D64000000000000000013 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt */,
+			);
+			name = "Third-Party Licenses";
+			sourceTree = "<group>";
+		};
 		E2F5280F9B2D911EEEDCD260 = {
 			isa = PBXGroup;
 			children = (
@@ -72,16 +82,6 @@
 				0F15DB9BC8DF494FE6D074CC /* PiApp.app */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		A18D64000000000000000020 /* Third-Party Licenses */ = {
-			isa = PBXGroup;
-			children = (
-				A18D64000000000000000011 /* THIRD_PARTY_NOTICES.md */,
-				A18D64000000000000000012 /* libssh-LGPL-2.1-or-later.txt */,
-				A18D64000000000000000013 /* mbedtls-LICENSE.txt */,
-			);
-			name = "Third-Party Licenses";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -149,9 +149,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A18D64000000000000000001 /* THIRD_PARTY_NOTICES.md in Resources */,
-				A18D64000000000000000002 /* libssh-LGPL-2.1-or-later.txt in Resources */,
-				A18D64000000000000000003 /* mbedtls-LICENSE.txt in Resources */,
+				A18D64000000000000000001 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md in Resources */,
+				A18D64000000000000000002 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt in Resources */,
+				A18D64000000000000000003 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,6 +255,62 @@
 			};
 			name = Debug;
 		};
+		125FD980DAFD86498026C428 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_ASSET_PATHS = "\"iosApp/Preview Content\"";
+				DEVELOPMENT_TEAM = 2XX5KZ6X3G;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = iosApp/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		4A3FFE4DD00680967B2E5657 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_ASSET_PATHS = "\"iosApp/Preview Content\"";
+				DEVELOPMENT_TEAM = 2XX5KZ6X3G;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = iosApp/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		7D6D14BA49BD8F8B0C56BA47 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReferenceAnchor = 7552251DBECB0173E35CC86C /* Configuration */;
@@ -310,62 +366,6 @@
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
-			};
-			name = Release;
-		};
-		125FD980DAFD86498026C428 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ARCHS = arm64;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_ASSET_PATHS = "\"iosApp/Preview Content\"";
-				DEVELOPMENT_TEAM = "${TEAM_ID}";
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = iosApp/Info.plist;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		4A3FFE4DD00680967B2E5657 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ARCHS = arm64;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_ASSET_PATHS = "\"iosApp/Preview Content\"";
-				DEVELOPMENT_TEAM = "${TEAM_ID}";
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = iosApp/Info.plist;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};

@@ -20,10 +20,11 @@ type replayRecord struct {
 }
 
 type piOutputEnvelope struct {
-	Type    string `json:"type"`
-	ID      string `json:"id,omitempty"`
-	Command string `json:"command,omitempty"`
-	Success bool   `json:"success,omitempty"`
+	Type    string  `json:"type"`
+	ID      string  `json:"id,omitempty"`
+	Command string  `json:"command,omitempty"`
+	Success bool    `json:"success,omitempty"`
+	Name    *string `json:"name,omitempty"`
 }
 
 type pendingInternalRequest struct {
@@ -175,6 +176,9 @@ func (s *piSession) handleOutput(message []byte) {
 	if validJSON && s.deliverInternal(message, envelope) {
 		return
 	}
+	if validJSON && envelope.Type == "session_info_changed" && !s.acceptObservedSessionName(envelope.Name) {
+		return
+	}
 	if validJSON && envelope.Type == "response" && envelope.Command == "get_state" && envelope.Success {
 		s.adoptObservedSessionName(message)
 	}
@@ -219,9 +223,6 @@ func (s *piSession) handleOutput(message []byte) {
 }
 
 func (s *piSession) adoptObservedSessionName(message []byte) {
-	if s.onName == nil {
-		return
-	}
 	var response struct {
 		Data struct {
 			SessionName *string `json:"sessionName"`
@@ -230,14 +231,31 @@ func (s *piSession) adoptObservedSessionName(message []byte) {
 	if err := json.Unmarshal(message, &response); err != nil || response.Data.SessionName == nil {
 		return
 	}
-	name, err := normalizeSessionName(*response.Data.SessionName)
+	s.acceptObservedSessionName(response.Data.SessionName)
+}
+
+func (s *piSession) acceptObservedSessionName(observed *string) bool {
+	if observed == nil {
+		s.logger.Warn("ignore cleared session name from pi")
+		return false
+	}
+	name, err := normalizeSessionName(*observed)
 	if err != nil {
 		s.logger.Warn("ignore invalid session name from pi", "error", err)
-		return
+		return false
 	}
-	if err := s.onName(name); err != nil {
+	if s.onName == nil {
+		return true
+	}
+	accepted, err := s.onName(name)
+	if err != nil {
 		s.logger.Warn("adopt session name from pi", "error", err)
+		return false
 	}
+	if !accepted {
+		s.logger.Info("ignore session name superseded by gateway metadata")
+	}
+	return accepted
 }
 
 func (s *piSession) scheduleCheckpoint(

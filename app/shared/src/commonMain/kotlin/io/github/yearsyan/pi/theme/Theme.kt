@@ -11,6 +11,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import io.github.yearsyan.pi.syntax.SyntaxColors
 
 // ---- brand palette ----
 private val Indigo = Color(0xFF4F5BD5)
@@ -86,6 +87,7 @@ data class PiExtras(
     val onCode: Color,
     val success: Color,
     val warning: Color,
+    val syntax: SyntaxColors,
 )
 
 private val LightExtras = PiExtras(
@@ -95,6 +97,14 @@ private val LightExtras = PiExtras(
     onCode = Color(0xFF2A2A35),
     success = Color(0xFF1B7F43),
     warning = Color(0xFF9A6A00),
+    // GitHub-light inspired palette, readable on the light code background.
+    syntax = SyntaxColors(
+        keyword = Color(0xFFCF222E),
+        string = Color(0xFF0A3069),
+        comment = Color(0xFF6E7781),
+        number = Color(0xFF0550AE),
+        annotation = Color(0xFF8250DF),
+    ),
 )
 
 private val DarkExtras = PiExtras(
@@ -104,6 +114,14 @@ private val DarkExtras = PiExtras(
     onCode = Color(0xFFD7D7E2),
     success = Color(0xFF7BDAA3),
     warning = Color(0xFFE8C468),
+    // GitHub-dark inspired palette, readable on the dark code background.
+    syntax = SyntaxColors(
+        keyword = Color(0xFFFF7B72),
+        string = Color(0xFFA5D6FF),
+        comment = Color(0xFF8B949E),
+        number = Color(0xFF79C0FF),
+        annotation = Color(0xFFD2A8FF),
+    ),
 )
 
 val LocalPiExtras = staticCompositionLocalOf { LightExtras }

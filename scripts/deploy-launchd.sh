@@ -13,6 +13,7 @@ binary_path=$binary_dir/pi2ws
 libexec_dir=$HOME/.local/libexec/pi2ws
 launcher_path=$libexec_dir/pi2ws-launch
 config_dir=$HOME/.config/pi2ws
+config_file=$config_dir/config.json
 token_file=$config_dir/token
 launch_agents_dir=$HOME/Library/LaunchAgents
 plist_path=$launch_agents_dir/$label.plist
@@ -44,6 +45,30 @@ plist_value() {
 	fi
 }
 
+config_value() {
+	key=$1
+	if [ ! -f "$config_file" ]; then
+		return
+	fi
+	if ! value_type=$(/usr/bin/plutil -type "$key" "$config_file" 2>/dev/null); then
+		return
+	fi
+	[ "$value_type" = string ] || die "$config_file: $key must be a string"
+	value=$(/usr/bin/plutil -extract "$key" raw -o - "$config_file")
+	[ -n "$value" ] || die "$config_file: $key must not be empty"
+	printf '%s\n' "$value"
+}
+
+set_config_value() {
+	key=$1
+	value=$2
+	if /usr/bin/plutil -type "$key" "$rendered_config_plist" >/dev/null 2>&1; then
+		/usr/bin/plutil -replace "$key" -string "$value" "$rendered_config_plist"
+	else
+		/usr/bin/plutil -insert "$key" -string "$value" "$rendered_config_plist"
+	fi
+}
+
 if [ "$(/usr/bin/uname -s)" != Darwin ]; then
 	die "launchd deployment is supported only on macOS"
 fi
@@ -67,33 +92,55 @@ elif [ ! -s "$token_file" ]; then
 	die "PI2WS_TOKEN is required for the first deployment"
 fi
 
+if [ -f "$config_file" ]; then
+	/usr/bin/plutil -p "$config_file" >/dev/null || die "invalid JSON configuration: $config_file"
+fi
+
+existing_config_listen=$(config_value PI2WS_LISTEN)
 existing_listen=$(plist_value EnvironmentVariables.PI2WS_LISTEN)
 if [ -n "${PI2WS_LISTEN-}" ]; then
 	listen=$PI2WS_LISTEN
+elif [ -n "$existing_config_listen" ]; then
+	listen=$existing_config_listen
 elif [ -n "$existing_listen" ]; then
 	listen=$existing_listen
 else
 	listen=127.0.0.1:8080
 fi
 
+existing_config_data_dir=$(config_value PI2WS_DATA_DIR)
 existing_data_dir=$(plist_value EnvironmentVariables.PI2WS_DATA_DIR)
 if [ -n "${PI2WS_DATA_DIR-}" ]; then
 	data_dir=$PI2WS_DATA_DIR
+elif [ -n "$existing_config_data_dir" ]; then
+	data_dir=$existing_config_data_dir
 elif [ -n "$existing_data_dir" ]; then
 	data_dir=$existing_data_dir
 else
 	data_dir=$default_state_dir
 fi
 
+existing_config_work_dir=$(config_value PI2WS_WORK_DIR)
 existing_work_dir=$(plist_value EnvironmentVariables.PI2WS_WORK_DIR)
 if [ -n "${PI2WS_WORK_DIR-}" ]; then
 	work_dir=$PI2WS_WORK_DIR
+elif [ -n "$existing_config_work_dir" ]; then
+	work_dir=$existing_config_work_dir
 elif [ -n "$existing_work_dir" ]; then
 	work_dir=$existing_work_dir
 else
 	work_dir=$repo_root
 fi
 [ -d "$work_dir" ] || die "PI2WS_WORK_DIR is not a directory: $work_dir"
+
+existing_config_title_model=$(config_value PI2WS_TITLE_MODEL)
+if [ -n "${PI2WS_TITLE_MODEL-}" ]; then
+	title_model=$PI2WS_TITLE_MODEL
+elif [ -n "$existing_config_title_model" ]; then
+	title_model=$existing_config_title_model
+else
+	title_model=auto
+fi
 
 existing_pi_command=$(plist_value EnvironmentVariables.PI2WS_PI_COMMAND)
 if [ -n "${PI2WS_PI_COMMAND-}" ]; then
@@ -141,6 +188,8 @@ trap cleanup EXIT HUP INT TERM
 
 built_binary=$deploy_tmp/pi2ws
 rendered_plist=$deploy_tmp/$label.plist
+rendered_config=$deploy_tmp/config.json
+rendered_config_plist=$deploy_tmp/config.plist
 token_source=$deploy_tmp/token
 
 note "Building production binary"
@@ -150,18 +199,29 @@ note "Building production binary"
 )
 
 /usr/bin/install -m 0600 "$template_path" "$rendered_plist"
-/usr/bin/plutil -replace ProgramArguments.0 -string "$launcher_path" "$rendered_plist"
+/usr/bin/plutil -remove ProgramArguments.0 "$rendered_plist"
+/usr/bin/plutil -insert ProgramArguments.0 -string "$launcher_path" "$rendered_plist"
 /usr/bin/plutil -replace EnvironmentVariables.PATH -string "$launch_path" "$rendered_plist"
 /usr/bin/plutil -replace EnvironmentVariables.PI2WS_BINARY -string "$binary_path" "$rendered_plist"
-/usr/bin/plutil -replace EnvironmentVariables.PI2WS_DATA_DIR -string "$data_dir" "$rendered_plist"
-/usr/bin/plutil -replace EnvironmentVariables.PI2WS_LISTEN -string "$listen" "$rendered_plist"
+/usr/bin/plutil -replace EnvironmentVariables.PI2WS_CONFIG_FILE -string "$config_file" "$rendered_plist"
 /usr/bin/plutil -replace EnvironmentVariables.PI2WS_PI_COMMAND -string "$pi_command" "$rendered_plist"
 /usr/bin/plutil -replace EnvironmentVariables.PI2WS_TOKEN_FILE -string "$token_file" "$rendered_plist"
-/usr/bin/plutil -replace EnvironmentVariables.PI2WS_WORK_DIR -string "$work_dir" "$rendered_plist"
 /usr/bin/plutil -replace WorkingDirectory -string "$work_dir" "$rendered_plist"
 /usr/bin/plutil -replace StandardOutPath -string "$stdout_log" "$rendered_plist"
 /usr/bin/plutil -replace StandardErrorPath -string "$stderr_log" "$rendered_plist"
 /usr/bin/plutil -lint "$rendered_plist" >/dev/null
+
+if [ -f "$config_file" ]; then
+	/usr/bin/plutil -convert xml1 -o "$rendered_config_plist" "$config_file"
+else
+	/usr/bin/plutil -create xml1 "$rendered_config_plist"
+fi
+set_config_value PI2WS_LISTEN "$listen"
+set_config_value PI2WS_DATA_DIR "$data_dir"
+set_config_value PI2WS_WORK_DIR "$work_dir"
+set_config_value PI2WS_TITLE_MODEL "$title_model"
+/usr/bin/plutil -convert json -r -o "$rendered_config" "$rendered_config_plist"
+/usr/bin/plutil -p "$rendered_config" >/dev/null
 
 note "Preparing installation directories"
 /usr/bin/install -d -m 0755 "$binary_dir" "$libexec_dir" "$launch_agents_dir"
@@ -174,6 +234,8 @@ if [ -n "$deploy_token" ]; then
 fi
 unset deploy_token
 
+/usr/bin/install -m 0600 "$rendered_config" "$config_file"
+
 if launchctl print "$job_target" >/dev/null 2>&1; then
 	note "Stopping existing LaunchAgent"
 	launchctl bootout "$job_target"
@@ -185,7 +247,15 @@ note "Installing binary and LaunchAgent"
 /usr/bin/install -m 0644 "$rendered_plist" "$plist_path"
 
 launchctl enable "$job_target"
-launchctl bootstrap "$domain" "$plist_path"
+bootstrap_attempt=1
+while ! launchctl bootstrap "$domain" "$plist_path"; do
+	if [ "$bootstrap_attempt" -ge 5 ]; then
+		die "failed to bootstrap $label after $bootstrap_attempt attempts"
+	fi
+	bootstrap_attempt=$((bootstrap_attempt + 1))
+	note "LaunchAgent bootstrap not ready; retrying ($bootstrap_attempt/5)"
+	sleep 1
+done
 job_pid=$(launchctl kickstart -kp "$job_target")
 
 note "Waiting for $health_url"
@@ -213,6 +283,7 @@ fi
 note "Deployment complete"
 printf 'Binary:      %s\n' "$binary_path"
 printf 'LaunchAgent: %s\n' "$plist_path"
+printf 'Config:      %s\n' "$config_file"
 printf 'PID:         %s\n' "$job_pid"
 printf 'Health:      %s\n' "$health_url"
 printf 'Logs:        %s\n' "$log_dir"

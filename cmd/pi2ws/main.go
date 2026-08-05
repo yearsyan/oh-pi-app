@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yearsyan/pi2ws/internal/gateway"
+	"github.com/yearsyan/pi2ws/internal/titleextension"
 )
 
 type stringList []string
@@ -35,10 +36,12 @@ func run() int {
 	var piArgs stringList
 	var allowedOrigins stringList
 
-	listen := flag.String("listen", envOr("PI2WS_LISTEN", "127.0.0.1:8080"), "HTTP listen address")
+	configFile := flag.String("config", envOr("PI2WS_CONFIG_FILE", defaultConfigFile()), "configuration file (or PI2WS_CONFIG_FILE)")
+	listen := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	token := flag.String("token", os.Getenv("PI2WS_TOKEN"), "URL authentication token (or PI2WS_TOKEN)")
-	dataDir := flag.String("data-dir", envOr("PI2WS_DATA_DIR", defaultDataDir()), "persistent data directory")
-	workDir := flag.String("work-dir", envOr("PI2WS_WORK_DIR", mustWorkingDir()), "working directory for pi processes")
+	dataDir := flag.String("data-dir", defaultDataDir(), "persistent data directory")
+	workDir := flag.String("work-dir", mustWorkingDir(), "working directory for pi processes")
+	titleModel := flag.String("title-model", "auto", "session title model: auto, active, off, or provider/model-id")
 	piCommand := flag.String("pi", envOr("PI2WS_PI_COMMAND", "pi"), "pi executable")
 	maxMessage := flag.Int64("max-message-bytes", 128<<20, "maximum WebSocket command and pi event size")
 	sessionIdle := flag.Duration("session-idle-timeout", 5*time.Minute, "stop a settled pi session after this idle period")
@@ -48,6 +51,26 @@ func run() int {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
+	explicitFlags := make(map[string]bool)
+	flag.Visit(func(value *flag.Flag) {
+		explicitFlags[value.Name] = true
+	})
+	configRequired := explicitFlags["config"] || os.Getenv("PI2WS_CONFIG_FILE") != ""
+	fileConfig, err := loadRuntimeConfig(*configFile, configRequired)
+	if err != nil {
+		logger.Error("load configuration file", "path", *configFile, "error", err)
+		return 2
+	}
+	*listen = resolveRuntimeConfigValue(*listen, explicitFlags["listen"], "PI2WS_LISTEN", fileConfig)
+	*dataDir = resolveRuntimeConfigValue(*dataDir, explicitFlags["data-dir"], "PI2WS_DATA_DIR", fileConfig)
+	*workDir = resolveRuntimeConfigValue(*workDir, explicitFlags["work-dir"], "PI2WS_WORK_DIR", fileConfig)
+	*titleModel = resolveRuntimeConfigValue(*titleModel, explicitFlags["title-model"], "PI2WS_TITLE_MODEL", fileConfig)
+	*titleModel, err = normalizeTitleModel(*titleModel)
+	if err != nil {
+		logger.Error("configure title model", "error", err)
+		return 2
+	}
+
 	if *shutdownTimeout <= 0 {
 		logger.Error("shutdown timeout must be positive")
 		return 2
@@ -55,6 +78,17 @@ func run() int {
 	if *sessionIdle <= 0 {
 		logger.Error("session idle timeout must be positive")
 		return 2
+	}
+	if *titleModel != "off" {
+		extensionPath, err := titleextension.Install(*dataDir)
+		if err != nil {
+			logger.Error("install session title extension", "error", err)
+			return 2
+		}
+		piArgs = append(piArgs,
+			"--extension", extensionPath,
+			"--pi2ws-title-model", *titleModel,
+		)
 	}
 
 	app, err := gateway.New(gateway.Config{

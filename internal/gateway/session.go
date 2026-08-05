@@ -28,7 +28,7 @@ type piSession struct {
 	logger     *slog.Logger
 	onExit     func(*piSession, error)
 	onActivity func() error
-	onName     func(string) error
+	onName     func(string) (bool, error)
 	input      chan []byte
 	inputMu    sync.Mutex
 	processEnd chan struct{}
@@ -86,7 +86,7 @@ type piSessionConfig struct {
 	Logger         *slog.Logger
 	OnExit         func(*piSession, error)
 	OnActivity     func() error
-	OnName         func(string) error
+	OnName         func(string) (bool, error)
 }
 
 func newPiSession(cfg piSessionConfig) *piSession {
