@@ -58,8 +58,6 @@ Keep using the same keystore across releases: Android refuses update installs wh
 
 Version rule: pushing a `v<major.minor.patch>` tag (e.g. `v1.10.1`) triggers the GitHub release workflow, which builds the APK with `-PversionName=<major.minor.patch>`. The Android `versionCode` is derived from the version name with each dot-segment as a two-digit field: `1.10.1` → `11001` (`major×10000 + minor×100 + patch`). Local builds without `-PversionName` fall back to the last released version.
 
-APK distribution (CDN bucket upload, wrangler commands, signing verification) is documented in the local, gitignored `ohpi-publish` skill at `~/.pi/agent/skills/ohpi-publish/SKILL.md` — operational details are intentionally not committed to this repository.
-
 ## Coding Style & Naming Conventions
 
 Follow standard Go conventions and let `gofmt` determine tabs and layout. Use short, lower-case package names; exported identifiers need Go doc comments, while implementation details should remain inside `internal/gateway`. Prefer descriptive lifecycle verbs such as `start`, `attach`, `shutdown`, and `forceKill`. Wrap errors with context using `%w`, avoid global mutable state, and preserve strict LF-delimited JSONL framing.
