@@ -5,3 +5,8 @@ class JVMPlatform: Platform {
 }
 
 actual fun getPlatform(): Platform = JVMPlatform()
+
+// Keep in sync with compose.desktop.application.nativeDistributions.packageVersion in desktopApp/build.gradle.kts.
+private const val DESKTOP_APP_VERSION = "1.0.0"
+
+actual fun appVersion(): String = DESKTOP_APP_VERSION

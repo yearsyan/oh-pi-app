@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,11 +40,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.pi.chat.ChatController
 import io.github.yearsyan.pi.chat.PromptImage
+import io.github.yearsyan.pi.chat.SlashCommand
+import io.github.yearsyan.pi.chat.SlashCommandSource
+import io.github.yearsyan.pi.chat.matchingSlashCommands
 import io.github.yearsyan.pi.i18n.S
 
 /** Rounded message composer with model controls, image attachment and send/stop action. */
@@ -56,6 +64,7 @@ fun Composer(
     var image by remember { mutableStateOf<PromptImage?>(null) }
     var pickerError by remember { mutableStateOf<String?>(null) }
     var submittedSourceId by remember { mutableStateOf<String?>(null) }
+    val focusRequester = remember { FocusRequester() }
     val promptPending = controller.isPromptPending
     LaunchedEffect(controller.lastConfirmedPromptSourceId) {
         val confirmed = controller.lastConfirmedPromptSourceId
@@ -82,8 +91,19 @@ fun Composer(
             }
         }
     val hasPrompt = text.isNotBlank() || image != null
-    val canSend = controller.canSendPrompt && hasPrompt
+    val canSend = controller.canSubmitInput(text, image != null)
     val showStop = controller.isStreaming && !hasPrompt
+    val slashMatches =
+        matchingSlashCommands(
+            text,
+            listOf(
+                SlashCommand(
+                    name = "compact",
+                    description = S.compactCommandDescription,
+                    source = SlashCommandSource.BuiltIn,
+                ),
+            ) + controller.slashCommands,
+        )
 
     Box(
         modifier =
@@ -111,6 +131,15 @@ fun Composer(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (slashMatches.isNotEmpty()) {
+                    SlashCommandMenu(
+                        commands = slashMatches,
+                        onSelect = { command ->
+                            text = "/${command.name} "
+                            focusRequester.requestFocus()
+                        },
+                    )
+                }
                 Box(
                     modifier =
                         Modifier
@@ -129,7 +158,7 @@ fun Composer(
                         value = text,
                         onValueChange = { text = it },
                         enabled = !promptPending,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                         textStyle =
                             MaterialTheme.typography.bodyLarge.copy(
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -189,7 +218,7 @@ fun Composer(
                                 when {
                                     showStop -> controller.abort()
                                     canSend -> {
-                                        submittedSourceId = controller.sendPrompt(text, listOfNotNull(image))
+                                        submittedSourceId = controller.submitInput(text, listOfNotNull(image))
                                     }
                                 }
                             },
@@ -225,6 +254,81 @@ fun Composer(
         }
     }
 }
+
+@Composable
+private fun SlashCommandMenu(
+    commands: List<SlashCommand>,
+    onSelect: (SlashCommand) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 224.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp),
+        ) {
+            items(commands, key = { it.name }) { command ->
+                Surface(
+                    onClick = { onSelect(command) },
+                    color = androidx.compose.ui.graphics.Color.Transparent,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "/${command.name}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (command.description.isNotBlank()) {
+                                Text(
+                                    text = command.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                        ) {
+                            Text(
+                                text = commandSourceLabel(command.source),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun commandSourceLabel(source: SlashCommandSource): String =
+    when (source) {
+        SlashCommandSource.BuiltIn -> S.commandSourceBuiltIn
+        SlashCommandSource.Extension -> S.commandSourceExtension
+        SlashCommandSource.Prompt -> S.commandSourcePrompt
+        SlashCommandSource.Skill -> S.commandSourceSkill
+        SlashCommandSource.Other -> S.commandSourceCommand
+    }
 
 @Composable
 private fun SelectedImageChip(

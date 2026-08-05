@@ -18,6 +18,7 @@ internal fun buildPromptCommand(
     text: String,
     images: List<PromptImage>,
     isStreaming: Boolean,
+    confirmOnResponse: Boolean = false,
 ): JsonObject =
     buildJsonObject {
         put("id", sourceId)
@@ -35,4 +36,5 @@ internal fun buildPromptCommand(
             }
         }
         if (isStreaming) put("streamingBehavior", "steer")
+        if (confirmOnResponse) put("pi2ws_confirm_on_response", true)
     }

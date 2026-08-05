@@ -1,5 +1,6 @@
 package io.github.yearsyan.pi
 
+import platform.Foundation.NSBundle
 import platform.UIKit.UIDevice
 
 class IOSPlatform: Platform {
@@ -7,3 +8,7 @@ class IOSPlatform: Platform {
 }
 
 actual fun getPlatform(): Platform = IOSPlatform()
+
+actual fun appVersion(): String =
+    (NSBundle.mainBundle.infoDictionary?.get("CFBundleShortVersionString") as? String)
+        ?: "unknown"

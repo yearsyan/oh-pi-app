@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import io.github.yearsyan.pi.data.SavedSession
+import io.github.yearsyan.pi.filebrowser.FileBrowserController
+import io.github.yearsyan.pi.filebrowser.FileBrowserScreen
+import io.github.yearsyan.pi.filebrowser.rememberApkOpener
 import io.github.yearsyan.pi.i18n.S
 import io.github.yearsyan.pi.ui.AppViewModel
 import io.github.yearsyan.pi.ui.components.RenameDialog
@@ -66,6 +70,9 @@ internal data class ChatRoute(val sessionId: String)
 
 @Serializable
 internal data object SettingsRoute
+
+@Serializable
+internal data class FilesRoute(val path: String)
 
 /** Adaptive home: single-pane navigation on phones, list+detail on tablets/desktop. */
 @Composable
@@ -94,6 +101,10 @@ fun HomeScreen(vm: AppViewModel) {
     fun openCompactChat(sessionId: String) {
         vm.openChat(sessionId)
         navController.navigate(ChatRoute(sessionId))
+    }
+
+    fun openFileBrowser(path: String) {
+        navController.navigate(FilesRoute(path))
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -143,6 +154,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
+                    onBrowseFiles = ::openFileBrowser,
                 )
             }
 
@@ -162,6 +174,28 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
+                    onBrowseFiles = ::openFileBrowser,
+                )
+            }
+
+            composable<FilesRoute> { backStackEntry ->
+                val route = backStackEntry.toRoute<FilesRoute>()
+                val scope = rememberCoroutineScope()
+                val browserController = remember(route.path, vm.activeServerId) {
+                    FileBrowserController(
+                        scope = scope,
+                        initialPath = route.path,
+                        listFiles = vm::listFiles,
+                        readFile = vm::readFile,
+                    )
+                }
+                FileBrowserScreen(
+                    controller = browserController,
+                    onBack = { navController.popBackStack() },
+                    onOpenApk = rememberApkOpener(
+                        downloadFile = vm::downloadFile,
+                        onToast = { vm.toast(it) },
+                    ),
                 )
             }
 
@@ -215,6 +249,7 @@ private fun MainDestination(
     onDeleteSession: (String) -> Unit,
     onRenameSession: (SavedSession) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
+    onBrowseFiles: (String) -> Unit,
 ) {
     when {
         wide -> WideHome(
@@ -224,6 +259,7 @@ private fun MainDestination(
             onSelectServer = onSelectServer,
             onOpenSettings = onOpenSettings,
             onDeleteSession = onDeleteSession,
+            onBrowseFiles = onBrowseFiles,
         )
 
         compactChatId != null -> ChatScreen(
@@ -232,6 +268,7 @@ private fun MainDestination(
             onBack = onNavigateBack,
             onRename = { name -> vm.renameSession(compactChatId, name) },
             onDelete = { onDeleteSession(compactChatId) },
+            onBrowseFiles = onBrowseFiles,
         )
 
         else -> SessionListPane(
@@ -248,6 +285,7 @@ private fun MainDestination(
             onOpenSettings = onOpenSettings,
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
+            onBrowseFiles = { onBrowseFiles("") },
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -261,6 +299,7 @@ private fun WideHome(
     onSelectServer: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onDeleteSession: (String) -> Unit,
+    onBrowseFiles: (String) -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
         SessionListPane(
@@ -277,6 +316,7 @@ private fun WideHome(
             onOpenSettings = onOpenSettings,
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
+            onBrowseFiles = { onBrowseFiles("") },
             modifier = Modifier.width(ListPaneWidth),
         )
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -289,6 +329,7 @@ private fun WideHome(
                     onBack = {},
                     onRename = { name -> vm.renameSession(chatId, name) },
                     onDelete = { onDeleteSession(chatId) },
+                    onBrowseFiles = onBrowseFiles,
                 )
             } else {
                 WideEmptyState(onNewChat = onRequestNewChat)

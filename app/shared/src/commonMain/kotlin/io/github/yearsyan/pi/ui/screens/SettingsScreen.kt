@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.yearsyan.pi.appVersion
 import io.github.yearsyan.pi.data.AppLanguage
 import io.github.yearsyan.pi.data.ServerConnectionMode
 import io.github.yearsyan.pi.data.ServerProfile
@@ -165,6 +166,11 @@ fun SettingsScreen(
             SectionHeader(S.aboutSection)
             Text(
                 "${S.appName} · pi2ws client",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "v${appVersion()}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

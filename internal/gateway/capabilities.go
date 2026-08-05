@@ -36,10 +36,17 @@ type capabilityModel struct {
 	ThinkingLevels []string `json:"thinking_levels"`
 }
 
+type capabilityCommand struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Source      string `json:"source"`
+}
+
 type capabilitiesResponse struct {
-	WorkDir string               `json:"work_dir"`
-	Default *capabilitySelection `json:"default,omitempty"`
-	Models  []capabilityModel    `json:"models"`
+	WorkDir  string               `json:"work_dir"`
+	Default  *capabilitySelection `json:"default,omitempty"`
+	Models   []capabilityModel    `json:"models"`
+	Commands []capabilityCommand  `json:"commands"`
 }
 
 type cachedCapabilities struct {
@@ -167,6 +174,10 @@ type capabilityRPCModels struct {
 	Models []capabilityRawModel `json:"models"`
 }
 
+type capabilityRPCCommands struct {
+	Commands []capabilityCommand `json:"commands"`
+}
+
 type capabilityRawModel struct {
 	ID               string                     `json:"id"`
 	Name             string                     `json:"name"`
@@ -202,6 +213,7 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 	commands := []map[string]string{
 		{"id": "pi2ws-capabilities-state", "type": "get_state"},
 		{"id": "pi2ws-capabilities-models", "type": "get_available_models"},
+		{"id": "pi2ws-capabilities-commands", "type": "get_commands"},
 	}
 	for _, rpcCommand := range commands {
 		if err := encoder.Encode(rpcCommand); err != nil {
@@ -213,6 +225,8 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 
 	var state *capabilityRPCState
 	var models *capabilityRPCModels
+	var availableCommands capabilityRPCCommands
+	commandsDone := false
 	scanner := bufio.NewScanner(stdout)
 	scanner.Split(splitLF)
 	scanner.Buffer(make([]byte, 64<<10), int(cfg.MaxMessageBytes))
@@ -221,8 +235,18 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
 			continue
 		}
-		if response.Type != "response" || !response.Success {
-			if response.ID == "pi2ws-capabilities-state" || response.ID == "pi2ws-capabilities-models" {
+		if response.Type != "response" {
+			continue
+		}
+		if !response.Success {
+			if response.ID == "pi2ws-capabilities-commands" {
+				// get_commands was added after the core capability RPCs. Keep
+				// older pi binaries usable and return an empty command list.
+				commandsDone = true
+				if state != nil && models != nil {
+					break
+				}
+			} else if response.ID == "pi2ws-capabilities-state" || response.ID == "pi2ws-capabilities-models" {
 				_ = stdin.Close()
 				_ = command.Wait()
 				return capabilitiesResponse{}, fmt.Errorf("%s: %s", response.Command, response.Error)
@@ -246,8 +270,15 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 				return capabilitiesResponse{}, fmt.Errorf("decode capability models: %w", err)
 			}
 			models = &value
+		case "pi2ws-capabilities-commands":
+			if err := json.Unmarshal(response.Data, &availableCommands); err != nil {
+				_ = stdin.Close()
+				_ = command.Wait()
+				return capabilitiesResponse{}, fmt.Errorf("decode capability commands: %w", err)
+			}
+			commandsDone = true
 		}
-		if state != nil && models != nil {
+		if state != nil && models != nil && commandsDone {
 			break
 		}
 	}
@@ -271,8 +302,9 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 	}
 
 	response := capabilitiesResponse{
-		WorkDir: workDir,
-		Models:  make([]capabilityModel, 0, len(models.Models)),
+		WorkDir:  workDir,
+		Models:   make([]capabilityModel, 0, len(models.Models)),
+		Commands: make([]capabilityCommand, 0, len(availableCommands.Commands)),
 	}
 	for _, model := range models.Models {
 		if model.ID == "" || model.Provider == "" {
@@ -290,6 +322,21 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 			return response.Models[i].Provider < response.Models[j].Provider
 		}
 		return response.Models[i].ID < response.Models[j].ID
+	})
+	for _, available := range availableCommands.Commands {
+		available.Name = strings.TrimSpace(available.Name)
+		available.Description = strings.TrimSpace(available.Description)
+		available.Source = strings.TrimSpace(available.Source)
+		if available.Name == "" || available.Source == "" {
+			continue
+		}
+		response.Commands = append(response.Commands, available)
+	}
+	sort.SliceStable(response.Commands, func(i, j int) bool {
+		if response.Commands[i].Source != response.Commands[j].Source {
+			return response.Commands[i].Source < response.Commands[j].Source
+		}
+		return response.Commands[i].Name < response.Commands[j].Name
 	})
 	if state.Model != nil && state.Model.ID != "" && state.Model.Provider != "" {
 		response.Default = &capabilitySelection{

@@ -3,6 +3,7 @@ package io.github.yearsyan.pi.chat
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -34,5 +35,19 @@ class PromptImageTest {
 
         assertEquals("steer", command.getValue("streamingBehavior").jsonPrimitive.content)
         assertFalse("images" in command)
+    }
+
+    @Test
+    fun slashPromptCanBeConfirmedByItsRpcResponse() {
+        val command =
+            buildPromptCommand(
+                sourceId = "app-request-3",
+                text = "/skill:review changes",
+                images = emptyList(),
+                isStreaming = false,
+                confirmOnResponse = true,
+            )
+
+        assertEquals(true, command.getValue("pi2ws_confirm_on_response").jsonPrimitive.boolean)
     }
 }

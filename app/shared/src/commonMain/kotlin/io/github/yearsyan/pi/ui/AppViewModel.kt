@@ -15,15 +15,21 @@ import io.github.yearsyan.pi.data.ServerProfile
 import io.github.yearsyan.pi.data.SettingsStore
 import io.github.yearsyan.pi.data.ThemeMode
 import io.github.yearsyan.pi.i18n.Strings
+import io.github.yearsyan.pi.net.FileApiException
+import io.github.yearsyan.pi.net.FileListResponse
+import io.github.yearsyan.pi.net.FileReadResponse
 import io.github.yearsyan.pi.net.FsListException
 import io.github.yearsyan.pi.net.FsListResponse
 import io.github.yearsyan.pi.net.GatewayTransport
 import io.github.yearsyan.pi.net.SshHostKeyPrompt
 import io.github.yearsyan.pi.net.deleteGatewaySession
+import io.github.yearsyan.pi.net.downloadGatewayFile
 import io.github.yearsyan.pi.net.getGatewayCapabilities
 import io.github.yearsyan.pi.net.listGatewayDirs
+import io.github.yearsyan.pi.net.listGatewayFiles
 import io.github.yearsyan.pi.net.listGatewaySessions
 import io.github.yearsyan.pi.net.nowMillis
+import io.github.yearsyan.pi.net.readGatewayFile
 import io.github.yearsyan.pi.net.renameGatewaySession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -56,6 +62,10 @@ class AppViewModel(
     private var sshHostKeyDecision: CompletableDeferred<Boolean>? = null
     private var sessionRefreshGeneration = 0L
     private var stringsProvider: () -> Strings = { io.github.yearsyan.pi.i18n.EnStrings }
+
+    private companion object {
+        const val MIN_REFRESH_INDICATOR_MS = 600L
+    }
 
     init {
         servers.addAll(store.loadServers())
@@ -170,10 +180,14 @@ class AppViewModel(
 
     /** Refreshes server-owned sessions without blanking the current list. */
     fun refreshSessions() {
-        if (!sessionsLoading) loadSessionsForActive(clearExisting = false)
+        // Keep the indicator visible briefly so a fast LAN response still
+        // reads as a completed refresh instead of a no-op flicker.
+        if (!sessionsLoading) {
+            loadSessionsForActive(clearExisting = false, minIndicatorMs = MIN_REFRESH_INDICATOR_MS)
+        }
     }
 
-    private fun loadSessionsForActive(clearExisting: Boolean = true) {
+    private fun loadSessionsForActive(clearExisting: Boolean = true, minIndicatorMs: Long = 0) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
         if (clearExisting) sessions.clear()
@@ -182,6 +196,7 @@ class AppViewModel(
             return
         }
         sessionsLoading = true
+        val startedAt = nowMillis()
         val legacySessions = store.loadLegacySessions(server.id)
         viewModelScope.launch {
             if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
@@ -229,7 +244,12 @@ class AppViewModel(
                     )
                 }
             } finally {
-                if (generation == sessionRefreshGeneration) sessionsLoading = false
+                if (generation == sessionRefreshGeneration) {
+                    val elapsed = nowMillis() - startedAt
+                    if (elapsed < minIndicatorMs) delay(minIndicatorMs - elapsed)
+                    // A newer load may have started during the delay.
+                    if (generation == sessionRefreshGeneration) sessionsLoading = false
+                }
             }
         }
     }
@@ -422,6 +442,29 @@ class AppViewModel(
         val server = activeServer ?: throw FsListException("no active server")
         val gateway = transportFor(server).resolveGateway()
         return listGatewayDirs(gateway, server.token, path)
+    }
+
+    // ---- file browser ----
+
+    /** Lists files and subdirectories of [path] on the active gateway. */
+    suspend fun listFiles(path: String): FileListResponse {
+        val server = activeServer ?: throw FileApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return listGatewayFiles(gateway, server.token, path)
+    }
+
+    /** Reads a text file on the active gateway for the preview sheet. */
+    suspend fun readFile(path: String): FileReadResponse {
+        val server = activeServer ?: throw FileApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return readGatewayFile(gateway, server.token, path)
+    }
+
+    /** Downloads a file from the active gateway, e.g. an APK to install. */
+    suspend fun downloadFile(path: String): ByteArray {
+        val server = activeServer ?: throw FileApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return downloadGatewayFile(gateway, server.token, path)
     }
 
     // ---- gateway transport / SSH host trust ----

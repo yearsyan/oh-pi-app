@@ -83,6 +83,16 @@ interface Strings {
     val upLevel: String
     val noSubdirectories: String
 
+    // file browser
+    val browseFiles: String
+    val filesEmptyFolder: String
+    val retry: String
+    val folderLoadFailed: (String) -> String
+    val fileOpenFailed: (String) -> String
+    val fileTruncatedNotice: String
+    val apkDownloading: String
+    val apkInstallFailed: (String) -> String
+
     // chat
     val messagePlaceholder: String
     val messagePlaceholderStreaming: String
@@ -94,6 +104,12 @@ interface Strings {
     val imageAttachment: (Int) -> String
     val imageTooLarge: String
     val imageReadFailed: String
+    val compactCommandDescription: String
+    val commandSourceBuiltIn: String
+    val commandSourceExtension: String
+    val commandSourcePrompt: String
+    val commandSourceSkill: String
+    val commandSourceCommand: String
     val thinking: String
     val thinkingInProgress: String
     val processThoughtTimes: (Int) -> String
@@ -269,6 +285,15 @@ object EnStrings : Strings {
     override val upLevel = "Up"
     override val noSubdirectories = "No subdirectories"
 
+    override val browseFiles = "Browse files"
+    override val filesEmptyFolder = "This folder is empty"
+    override val retry = "Retry"
+    override val folderLoadFailed = { error: String -> "Could not open folder: $error" }
+    override val fileOpenFailed = { error: String -> "Could not open file: $error" }
+    override val fileTruncatedNotice = "Large file — showing the beginning only"
+    override val apkDownloading = "Downloading APK…"
+    override val apkInstallFailed = { error: String -> "Could not install APK: $error" }
+
     override val messagePlaceholder = "Message Pi…"
     override val messagePlaceholderStreaming = "Steer the agent…"
     override val send = "Send"
@@ -279,6 +304,12 @@ object EnStrings : Strings {
     override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
     override val imageTooLarge = "The image must be smaller than 8 MB"
     override val imageReadFailed = "Could not read this image"
+    override val compactCommandDescription = "Compact conversation context; optional instructions may follow"
+    override val commandSourceBuiltIn = "Built-in"
+    override val commandSourceExtension = "Extension"
+    override val commandSourcePrompt = "Prompt"
+    override val commandSourceSkill = "Skill"
+    override val commandSourceCommand = "Command"
     override val thinking = "Thinking"
     override val thinkingInProgress = "Thinking…"
     override val processThoughtTimes = { n: Int -> "Thought $n ${if (n == 1) "time" else "times"}" }
@@ -453,6 +484,15 @@ object ZhStrings : Strings {
     override val upLevel = "上一级"
     override val noSubdirectories = "没有子目录"
 
+    override val browseFiles = "浏览文件"
+    override val filesEmptyFolder = "此文件夹为空"
+    override val retry = "重试"
+    override val folderLoadFailed = { error: String -> "无法打开文件夹：$error" }
+    override val fileOpenFailed = { error: String -> "无法打开文件：$error" }
+    override val fileTruncatedNotice = "文件过大，仅显示开头部分"
+    override val apkDownloading = "正在下载 APK…"
+    override val apkInstallFailed = { error: String -> "无法安装 APK：$error" }
+
     override val messagePlaceholder = "给 Pi 发送消息…"
     override val messagePlaceholderStreaming = "引导智能体…"
     override val send = "发送"
@@ -463,6 +503,12 @@ object ZhStrings : Strings {
     override val imageAttachment = { count: Int -> "图片 × $count" }
     override val imageTooLarge = "图片不能超过 8 MB"
     override val imageReadFailed = "无法读取这张图片"
+    override val compactCommandDescription = "压缩会话上下文；可在后面附加压缩要求"
+    override val commandSourceBuiltIn = "内置"
+    override val commandSourceExtension = "扩展"
+    override val commandSourcePrompt = "提示词"
+    override val commandSourceSkill = "Skill"
+    override val commandSourceCommand = "指令"
     override val thinking = "思考"
     override val thinkingInProgress = "正在思考…"
     override val processThoughtTimes = { n: Int -> "思考 $n 次" }

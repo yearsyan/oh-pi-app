@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
@@ -78,6 +79,7 @@ fun SessionListPane(
     onOpenSettings: () -> Unit,
     onRenameSession: (SavedSession) -> Unit,
     onDeleteSession: (SavedSession) -> Unit,
+    onBrowseFiles: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
@@ -113,6 +115,30 @@ fun SessionListPane(
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(S.newChat)
+        }
+
+        // file browser entry
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onBrowseFiles)
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.FolderOpen,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                S.browseFiles,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Spacer(Modifier.height(4.dp))

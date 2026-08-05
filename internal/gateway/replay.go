@@ -164,8 +164,12 @@ func (s *piSession) handleOutput(message []byte) {
 	validJSON := json.Unmarshal(message, &envelope) == nil
 	if validJSON {
 		message = s.annotateUserSource(message, envelope.Type)
-		if envelope.Type == "response" && !envelope.Success {
-			s.userSources.reject(envelope.ID)
+		if envelope.Type == "response" {
+			if envelope.Success {
+				s.userSources.confirmResponse(envelope.ID)
+			} else {
+				s.userSources.reject(envelope.ID)
+			}
 		}
 	}
 	if validJSON && s.deliverInternal(message, envelope) {

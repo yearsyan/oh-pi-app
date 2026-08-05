@@ -12,9 +12,10 @@ type userMessageSignature struct {
 }
 
 type userInputSource struct {
-	token     uint64
-	id        string
-	signature userMessageSignature
+	token             uint64
+	id                string
+	signature         userMessageSignature
+	confirmOnResponse bool
 }
 
 // userSourceTracker associates user-message events emitted by pi with the
@@ -30,10 +31,11 @@ type userSourceTracker struct {
 
 func userSourceFromCommand(command []byte) (userInputSource, bool) {
 	var decoded struct {
-		Type    string            `json:"type"`
-		ID      string            `json:"id"`
-		Message string            `json:"message"`
-		Images  []json.RawMessage `json:"images"`
+		Type              string            `json:"type"`
+		ID                string            `json:"id"`
+		Message           string            `json:"message"`
+		Images            []json.RawMessage `json:"images"`
+		ConfirmOnResponse bool              `json:"pi2ws_confirm_on_response"`
 	}
 	if json.Unmarshal(command, &decoded) != nil || decoded.ID == "" {
 		return userInputSource{}, false
@@ -49,7 +51,24 @@ func userSourceFromCommand(command []byte) (userInputSource, bool) {
 			text:       decoded.Message,
 			imageCount: len(decoded.Images),
 		},
+		confirmOnResponse: decoded.ConfirmOnResponse,
 	}, true
+}
+
+func stripUserSourceMetadata(command []byte) []byte {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(command, &fields) != nil {
+		return command
+	}
+	if _, exists := fields["pi2ws_confirm_on_response"]; !exists {
+		return command
+	}
+	delete(fields, "pi2ws_confirm_on_response")
+	stripped, err := json.Marshal(fields)
+	if err != nil {
+		return command
+	}
+	return stripped
 }
 
 func userSignatureFromMessage(content json.RawMessage) (userMessageSignature, bool) {
@@ -113,6 +132,23 @@ func (t *userSourceTracker) reject(id string) {
 	defer t.mu.Unlock()
 	for index, source := range t.pending {
 		if source.id == id {
+			t.pending = append(t.pending[:index], t.pending[index+1:]...)
+			return
+		}
+	}
+}
+
+// confirmResponse discards slash inputs that the app explicitly confirms from
+// the prompt response. Skill/template expansion can change their user-message
+// text, while extension commands may emit no user message at all.
+func (t *userSourceTracker) confirmResponse(id string) {
+	if id == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for index, source := range t.pending {
+		if source.id == id && source.confirmOnResponse {
 			t.pending = append(t.pending[:index], t.pending[index+1:]...)
 			return
 		}

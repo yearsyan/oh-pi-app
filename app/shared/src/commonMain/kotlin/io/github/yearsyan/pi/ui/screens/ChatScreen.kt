@@ -88,6 +88,7 @@ fun ChatScreen(
     onBack: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    onBrowseFiles: (String) -> Unit = {},
 ) {
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
@@ -102,6 +103,7 @@ fun ChatScreen(
             onBack = onBack,
             onRename = { renameOpen = true },
             onDelete = { deleteOpen = true },
+            onBrowseFiles = { onBrowseFiles(controller.workDir) },
         )
 
         val bodyState = when {

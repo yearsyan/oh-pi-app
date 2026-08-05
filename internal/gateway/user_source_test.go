@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,24 @@ func TestRejectedPromptSourceIsNotAppliedToLaterUserEvent(t *testing.T) {
 
 	event := []byte(`{"type":"message_start","message":{"role":"user","content":"hello"}}`)
 	assertSourceID(t, session.annotateUserSource(event, "message_start"), "")
+}
+
+func TestResponseConfirmedSlashSourceIsRemovedAndMetadataIsNotForwarded(t *testing.T) {
+	session := &piSession{}
+	command := []byte(`{"id":"slash","type":"prompt","message":"/skill:review","pi2ws_confirm_on_response":true}`)
+	source, ok := userSourceFromCommand(command)
+	if !ok || !source.confirmOnResponse {
+		t.Fatal("slash prompt did not request response confirmation")
+	}
+	session.userSources.enqueue(source)
+	session.userSources.confirmResponse("slash")
+	if len(session.userSources.pending) != 0 {
+		t.Fatalf("response-confirmed sources = %#v, want none", session.userSources.pending)
+	}
+	if stripped := stripUserSourceMetadata(command); string(stripped) == string(command) ||
+		strings.Contains(string(stripped), "pi2ws_confirm_on_response") {
+		t.Fatalf("stripped command = %s", stripped)
+	}
 }
 
 func TestCommandsWithoutStringIDsRemainBackwardCompatible(t *testing.T) {

@@ -163,11 +163,20 @@ Authorization: Bearer <TOKEN>
       "provider": "openai",
       "thinking_levels": ["off", "minimal", "low", "medium", "high"]
     }
+  ],
+  "commands": [
+    {
+      "name": "skill:review",
+      "description": "Review changed code",
+      "source": "skill"
+    }
   ]
 }
 ```
 
 思考强度是模型级能力，客户端应在切换模型时改用该模型自己的 `thinking_levels`。
+`commands` 来自 pi 的 `get_commands`，包含当前工作区可用的 extension、prompt template
+和 skill 指令；调用时在 `name` 前加 `/`。旧版 pi 不支持 `get_commands` 时返回空列表。
 
 ## WebSocket API
 
@@ -257,6 +266,34 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 
 省略 `path` 时从网关的 `--work-dir` 开始浏览。`path` 必须是绝对路径；不存在的路径返回 404，无权限读取返回 403。
 
+### 文件浏览（远程文件管理）
+
+`internal/filebrowser` 包提供完整的文件浏览 HTTP API，鉴权方式与 `/fs/list` 相同（`Authorization: Bearer <TOKEN>`），所有接口仅支持 GET：
+
+- `GET /api/files/list?path=<绝对路径>` 列出目录下的目录和文件，目录在前、按名称排序：
+
+  ```json
+  {
+    "path": "/path/to/project",
+    "parent": "/path/to",
+    "truncated": false,
+    "entries": [
+      { "name": "cmd", "path": "/path/to/project/cmd", "is_dir": true, "size": 96, "mod_time": 1754300000000 },
+      { "name": "main.go", "path": "/path/to/project/main.go", "is_dir": false, "size": 1024, "mod_time": 1754300000000 }
+    ]
+  }
+  ```
+
+- `GET /api/files/read?path=<绝对路径>` 读取文本文件内容（默认上限 1 MiB，超出时 `truncated: true`）。含 NUL 字节的二进制文件返回 415 `binary_file`：
+
+  ```json
+  { "path": "/path/to/main.go", "name": "main.go", "size": 1024, "truncated": false, "content": "package main\n…" }
+  ```
+
+- `GET /api/files/download?path=<绝对路径>` 以 `application/octet-stream` + `Content-Disposition: attachment` 下载原始文件（支持 Range，Android 客户端用它下载 APK 后调起安装）。
+
+省略 `path` 时 `list` 从网关的 `--work-dir` 开始；`read`/`download` 必须显式给出 `path`。路径必须是绝对路径，服务端会做 symlink 解析；不存在的路径返回 404，目录传给 `read`/`download` 返回 400。
+
 ### 收发 pi RPC
 
 收到 `ready` 后，每个 WebSocket 文本帧发送一个 pi RPC JSON 对象：
@@ -282,6 +319,11 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 关联后的事件会先写入 replay WAL 再广播，因此活动 turn 重连回放时仍保留同一个
 `source_id`。命令没有字符串 `id` 时保持兼容，事件不会增加 `source_id`。客户端应使用
 不可复用的 ID，并以收到匹配 `source_id` 的 user 事件作为输入已进入 session 的确认。
+
+skill、prompt template 会展开输入文本，extension 指令也可能不产生 user 事件。此类
+slash prompt 可额外发送 `"pi2ws_confirm_on_response":true`；网关会在转发给 pi 前移除
+该字段，并在成功的 prompt response 到达时释放关联状态。客户端应以该 response 作为
+输入确认。
 
 除上述 user 事件关联字段外，pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等事件保持原协议。完整命令和事件格式以本机 pi 的 `docs/rpc.md` 为准。
 

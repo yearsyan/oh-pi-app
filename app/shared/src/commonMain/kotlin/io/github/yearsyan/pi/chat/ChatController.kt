@@ -130,6 +130,7 @@ class ChatController(
         val streaming: Boolean,
         val displayText: String,
         val priorOccurrences: Int,
+        val confirmOnResponse: Boolean,
     )
 
     /** Small string contract so the controller stays UI-independent. */
@@ -156,6 +157,7 @@ class ChatController(
     var thinkingLevel by mutableStateOf(""); private set
     var models = mutableStateListOf<ModelInfo>(); private set
     var thinkingLevels = mutableStateListOf<String>(); private set
+    var slashCommands = mutableStateListOf<SlashCommand>(); private set
     var capabilitiesLoading by mutableStateOf(false); private set
     var capabilitiesError by mutableStateOf<String?>(null); private set
     var isStreaming by mutableStateOf(false); private set
@@ -180,11 +182,15 @@ class ChatController(
 
     /** True when a prompt can be sent now or can create this local draft. */
     val canSendPrompt: Boolean
-        get() = pendingPrompt == null && !capabilitiesLoading &&
+        get() = pendingPrompt == null && pendingCompactId == null && !capabilitiesLoading &&
             promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
 
-    /** True after submit and until a correlated server user event confirms it. */
-    val isPromptPending: Boolean get() = pendingPrompt != null
+    /** True after submit and until the corresponding prompt or command is accepted. */
+    val isPromptPending: Boolean get() = pendingPrompt != null || pendingCompactId != null
+
+    /** Manual compaction requires an idle, attached session. */
+    val canCompact: Boolean
+        get() = conn == ConnState.Ready && !isStreaming && pendingPrompt == null && pendingCompactId == null
 
     /** True while a local draft can still change its startup model options. */
     val canConfigureDraft: Boolean
@@ -221,6 +227,7 @@ class ChatController(
     private var draftWorkDir by mutableStateOf<String?>(null)
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
+    private var pendingCompactId by mutableStateOf<String?>(null)
     private var confirmedPromptForAutoName: String? = null
     var lastConfirmedPromptSourceId by mutableStateOf<String?>(null); private set
 
@@ -235,9 +242,11 @@ class ChatController(
         draftWorkDir = workDir
         pendingCreatePrompt = null
         pendingPrompt = null
+        pendingCompactId = null
         confirmedPromptForAutoName = null
         models.clear()
         thinkingLevels.clear()
+        slashCommands.clear()
         model = ""
         currentModel = null
         thinkingLevel = ""
@@ -296,6 +305,17 @@ class ChatController(
         currentModel = selected
         model = selected?.qualified.orEmpty()
         replaceThinkingLevels(selected?.thinkingLevels.orEmpty())
+        replaceSlashCommands(
+            capabilities.commands.mapNotNull { remote ->
+                remote.name.trim().takeIf { it.isNotEmpty() }?.let { name ->
+                    SlashCommand(
+                        name = name,
+                        description = remote.description.trim(),
+                        source = SlashCommandSource.fromWire(remote.source),
+                    )
+                }
+            },
+        )
         val defaultThinking = defaults?.thinkingLevel.orEmpty()
         thinkingLevel = clampDraftThinkingLevel(defaultThinking, thinkingLevels)
     }
@@ -305,11 +325,18 @@ class ChatController(
         thinkingLevels.addAll(levels.distinct())
     }
 
+    private fun replaceSlashCommands(commands: List<SlashCommand>) {
+        slashCommands.clear()
+        slashCommands.addAll(commands.distinctBy { it.name })
+    }
+
     fun connect(action: String, sessionId: String?, workDir: String = "") {
         draftWorkDir = null
         pendingCreatePrompt = null
         pendingPrompt = null
+        pendingCompactId = null
         confirmedPromptForAutoName = null
+        slashCommands.clear()
         sessionStats = null
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
@@ -472,6 +499,7 @@ class ChatController(
         isLoadingHistory = false
         pendingCreatePrompt = null
         pendingPrompt = null
+        pendingCompactId = null
         confirmedPromptForAutoName = null
     }
 
@@ -557,6 +585,26 @@ class ChatController(
         if (refreshAgain) refreshSessionStats()
     }
 
+    /** Whether the current composer contents can be submitted as a prompt or local RPC command. */
+    fun canSubmitInput(text: String, hasImage: Boolean): Boolean {
+        val invocation = parseSlashInvocation(text)
+        return if (invocation?.name == "compact") {
+            !hasImage && canCompact
+        } else {
+            canSendPrompt && (text.isNotBlank() || hasImage)
+        }
+    }
+
+    /** Routes app-owned slash commands to RPC and all other input through pi's prompt handler. */
+    fun submitInput(text: String, images: List<PromptImage> = emptyList()): String? {
+        val invocation = parseSlashInvocation(text)
+        return if (invocation?.name == "compact") {
+            if (images.isNotEmpty()) null else compact(invocation.arguments)
+        } else {
+            sendPrompt(text, images)
+        }
+    }
+
     fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): String? {
         val trimmed = text.trim()
         if (trimmed.isEmpty() && images.isEmpty()) return null
@@ -570,6 +618,9 @@ class ChatController(
             streaming = isStreaming,
             displayText = displayText,
             priorOccurrences = items.count { it is TimelineItem.UserItem && it.text == displayText },
+            // Slash inputs may be expanded (skills/templates) or handled by an
+            // extension without ever emitting a matching user message.
+            confirmOnResponse = parseSlashInvocation(trimmed) != null,
         )
         pendingPrompt = prompt
         return when (dispatch) {
@@ -590,7 +641,13 @@ class ChatController(
 
     private fun sendPromptNow(prompt: PendingPrompt): Boolean =
         client.send(
-            buildPromptCommand(prompt.sourceId, prompt.text, prompt.images, prompt.streaming).toString(),
+            buildPromptCommand(
+                sourceId = prompt.sourceId,
+                text = prompt.text,
+                images = prompt.images,
+                isStreaming = prompt.streaming,
+                confirmOnResponse = prompt.confirmOnResponse,
+            ).toString(),
         )
 
     private fun flushPendingCreatePrompt() {
@@ -605,6 +662,17 @@ class ChatController(
         repeat(12) {
             append(Random.nextInt(256).toString(16).padStart(2, '0'))
         }
+    }
+
+    private fun compact(customInstructions: String): String? {
+        if (!canCompact) return null
+        val requestId = nextPromptSourceId()
+        pendingCompactId = requestId
+        if (!client.send(buildCompactCommand(requestId, customInstructions).toString())) {
+            pendingCompactId = null
+            return null
+        }
+        return requestId
     }
 
     /** Names an unnamed session after the first user message (first line, 30 chars). */
@@ -800,6 +868,7 @@ class ChatController(
                 sendCommand { put("type", "get_state"); this }
                 sendCommand { put("type", "get_available_models"); this }
                 sendCommand { put("type", "get_available_thinking_levels"); this }
+                sendCommand { put("type", "get_commands"); this }
                 refreshSessionStats()
                 flushPendingCreatePrompt()
             }
@@ -875,9 +944,9 @@ class ChatController(
         val command = msg.strOrEmpty("command")
         val success = msg.bool("success") == true
         val data = msg.obj("data")
+        val responseID = msg.strOrEmpty("id")
         if (!success) {
             if (command == "get_session_stats") finishSessionStatsRefresh(runQueuedRefresh = false)
-            val responseID = msg.strOrEmpty("id")
             val pending = pendingPrompt
             if (command in setOf("prompt", "steer", "follow_up") &&
                 pending != null && pending.sourceId == responseID
@@ -885,12 +954,23 @@ class ChatController(
                 if (pendingCreatePrompt?.sourceId == responseID) pendingCreatePrompt = null
                 pendingPrompt = null
             }
+            if (command == "compact" && pendingCompactId == responseID) pendingCompactId = null
             val error = msg.strOrEmpty("error")
-            if (command != "abort") onToast("$command: $error", Toast.Kind.Error)
+            if (command !in setOf("abort", "get_commands")) {
+                onToast("$command: $error", Toast.Kind.Error)
+            }
             if (command == "set_model" || command == "set_thinking_level") {
                 sendCommand { put("type", "get_state"); this }
             }
             return
+        }
+        val pending = pendingPrompt
+        if (command == "prompt" && pending?.confirmOnResponse == true && pending.sourceId == responseID) {
+            confirmPendingPrompt(responseID)
+        }
+        if (command == "compact" && pendingCompactId == responseID) {
+            pendingCompactId = null
+            lastConfirmedPromptSourceId = responseID
         }
         when (command) {
             "get_session_stats" -> {
@@ -929,6 +1009,21 @@ class ChatController(
                 data?.arr("levels")?.forEach { el ->
                     el.toString().trim('"').takeIf { it.isNotBlank() }?.let { thinkingLevels.add(it) }
                 }
+            }
+            "get_commands" -> {
+                replaceSlashCommands(
+                    data?.arr("commands").orEmpty().mapNotNull { element ->
+                        (element as? JsonObject)?.let { remote ->
+                            remote.strOrEmpty("name").trim().takeIf { it.isNotEmpty() }?.let { name ->
+                                SlashCommand(
+                                    name = name,
+                                    description = remote.strOrEmpty("description").trim(),
+                                    source = SlashCommandSource.fromWire(remote.strOrEmpty("source")),
+                                )
+                            }
+                        }
+                    },
+                )
             }
             "set_model" -> {
                 val m = (data?.obj("model") ?: data)
@@ -1267,7 +1362,7 @@ class ChatController(
     }
 
     private fun userMessageText(content: JsonElement?): String {
-        val text = contentText(content)
+        val text = compactSkillInvocation(contentText(content))
         val imageCount =
             (content as? JsonArray)?.count { element ->
                 (element as? JsonObject)?.str("type") == "image"

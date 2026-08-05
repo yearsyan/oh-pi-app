@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
+	"github.com/yearsyan/pi2ws/internal/filebrowser"
 )
 
 var sessionChangingCommands = map[string]struct{}{
@@ -67,6 +68,11 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/api/sessions", gateway.handleSessions)
 	mux.HandleFunc("/api/sessions/", gateway.handleSession)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
+	filebrowser.New(filebrowser.Config{
+		Authenticate: gateway.authenticated,
+		WorkDir:      cfg.WorkDir,
+		Logger:       cfg.Logger,
+	}).Register(mux)
 	gateway.handler = mux
 	return gateway, nil
 }

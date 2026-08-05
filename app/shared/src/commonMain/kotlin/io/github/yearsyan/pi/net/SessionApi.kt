@@ -63,12 +63,21 @@ data class GatewayCapabilitySelection(
     @SerialName("thinking_level") val thinkingLevel: String = "",
 )
 
-/** Sessionless model and thinking options for one gateway workspace. */
+/** One extension, prompt template, or skill available in a gateway workspace. */
+@Serializable
+data class GatewayCommandCapability(
+    val name: String,
+    val description: String = "",
+    val source: String = "",
+)
+
+/** Sessionless model, thinking, and slash-command options for one gateway workspace. */
 @Serializable
 data class GatewayCapabilities(
     @SerialName("work_dir") val workDir: String,
     @SerialName("default") val defaultSelection: GatewayCapabilitySelection? = null,
     val models: List<GatewayModelCapability> = emptyList(),
+    val commands: List<GatewayCommandCapability> = emptyList(),
 )
 
 /** Returns the server-owned sessions for one pi2ws gateway. */

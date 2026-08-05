@@ -59,8 +59,8 @@ android {
         applicationId = "io.github.yearsyan.pi"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 15
-        versionName = "1.14"
+        versionCode = 16
+        versionName = "1.15"
 
         externalNativeBuild {
             cmake {

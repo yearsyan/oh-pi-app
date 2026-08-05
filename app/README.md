@@ -16,6 +16,8 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **模型与思考强度切换**：输入框下方的下拉选择；新会话先通过 `/api/capabilities`
   无 session 预取工作区选项，首条消息创建 session 时应用所选配置，已有会话继续使用
   `get_available_models` / `set_model` 和 `get_available_thinking_levels` / `set_thinking_level`。
+- **Slash 指令**：输入 `/` 即展示并筛选当前工作区的 extension、prompt template 和
+  `skill:*` 指令；`/compact` 支持可选压缩要求，并映射为原生 compact RPC。
 - **自适应布局**：宽度 ≥ 840dp（平板/桌面）为「列表 + 详情」双栏；手机为单栏导航。
 - **多语言**：中文 / English / 跟随系统。
 - **深色 / 浅色**：跟随系统或手动指定。

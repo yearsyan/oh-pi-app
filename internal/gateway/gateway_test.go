@@ -165,6 +165,16 @@ func TestPiHelperProcess(t *testing.T) {
 		if commandType == "get_available_thinking_levels" {
 			response["data"] = map[string]any{"levels": []string{"off", "low", "medium", "high"}}
 		}
+		if commandType == "get_commands" {
+			response["data"] = map[string]any{"commands": []map[string]any{
+				{"name": "fix-tests", "description": "Fix failing tests", "source": "prompt"},
+				{"name": "skill:review", "description": "Review changed code", "source": "skill"},
+			}}
+			if os.Getenv("PI2WS_TEST_NO_GET_COMMANDS") == "1" {
+				response["success"] = false
+				response["error"] = "Unknown command: get_commands"
+			}
+		}
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(6)
 		}
@@ -244,6 +254,9 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 		if len(payload.Models) != 3 {
 			t.Fatalf("models = %#v, want three", payload.Models)
 		}
+		if len(payload.Commands) != 2 || payload.Commands[1].Name != "skill:review" {
+			t.Fatalf("commands = %#v, want prompt and skill", payload.Commands)
+		}
 		var reasoning capabilityModel
 		for _, model := range payload.Models {
 			if model.Provider == "fake" && model.ID == "reasoning-model" {
@@ -269,6 +282,29 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 	}
 	if len(sessions) != 0 {
 		t.Fatalf("capability discovery persisted sessions: %#v", sessions)
+	}
+}
+
+func TestCapabilitiesAllowPiWithoutGetCommands(t *testing.T) {
+	t.Setenv("PI2WS_TEST_NO_GET_COMMANDS", "1")
+	_, server := startTestGateway(t, t.TempDir())
+	endpoint := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(t.TempDir())
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("create capabilities request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	defer response.Body.Close()
+	var payload capabilitiesResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || len(payload.Commands) != 0 {
+		t.Fatalf("capabilities status = %d, commands = %#v", response.StatusCode, payload.Commands)
 	}
 }
 

@@ -63,6 +63,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import kotlin.math.roundToInt
@@ -75,6 +76,7 @@ fun ChatTopBar(
     onBack: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onBrowseFiles: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
         Row(
@@ -122,6 +124,7 @@ fun ChatTopBar(
                 onDelete = onDelete,
                 onReconnect = { controller.reconnect() },
                 canReconnect = controller.canReconnect,
+                onBrowseFiles = onBrowseFiles,
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -411,6 +414,7 @@ private fun OverflowMenu(
     onDelete: () -> Unit,
     onReconnect: () -> Unit,
     canReconnect: Boolean,
+    onBrowseFiles: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -418,6 +422,11 @@ private fun OverflowMenu(
             Icon(Icons.Filled.MoreVert, contentDescription = null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(S.browseFiles) },
+                leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
+                onClick = { onBrowseFiles(); open = false },
+            )
             DropdownMenuItem(
                 text = { Text(S.reconnect) },
                 leadingIcon = { Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)) },

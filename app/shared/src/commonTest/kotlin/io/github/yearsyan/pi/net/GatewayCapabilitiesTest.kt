@@ -21,6 +21,11 @@ class GatewayCapabilitiesTest {
                 "name": "Model",
                 "provider": "router",
                 "thinking_levels": ["off", "low", "high"]
+              }],
+              "commands": [{
+                "name": "skill:review",
+                "description": "Review changed code",
+                "source": "skill"
               }]
             }
             """.trimIndent(),
@@ -29,5 +34,7 @@ class GatewayCapabilitiesTest {
         assertEquals("/workspace", capabilities.workDir)
         assertEquals("vendor/model", assertNotNull(capabilities.defaultSelection).modelId)
         assertEquals(listOf("off", "low", "high"), capabilities.models.single().thinkingLevels)
+        assertEquals("skill:review", capabilities.commands.single().name)
+        assertEquals("skill", capabilities.commands.single().source)
     }
 }

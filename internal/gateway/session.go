@@ -172,6 +172,7 @@ func (s *piSession) submit(clientDone <-chan struct{}, command []byte) error {
 	var sourceToken uint64
 	if source, ok := userSourceFromCommand(command); ok {
 		sourceToken = s.userSources.enqueue(source)
+		command = stripUserSourceMetadata(command)
 	}
 	select {
 	case s.input <- command:

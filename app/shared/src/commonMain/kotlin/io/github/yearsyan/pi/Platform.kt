@@ -5,3 +5,6 @@ interface Platform {
 }
 
 expect fun getPlatform(): Platform
+
+/** Returns the installed app version (for example, "1.15"), or "unknown" when unavailable. */
+expect fun appVersion(): String
