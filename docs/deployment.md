@@ -2,8 +2,6 @@
 
 本文介绍 Oh Pi App 网关（`ohpi-gateway`）的 macOS LaunchAgent 部署、全部运行参数和生产安全建议。首次运行可先参考根目录的[快速开始](../README.md#快速开始)。
 
-从旧名 **pi2ws** 升级时，直接重新执行 `./scripts/deploy-launchd.sh` 即可：脚本会停掉旧 LaunchAgent、迁移 `~/.config/pi2ws` → `~/.config/ohpi`（配置键 `PI2WS_*` → `OHPI_*`）、迁移 `~/.local/state/pi2ws` → `~/.local/state/ohpi`，并把会话目录里的 `pi2ws-*.json/log` 重命名为 `ohpi-*`。
-
 ## macOS LaunchAgent 部署
 
 仓库提供可重复执行的生产部署脚本。首次执行时传入 token；脚本会构建去除本地路径和调试符号的二进制、安装到 `~/.local/bin/ohpi-gateway`，然后创建并启动当前用户的 LaunchAgent：
@@ -23,7 +21,7 @@ OHPI_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
 ```bash
 OHPI_TOKEN="<TOKEN>" \
 OHPI_LISTEN="0.0.0.0:18080" \
-OHPI_DATA_DIR="$HOME/.local/state/ohpi" \
+OHPI_DATA_DIR="$HOME/.local/state/oh-pi-app" \
 OHPI_WORK_DIR="/path/to/project" \
 OHPI_TITLE_MODEL="openai/gpt-5-nano" \
 OHPI_PI_COMMAND="/absolute/path/to/pi" \
@@ -33,10 +31,11 @@ OHPI_PI_COMMAND="/absolute/path/to/pi" \
 部署文件及运行状态：
 
 - 二进制：`~/.local/bin/ohpi-gateway`
+- 启动包装器：`~/.local/libexec/oh-pi-app/ohpi-gateway-launch`
 - LaunchAgent：`~/Library/LaunchAgents/io.github.yearsyan.ohpi.gateway.plist`
-- 配置文件：`~/.config/ohpi/config.json`
-- token：`~/.config/ohpi/token`（权限 `0600`，不会写入 plist 或命令行）
-- session 与日志：`~/.local/state/ohpi/`
+- 配置文件：`~/.config/oh-pi-app/config.json`
+- token：`~/.config/oh-pi-app/token`（权限 `0600`，不会写入 plist 或命令行）
+- session 与日志：`~/.local/state/oh-pi-app/`
 
 ```bash
 launchctl print "gui/$(id -u)/io.github.yearsyan.ohpi.gateway"
@@ -45,7 +44,7 @@ curl http://127.0.0.1:18080/healthz
 
 ## 配置
 
-部署脚本会创建并维护 `~/.config/ohpi/config.json`。ohpi-gateway 默认读取 `$XDG_CONFIG_HOME/ohpi/config.json`，未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/ohpi/config.json`；文件不存在时继续使用环境变量和内置默认值。也可以通过 `--config` 或 `OHPI_CONFIG_FILE` 指定其他文件；显式指定的文件不存在或内容无效时，进程会拒绝启动。文件使用 JSON 对象格式：
+部署脚本会创建并维护 `~/.config/oh-pi-app/config.json`。ohpi-gateway 默认读取 `$XDG_CONFIG_HOME/oh-pi-app/config.json`，未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/oh-pi-app/config.json`；文件不存在时继续使用环境变量和内置默认值。也可以通过 `--config` 或 `OHPI_CONFIG_FILE` 指定其他文件；显式指定的文件不存在或内容无效时，进程会拒绝启动。文件使用 JSON 对象格式：
 
 ```json
 {
@@ -60,10 +59,10 @@ curl http://127.0.0.1:18080/healthz
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
-| `--config` | `OHPI_CONFIG_FILE` | `$XDG_CONFIG_HOME/ohpi/config.json` 或 `~/.config/ohpi/config.json` | JSON 配置文件；默认文件不存在时忽略 |
+| `--config` | `OHPI_CONFIG_FILE` | `$XDG_CONFIG_HOME/oh-pi-app/config.json` 或 `~/.config/oh-pi-app/config.json` | JSON 配置文件；默认文件不存在时忽略 |
 | `--listen` | `OHPI_LISTEN` | `127.0.0.1:18080` | HTTP 监听地址 |
 | `--token` | `OHPI_TOKEN` | 无 | 必填鉴权 token |
-| `--data-dir` | `OHPI_DATA_DIR` | `~/.local/state/ohpi` | session 持久化目录 |
+| `--data-dir` | `OHPI_DATA_DIR` | `$XDG_STATE_HOME/oh-pi-app` 或 `~/.local/state/oh-pi-app` | session 持久化目录 |
 | `--work-dir` | `OHPI_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
 | `--title-model` | `OHPI_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
 | `--pi` | `OHPI_PI_COMMAND` | `pi` | pi 可执行文件 |

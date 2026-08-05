@@ -117,7 +117,29 @@ func TestResolveRuntimeConfigValuePrecedence(t *testing.T) {
 func TestDefaultConfigFileUsesXDGConfigHome(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
-	if got, want := defaultConfigFile(), filepath.Join(configHome, "ohpi", "config.json"); got != want {
+	if got, want := defaultConfigFile(), filepath.Join(configHome, appDirectoryName, "config.json"); got != want {
 		t.Fatalf("defaultConfigFile() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultDataDirUsesXDGStateHome(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	if got, want := defaultDataDir(), filepath.Join(stateHome, appDirectoryName); got != want {
+		t.Fatalf("defaultDataDir() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultDirectoriesUseOhPiAppName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	if got, want := defaultConfigFile(), filepath.Join(home, ".config", appDirectoryName, "config.json"); got != want {
+		t.Fatalf("defaultConfigFile() = %q, want %q", got, want)
+	}
+	if got, want := defaultDataDir(), filepath.Join(home, ".local", "state", appDirectoryName); got != want {
+		t.Fatalf("defaultDataDir() = %q, want %q", got, want)
 	}
 }

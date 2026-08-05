@@ -13,11 +13,9 @@ import (
 )
 
 const (
-	historyCacheFileName       = "ohpi-history.json"
-	legacyHistoryCacheFileName = "pi2ws-history.json" // pre-rename brand
-	replayLogFileName          = "ohpi-replay.log"
-	legacyReplayLogFileName    = "pi2ws-replay.log" // pre-rename brand
-	replayStoreVersion         = 2
+	historyCacheFileName = "ohpi-history.json"
+	replayLogFileName    = "ohpi-replay.log"
+	replayStoreVersion   = 2
 )
 
 type persistedHistory struct {
@@ -53,12 +51,9 @@ func (s *piSession) openReplayStore(newSession bool) error {
 			return err
 		}
 	} else {
-		cachePath, err := firstExistingPath(s.dir, historyCacheFileName, legacyHistoryCacheFileName)
+		cachePath := filepath.Join(s.dir, historyCacheFileName)
+		data, err := os.ReadFile(cachePath)
 		if err == nil {
-			data, readErr := os.ReadFile(cachePath)
-			if readErr != nil {
-				return fmt.Errorf("read history cache: %w", readErr)
-			}
 			var cache persistedHistory
 			if err := json.Unmarshal(data, &cache); err != nil {
 				return fmt.Errorf("decode history cache: %w", err)
@@ -80,15 +75,6 @@ func (s *piSession) openReplayStore(newSession bool) error {
 
 	logPath := filepath.Join(s.dir, replayLogFileName)
 	if !newSession {
-		// Prefer the new name; fall back to the pre-rename log and migrate on open.
-		if _, err := os.Lstat(logPath); errors.Is(err, os.ErrNotExist) {
-			legacyPath := filepath.Join(s.dir, legacyReplayLogFileName)
-			if _, legErr := os.Lstat(legacyPath); legErr == nil {
-				if renErr := os.Rename(legacyPath, logPath); renErr != nil {
-					return fmt.Errorf("migrate replay log: %w", renErr)
-				}
-			}
-		}
 		if err := s.loadReplayLogLocked(logPath); err != nil {
 			return err
 		}
@@ -369,22 +355,7 @@ func (s *piSession) writeHistoryCacheLocked(throughSeq uint64, boundary historyB
 	if err := writeAtomicFile(s.dir, historyCacheFileName, data); err != nil {
 		return err
 	}
-	_ = os.Remove(filepath.Join(s.dir, legacyHistoryCacheFileName))
 	return nil
-}
-
-func firstExistingPath(dir string, names ...string) (string, error) {
-	for _, name := range names {
-		path := filepath.Join(dir, name)
-		_, err := os.Lstat(path)
-		if err == nil {
-			return path, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-	}
-	return "", os.ErrNotExist
 }
 
 func (s *piSession) compactReplayLogLocked(throughSeq uint64) error {

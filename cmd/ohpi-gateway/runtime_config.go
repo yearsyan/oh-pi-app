@@ -12,15 +12,17 @@ import (
 
 type runtimeConfig map[string]string
 
+const appDirectoryName = "oh-pi-app"
+
 func defaultConfigFile() string {
 	if configHome := os.Getenv("XDG_CONFIG_HOME"); configHome != "" {
-		return filepath.Join(configHome, "ohpi", "config.json")
+		return filepath.Join(configHome, appDirectoryName, "config.json")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".", ".ohpi", "config.json")
+		return filepath.Join(".", "."+appDirectoryName, "config.json")
 	}
-	return filepath.Join(home, ".config", "ohpi", "config.json")
+	return filepath.Join(home, ".config", appDirectoryName, "config.json")
 }
 
 func loadRuntimeConfig(path string, required bool) (runtimeConfig, error) {

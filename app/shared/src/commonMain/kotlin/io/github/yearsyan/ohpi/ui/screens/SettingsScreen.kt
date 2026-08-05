@@ -167,7 +167,7 @@ fun SettingsScreen(
             // ---- about ----
             SectionHeader(S.aboutSection)
             Text(
-                "${S.appName} · ohpi client",
+                S.appName,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

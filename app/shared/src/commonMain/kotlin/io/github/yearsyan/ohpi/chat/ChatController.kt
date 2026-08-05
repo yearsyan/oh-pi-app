@@ -151,7 +151,7 @@ internal fun clampDraftThinkingLevel(requested: String, available: List<String>)
 }
 
 /**
- * Owns one WebSocket connection to a ohpi session and the reactive timeline
+ * Owns one WebSocket connection to an Oh Pi App session and the reactive timeline
  * rendered by the chat UI. Mirrors the protocol handling of the web demo.
  */
 class ChatController(
@@ -775,7 +775,7 @@ class ChatController(
     }
 
     private fun nextPromptSourceId(): String = buildString {
-        append("ohpi-app-")
+        append("oh-pi-app-")
         append(nowMillis().toString(16))
         append('-')
         repeat(12) {

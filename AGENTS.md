@@ -46,7 +46,7 @@ STORE_PASS=$(openssl rand -hex 16)
 keytool -genkeypair -v -keystore app/androidApp/pi-release.keystore -alias pi \
   -keyalg RSA -keysize 2048 -validity 10950 \
   -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
-  -dname "CN=Oh Pi App, OU=ohpi, O=yearsyan, L=Shanghai, ST=Shanghai, C=CN"
+  -dname "CN=Oh Pi App, OU=oh-pi-app, O=yearsyan, L=Shanghai, ST=Shanghai, C=CN"
 printf "storeFile=pi-release.keystore\nstorePassword=%s\nkeyAlias=pi\nkeyPassword=%s\n" \
   "$STORE_PASS" "$STORE_PASS" > app/keystore.properties
 chmod 600 app/keystore.properties

@@ -14,10 +14,7 @@ import (
 	"time"
 )
 
-const (
-	metadataFileName       = "ohpi-session.json"
-	legacyMetadataFileName = "pi2ws-session.json" // pre-rename brand
-)
+const metadataFileName = "ohpi-session.json"
 
 var errSessionNotFound = errors.New("session not found")
 
@@ -98,7 +95,7 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 		return sessionMetadata{}, "", fmt.Errorf("%w: invalid session directory", errSessionNotFound)
 	}
 
-	path, err := resolveExistingFile(dir, metadataFileName, legacyMetadataFileName)
+	path, err := resolveExistingFile(dir, metadataFileName)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return sessionMetadata{}, "", errSessionNotFound
@@ -219,14 +216,14 @@ func (s *sessionStore) discard(id string) error {
 		return fmt.Errorf("invalid session id %q", id)
 	}
 	dir := s.sessionDir(id)
-	for _, name := range []string{metadataFileName, legacyMetadataFileName} {
+	for _, name := range []string{metadataFileName} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove session metadata: %w", err)
 		}
 	}
 	for _, name := range []string{
-		historyCacheFileName, legacyHistoryCacheFileName,
-		replayLogFileName, legacyReplayLogFileName,
+		historyCacheFileName,
+		replayLogFileName,
 	} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove session gateway state %q: %w", name, err)
@@ -307,8 +304,6 @@ func replaceMetadata(dir string, meta sessionMetadata) error {
 		return fmt.Errorf("replace session metadata: %w", err)
 	}
 	committed = true
-	// Drop pre-rename metadata once the new name is in place.
-	_ = os.Remove(filepath.Join(dir, legacyMetadataFileName))
 	return nil
 }
 

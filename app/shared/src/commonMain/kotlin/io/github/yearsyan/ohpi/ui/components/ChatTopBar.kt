@@ -479,9 +479,9 @@ private fun SessionInfoDialog(
     workDir: String,
     onDismiss: () -> Unit,
 ) {
-    val sessionDir = "~/.local/state/ohpi/sessions/$sessionId"
+    val sessionDir = "~/.local/state/oh-pi-app/sessions/$sessionId"
     val resumeCommand =
-        "pi --session-dir ~/.local/state/ohpi/sessions/$sessionId --session-id $sessionId"
+        "pi --session-dir ~/.local/state/oh-pi-app/sessions/$sessionId --session-id $sessionId"
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(S.sessionInfo) },
@@ -492,7 +492,7 @@ private fun SessionInfoDialog(
             ) {
                 InfoField(S.sessionId, sessionId)
                 InfoField(S.workDir, workDir)
-                InfoField("ohpi session dir", sessionDir)
+                InfoField("Oh Pi App session dir", sessionDir)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         S.resumeCommand,

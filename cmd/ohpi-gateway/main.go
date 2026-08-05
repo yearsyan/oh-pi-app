@@ -167,11 +167,11 @@ func mustWorkingDir() string {
 
 func defaultDataDir() string {
 	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
-		return filepath.Join(stateHome, "ohpi")
+		return filepath.Join(stateHome, appDirectoryName)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".", ".ohpi")
+		return filepath.Join(".", "."+appDirectoryName)
 	}
-	return filepath.Join(home, ".local", "state", "ohpi")
+	return filepath.Join(home, ".local", "state", appDirectoryName)
 }

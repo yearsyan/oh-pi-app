@@ -1,5 +1,5 @@
 /bin/
-/.ohpi/
+/.oh-pi-app/
 web-demo/node_modules/
 web-demo/dist/
 web-demo/.vite/

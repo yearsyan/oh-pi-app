@@ -10,14 +10,14 @@ launcher_source=$script_dir/launchd/ohpi-gateway-launch.sh
 
 binary_dir=$HOME/.local/bin
 binary_path=$binary_dir/ohpi-gateway
-libexec_dir=$HOME/.local/libexec/ohpi-gateway
+libexec_dir=$HOME/.local/libexec/oh-pi-app
 launcher_path=$libexec_dir/ohpi-gateway-launch
-config_dir=$HOME/.config/ohpi
+config_dir=$HOME/.config/oh-pi-app
 config_file=$config_dir/config.json
 token_file=$config_dir/token
 launch_agents_dir=$HOME/Library/LaunchAgents
 plist_path=$launch_agents_dir/$label.plist
-default_state_dir=$HOME/.local/state/ohpi
+default_state_dir=$HOME/.local/state/oh-pi-app
 log_dir=$default_state_dir/log
 stdout_log=$log_dir/ohpi-gateway.stdout.log
 stderr_log=$log_dir/ohpi-gateway.stderr.log
@@ -79,90 +79,6 @@ require_command plutil
 require_command curl
 require_command install
 require_command mktemp
-
-# One-shot migration from the former pi2ws install layout.
-legacy_label=io.github.yearsyan.pi2ws
-legacy_job_target=$domain/$legacy_label
-legacy_plist_path=$launch_agents_dir/$legacy_label.plist
-legacy_config_dir=$HOME/.config/pi2ws
-legacy_config_file=$legacy_config_dir/config.json
-legacy_token_file=$legacy_config_dir/token
-legacy_state_dir=$HOME/.local/state/pi2ws
-legacy_binary_path=$binary_dir/pi2ws
-legacy_libexec_dir=$HOME/.local/libexec/pi2ws
-
-migrate_legacy_session_files() {
-	root=$1/sessions
-	[ -d "$root" ] || return 0
-	find "$root" -type f \( \
-		-name 'pi2ws-session.json' -o \
-		-name 'pi2ws-history.json' -o \
-		-name 'pi2ws-replay.log' \
-	\) -print 2>/dev/null | while IFS= read -r src; do
-		base=$(basename "$src")
-		dir=$(dirname "$src")
-		case $base in
-			pi2ws-session.json) dst=$dir/ohpi-session.json ;;
-			pi2ws-history.json) dst=$dir/ohpi-history.json ;;
-			pi2ws-replay.log) dst=$dir/ohpi-replay.log ;;
-			*) continue ;;
-		esac
-		if [ -e "$dst" ]; then
-			continue
-		fi
-		mv "$src" "$dst"
-	done
-}
-
-if launchctl print "$legacy_job_target" >/dev/null 2>&1; then
-	note "Stopping legacy LaunchAgent $legacy_label"
-	launchctl bootout "$legacy_job_target" || true
-fi
-if [ -f "$legacy_plist_path" ]; then
-	note "Removing legacy LaunchAgent plist"
-	/bin/rm -f "$legacy_plist_path"
-fi
-
-if [ ! -d "$config_dir" ] && [ -d "$legacy_config_dir" ]; then
-	note "Migrating config directory $legacy_config_dir -> $config_dir"
-	/usr/bin/install -d -m 0700 "$config_dir"
-	if [ -f "$legacy_config_file" ] && [ ! -f "$config_file" ]; then
-		# Rewrite PI2WS_* keys to OHPI_* and default state path.
-		/usr/bin/python3 - "$legacy_config_file" "$config_file" "$default_state_dir" <<'PY'
-import json, sys
-src, dst, default_state = sys.argv[1:4]
-with open(src, encoding="utf-8") as f:
-    data = json.load(f)
-out = {}
-for key, value in data.items():
-    if key.startswith("PI2WS_"):
-        key = "OHPI_" + key[len("PI2WS_"):]
-    if key == "OHPI_DATA_DIR" and isinstance(value, str) and value.rstrip("/").endswith("/.local/state/pi2ws"):
-        value = default_state
-    out[key] = value
-with open(dst, "w", encoding="utf-8") as f:
-    json.dump(out, f, indent=2, sort_keys=True)
-    f.write("\n")
-PY
-		/bin/chmod 0600 "$config_file"
-	fi
-	if [ -f "$legacy_token_file" ] && [ ! -f "$token_file" ]; then
-		/usr/bin/install -m 0600 "$legacy_token_file" "$token_file"
-	fi
-fi
-
-if [ ! -d "$default_state_dir" ] && [ -d "$legacy_state_dir" ]; then
-	note "Migrating state directory $legacy_state_dir -> $default_state_dir"
-	mv "$legacy_state_dir" "$default_state_dir"
-fi
-migrate_legacy_session_files "$default_state_dir"
-if [ -d "$legacy_state_dir" ]; then
-	migrate_legacy_session_files "$legacy_state_dir"
-fi
-
-# Best-effort cleanup of superseded install artifacts.
-[ -f "$legacy_binary_path" ] && /bin/rm -f "$legacy_binary_path"
-[ -d "$legacy_libexec_dir" ] && /bin/rm -rf "$legacy_libexec_dir"
 
 deploy_token=${OHPI_TOKEN-}
 unset OHPI_TOKEN
@@ -264,7 +180,7 @@ case $listen_port in
 esac
 health_url=${OHPI_HEALTH_URL-http://127.0.0.1:$listen_port/healthz}
 
-deploy_tmp=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/ohpi-deploy.XXXXXX")
+deploy_tmp=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/oh-pi-app-deploy.XXXXXX")
 cleanup() {
 	/bin/rm -rf "$deploy_tmp"
 }
