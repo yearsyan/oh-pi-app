@@ -47,6 +47,27 @@ internal data class DecodedEntryCache(
     val lastEntryId: String,
 )
 
+internal data class UserMessageContent(
+    val text: String,
+    val images: List<TimelineImage>,
+)
+
+internal fun userMessageContent(content: JsonElement?): UserMessageContent {
+    val text = compactSkillInvocation(contentText(content))
+    val images =
+        (content as? JsonArray).orEmpty().mapNotNull { element ->
+            val block = element as? JsonObject ?: return@mapNotNull null
+            if (block.str("type") != "image") return@mapNotNull null
+            val data = block.strOrEmpty("data")
+            if (data.isEmpty()) return@mapNotNull null
+            TimelineImage(
+                data = data,
+                mimeType = block.strOrEmpty("mimeType").ifBlank { "image/jpeg" },
+            )
+        }
+    return UserMessageContent(text = text, images = images)
+}
+
 internal fun decodeEntryCache(bytes: ByteArray): DecodedEntryCache? {
     if (bytes.isEmpty()) return DecodedEntryCache(JsonArray(emptyList()), "")
     val byId = LinkedHashMap<String, JsonObject>()
@@ -145,7 +166,6 @@ class ChatController(
     data class ChatStrings(
         val commandRejected: String,
         val abortSent: String,
-        val imageAttachment: (Int) -> String,
         val compacting: String,
         val compacted: String,
         val retryOk: String,
@@ -623,14 +643,19 @@ class ChatController(
         if (trimmed.isEmpty() && images.isEmpty()) return null
         val dispatch = promptDispatch(conn, isDraft, pendingCreatePrompt != null)
         if (pendingPrompt != null || dispatch == PromptDispatch.Unavailable) return null
-        val displayText = userMessageText(trimmed, images.size)
+        val displayText = trimmed
         val prompt = PendingPrompt(
             sourceId = nextPromptSourceId(),
             text = trimmed,
             images = images.toList(),
             streaming = isStreaming,
             displayText = displayText,
-            priorOccurrences = items.count { it is TimelineItem.UserItem && it.text == displayText },
+            priorOccurrences =
+                items.count {
+                    it is TimelineItem.UserItem &&
+                        it.text == displayText &&
+                        it.images.size == images.size
+                },
             // Slash inputs may be expanded (skills/templates) or handled by an
             // extension without ever emitting a matching user message.
             confirmOnResponse = parseSlashInvocation(trimmed) != null,
@@ -1200,7 +1225,7 @@ class ChatController(
 
     private fun handleUserMessageStart(event: JsonObject, message: JsonObject) {
         val sourceId = event.strOrEmpty("source_id")
-        val echoed = userMessageText(message["content"])
+        val content = userMessageContent(message["content"])
         val timestamp = message.long("timestamp") ?: nowMillis()
         val existing = sourceId.takeIf { it.isNotBlank() }?.let { wanted ->
             items.asReversed().firstOrNull {
@@ -1208,10 +1233,19 @@ class ChatController(
             } as? TimelineItem.UserItem
         }
         if (existing != null) {
-            if (echoed.isNotEmpty()) existing.text = echoed
+            existing.text = content.text
+            existing.images = content.images
             existing.ts = timestamp
         } else {
-            items.add(TimelineItem.UserItem(keySeq++, echoed, timestamp, sourceId.ifBlank { null }))
+            items.add(
+                TimelineItem.UserItem(
+                    key = keySeq++,
+                    text = content.text,
+                    ts = timestamp,
+                    sourceId = sourceId.ifBlank { null },
+                    images = content.images,
+                ),
+            )
         }
         if (sourceId.isNotBlank()) confirmPendingPrompt(sourceId)
     }
@@ -1302,7 +1336,17 @@ class ChatController(
             val msg = entry.obj("message") ?: continue
             val ts = msg.long("timestamp") ?: nowMillis()
             when (msg.str("role")) {
-                "user" -> items.add(TimelineItem.UserItem(keySeq++, userMessageText(msg["content"]), ts))
+                "user" -> {
+                    val content = userMessageContent(msg["content"])
+                    items.add(
+                        TimelineItem.UserItem(
+                            key = keySeq++,
+                            text = content.text,
+                            ts = ts,
+                            images = content.images,
+                        ),
+                    )
+                }
                 "assistant" -> {
                     val item = TimelineItem.AssistantItem(
                         key = keySeq++,
@@ -1371,26 +1415,13 @@ class ChatController(
     private fun reconcilePendingPromptFromHistory() {
         val pending = pendingPrompt ?: return
         val matches = items.filterIsInstance<TimelineItem.UserItem>()
-            .filter { it.text == pending.displayText }
+            .filter {
+                it.text == pending.displayText && it.images.size == pending.images.size
+            }
         if (matches.size <= pending.priorOccurrences) return
         matches.last().sourceId = pending.sourceId
         confirmPendingPrompt(pending.sourceId)
     }
-
-    private fun userMessageText(content: JsonElement?): String {
-        val text = compactSkillInvocation(contentText(content))
-        val imageCount =
-            (content as? JsonArray)?.count { element ->
-                (element as? JsonObject)?.str("type") == "image"
-            } ?: 0
-        return userMessageText(text, imageCount)
-    }
-
-    private fun userMessageText(text: String, imageCount: Int): String =
-        buildList {
-            if (imageCount > 0) add(strings().imageAttachment(imageCount))
-            if (text.isNotBlank()) add(text)
-        }.joinToString("\n")
 
     // ---------- extension UI ----------
 

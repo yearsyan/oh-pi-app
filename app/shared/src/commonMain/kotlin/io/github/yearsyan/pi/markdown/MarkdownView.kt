@@ -302,7 +302,7 @@ private fun DrawScope.drawInlineCodeBackgrounds(
 /** Lightweight markdown renderer tuned for chat messages. */
 @Composable
 fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
-    val blocks = parseBlocks(markdown)
+    val blocks = remember(markdown) { parseBlocks(markdown) }
     val codeBg = piExtras.codeBackground
     val onCode = piExtras.onCode
     SelectionContainer(modifier) {

@@ -90,6 +90,8 @@ interface Strings {
     val folderLoadFailed: (String) -> String
     val fileOpenFailed: (String) -> String
     val fileTruncatedNotice: String
+    val fileViewSource: String
+    val fileViewRendered: String
     val apkDownloading: String
     val apkInstallFailed: (String) -> String
 
@@ -298,6 +300,8 @@ object EnStrings : Strings {
     override val folderLoadFailed = { error: String -> "Could not open folder: $error" }
     override val fileOpenFailed = { error: String -> "Could not open file: $error" }
     override val fileTruncatedNotice = "Large file — showing the beginning only"
+    override val fileViewSource = "Source"
+    override val fileViewRendered = "Preview"
     override val apkDownloading = "Downloading APK…"
     override val apkInstallFailed = { error: String -> "Could not install APK: $error" }
 
@@ -504,6 +508,8 @@ object ZhStrings : Strings {
     override val folderLoadFailed = { error: String -> "无法打开文件夹：$error" }
     override val fileOpenFailed = { error: String -> "无法打开文件：$error" }
     override val fileTruncatedNotice = "文件过大，仅显示开头部分"
+    override val fileViewSource = "源码"
+    override val fileViewRendered = "预览"
     override val apkDownloading = "正在下载 APK…"
     override val apkInstallFailed = { error: String -> "无法安装 APK：$error" }
 

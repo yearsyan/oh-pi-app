@@ -405,7 +405,6 @@ class AppViewModel(
                     ChatController.ChatStrings(
                         commandRejected = s.commandRejected,
                         abortSent = s.abortSent,
-                        imageAttachment = s.imageAttachment,
                         compacting = s.compacting,
                         compacted = s.compacted,
                         retryOk = s.retryOk,

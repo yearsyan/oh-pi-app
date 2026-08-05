@@ -527,11 +527,13 @@ private fun InfoField(label: String, value: String) {
             fontWeight = FontWeight.SemiBold,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
-            SelectionContainer {
+            // weight must sit on SelectionContainer itself: it is the Row's
+            // direct child, so a weight on the inner Text is silently ignored
+            // and long values would push CopyButton out of the row.
+            SelectionContainer(Modifier.weight(1f)) {
                 Text(
                     value,
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier.weight(1f),
                 )
             }
             CopyButton(value)
@@ -549,11 +551,10 @@ private fun CopyableCode(text: String) {
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SelectionContainer {
+        SelectionContainer(Modifier.weight(1f)) {
             Text(
                 text,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                modifier = Modifier.weight(1f),
             )
         }
         CopyButton(text)

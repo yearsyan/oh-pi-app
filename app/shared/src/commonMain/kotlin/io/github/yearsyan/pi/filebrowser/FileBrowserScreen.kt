@@ -35,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.pi.i18n.S
+import io.github.yearsyan.pi.markdown.MarkdownView
 import io.github.yearsyan.pi.net.FileEntry
 import io.github.yearsyan.pi.net.FileListResponse
 import io.github.yearsyan.pi.net.FileReadResponse
@@ -325,29 +327,41 @@ private fun FileRow(entry: FileEntry, onClick: () -> Unit) {
 @Composable
 private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        val isMarkdown = isMarkdownFile(preview.name)
+        var showSource by remember(preview.path) { mutableStateOf(false) }
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                Text(
-                    preview.name,
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    preview.path,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (preview.truncated && !preview.loading && preview.error == null) {
-                    Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        S.fileTruncatedNotice,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary,
+                        preview.name,
+                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    Text(
+                        preview.path,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (preview.truncated && !preview.loading && preview.error == null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            S.fileTruncatedNotice,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                }
+                if (isMarkdown && !preview.loading && preview.error == null) {
+                    TextButton(onClick = { showSource = !showSource }) {
+                        Text(if (showSource) S.fileViewRendered else S.fileViewSource)
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -371,18 +385,30 @@ private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
                     }
 
                 else ->
-                    SelectionContainer(
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 14.dp),
-                    ) {
-                        Text(
-                            preview.content,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                        )
+                    if (isMarkdown && !showSource) {
+                        // MarkdownView owns text selection; the sheet scrolls it.
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                        ) {
+                            MarkdownView(preview.content)
+                        }
+                    } else {
+                        SelectionContainer(
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                        ) {
+                            Text(
+                                preview.content,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                ),
+                            )
+                        }
                     }
             }
         }
@@ -402,6 +428,11 @@ private fun CenteredState(content: @Composable () -> Unit) {
 
 private fun isApk(entry: FileEntry): Boolean =
     !entry.isDir && entry.name.endsWith(".apk", ignoreCase = true)
+
+private fun isMarkdownFile(name: String): Boolean {
+    val lower = name.lowercase()
+    return lower.endsWith(".md") || lower.endsWith(".markdown")
+}
 
 internal fun formatFileSize(bytes: Long): String {
     val value = bytes.coerceAtLeast(0L)

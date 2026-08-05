@@ -69,6 +69,12 @@ internal fun ToolCallView.absorbExecutionFrom(source: ToolCallView) {
 
 enum class BlockKind { Thinking, Text, ToolCall }
 
+/** Inline image content retained from a user message for transcript rendering. */
+data class TimelineImage(
+    val data: String,
+    val mimeType: String,
+)
+
 class AssistantBlock(
     kind: BlockKind,
     text: String = "",
@@ -87,10 +93,12 @@ sealed class TimelineItem {
         text: String,
         ts: Long,
         sourceId: String? = null,
+        images: List<TimelineImage> = emptyList(),
     ) : TimelineItem() {
         var text by mutableStateOf(text)
         var ts by mutableStateOf(ts)
         var sourceId by mutableStateOf(sourceId)
+        var images by mutableStateOf(images)
     }
 
     class AssistantItem(

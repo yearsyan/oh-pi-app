@@ -86,17 +86,25 @@ fun UserMessageRow(item: TimelineItem.UserItem) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.End,
     ) {
-        Surface(
-            color = piExtras.userBubble,
-            shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
+        Column(
             modifier = Modifier.widthIn(max = 560.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                item.text,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                color = piExtras.onUserBubble,
-                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
-            )
+            UserImageGallery(item.images)
+            if (item.text.isNotBlank()) {
+                Surface(
+                    color = piExtras.userBubble,
+                    shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
+                ) {
+                    Text(
+                        item.text,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                        color = piExtras.onUserBubble,
+                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                    )
+                }
+            }
         }
     }
 }
