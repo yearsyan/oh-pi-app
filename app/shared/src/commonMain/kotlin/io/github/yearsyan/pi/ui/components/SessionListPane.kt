@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -101,44 +100,50 @@ fun SessionListPane(
             }
         }
 
-        // server picker
-        if (activeServer != null) {
-            ServerChip(servers, activeServer, onSelectServer)
-        }
-
-        // new chat
-        Button(
-            onClick = onNewChat,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(14.dp),
-        ) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(S.newChat)
-        }
-
-        // file browser entry
+        // server picker + quick actions
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onBrowseFiles)
-                .padding(horizontal = 10.dp, vertical = 9.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.FolderOpen,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                S.browseFiles,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (activeServer != null) {
+                ServerChip(servers, activeServer, onSelectServer, Modifier.weight(1f, fill = false))
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.width(10.dp))
+            // file browser entry
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable(onClick = onBrowseFiles),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.FolderOpen,
+                    contentDescription = S.browseFiles,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            // new chat
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(onClick = onNewChat),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = S.newChat,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
         }
 
         Spacer(Modifier.height(4.dp))
@@ -232,9 +237,10 @@ private fun ServerChip(
     servers: List<ServerProfile>,
     activeServer: ServerProfile,
     onSelectServer: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
-    Box(Modifier.padding(horizontal = 16.dp)) {
+    Box(modifier) {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
