@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -265,12 +266,38 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 
 	sessionID := request.URL.Query().Get("session_id")
 	entrySince := request.URL.Query().Get("entry_since")
+	replayCursor := request.URL.Query().Get("replay_cursor")
+	if replayCursor != "" && replayCursor != "1" {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_replay_cursor", "replay_cursor must be 1 when present")
+		return
+	}
+	replayBaseRaw, hasReplayBase := request.URL.Query()["replay_base"]
+	replaySinceRaw, hasReplaySince := request.URL.Query()["replay_since"]
+	if hasReplayBase != hasReplaySince || (hasReplayBase && (len(replayBaseRaw) != 1 || len(replaySinceRaw) != 1)) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_replay_resume", "replay_base and replay_since must be supplied together")
+		return
+	}
+	var replayBase, replaySince uint64
+	if hasReplayBase {
+		replayBase, err = strconv.ParseUint(replayBaseRaw[0], 10, 64)
+		if err == nil {
+			replaySince, err = strconv.ParseUint(replaySinceRaw[0], 10, 64)
+		}
+		if err != nil || replaySince < replayBase {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_replay_resume", "replay resume values are invalid")
+			return
+		}
+	}
 	if action == "create" && sessionID != "" {
 		writeHTTPError(writer, http.StatusBadRequest, "unexpected_session_id", "create does not accept session_id")
 		return
 	}
 	if action == "create" && entrySince != "" {
 		writeHTTPError(writer, http.StatusBadRequest, "unexpected_entry_since", "create does not accept entry_since")
+		return
+	}
+	if action == "create" && hasReplayBase {
+		writeHTTPError(writer, http.StatusBadRequest, "unexpected_replay_resume", "create does not accept replay resume values")
 		return
 	}
 	if len(entrySince) > 512 || strings.IndexFunc(entrySince, unicode.IsControl) >= 0 {
@@ -334,6 +361,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		g.cfg.ClientQueueSize,
 		g.cfg.WriteTimeout,
 		g.cfg.PongTimeout,
+		replayCursor == "1",
 	)
 	conn.SetReadLimit(g.cfg.MaxMessageBytes)
 	_ = conn.SetReadDeadline(time.Now().Add(g.cfg.PongTimeout))
@@ -361,7 +389,8 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	}()
 
 	if action == "attach" {
-		if err := session.syncAttach(client, ready, entrySince); err != nil {
+		resume := replayResume{Base: replayBase, Since: replaySince, Present: hasReplayBase}
+		if err := session.syncAttach(client, ready, entrySince, resume); err != nil {
 			g.cfg.Logger.Warn("sync attached session", "session_id", session.id, "error", err)
 			client.close(websocket.CloseInternalServerErr, "could not synchronize session")
 		}
@@ -618,6 +647,7 @@ type gatewayEvent struct {
 	EntryID    string          `json:"entry_id,omitempty"`
 	Data       string          `json:"data,omitempty"`
 	Final      bool            `json:"final,omitempty"`
+	TotalBytes uint64          `json:"total_bytes,omitempty"`
 }
 
 func gatewayError(client *wsClient, code, message string) {

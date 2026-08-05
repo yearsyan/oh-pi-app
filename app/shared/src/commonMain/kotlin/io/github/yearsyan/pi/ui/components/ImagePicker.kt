@@ -5,8 +5,11 @@ import io.github.yearsyan.pi.chat.PromptImage
 
 internal const val MaxPickedImageBytes = 8 * 1024 * 1024
 
+/** Upper bound on how many images can be attached to a single prompt. */
+internal const val MaxPickedImageCount = 9
+
 internal sealed interface ImagePickResult {
-    data class Success(val image: PromptImage) : ImagePickResult
+    data class Success(val images: List<PromptImage>) : ImagePickResult
 
     data object TooLarge : ImagePickResult
 

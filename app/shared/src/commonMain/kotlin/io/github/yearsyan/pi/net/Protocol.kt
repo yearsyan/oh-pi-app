@@ -130,6 +130,9 @@ fun buildWsUrl(
     initialModel: String = "",
     initialThinking: String = "",
     entrySince: String = "",
+    replayCursor: Boolean = false,
+    replayBase: Long? = null,
+    replaySince: Long? = null,
 ): String {
     val b = StringBuilder(normalizeGatewayUrl(base)).append("/ws?action=").append(action)
     if (!sessionId.isNullOrBlank()) b.append("&session_id=").append(urlEncode(sessionId))
@@ -142,6 +145,12 @@ fun buildWsUrl(
     }
     if (action == "attach" && entrySince.isNotBlank()) {
         b.append("&entry_since=").append(urlEncode(entrySince))
+    }
+    if (replayCursor) b.append("&replay_cursor=1")
+    if (action == "attach" && replayBase != null && replaySince != null) {
+        val normalizedBase = replayBase.coerceAtLeast(0L)
+        b.append("&replay_base=").append(normalizedBase)
+        b.append("&replay_since=").append(replaySince.coerceAtLeast(normalizedBase))
     }
     if (token.isNotBlank()) b.append("&token=").append(urlEncode(token))
     return b.toString()

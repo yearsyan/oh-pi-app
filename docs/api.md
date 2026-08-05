@@ -194,10 +194,14 @@ ws://127.0.0.1:8080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&mod
 ### 连接历史 session
 
 ```text
-ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_ENTRY_ID>&token=<TOKEN>
+ws://127.0.0.1:8080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_ENTRY_ID>&replay_base=<STABLE_SEQ>&replay_since=<LAST_REPLAY_SEQ>&replay_cursor=1&token=<TOKEN>
 ```
 
 `entry_since` 可省略。客户端应把已经完整提交到本地缓存的最后一个 entry ID 放在这里；网关只同步这个 entry 后面的稳定记录。如果游标不存在于当前稳定历史中，`history_begin.reset` 为 `true`，客户端必须丢弃该 session 的旧缓存并从头接收。
+
+`replay_base` 与 `replay_since` 必须成对出现。前者是本地 replay 缓存所基于的稳定历史 `through_seq`，后者是本地已经完整提交的 replay 高水位。仅当 `entry_since`、`replay_base` 都与服务端当前稳定边界完全一致，且 `replay_since` 未超过服务端高水位时，网关才从该序号后继续；否则会安全地从当前稳定历史边界重新回放。因此客户端可以持久化仍在进行中的 turn，重连或重启后只补缺失尾部。
+
+`replay_cursor=1` 表示客户端支持带序号的实时事件。启用后，可回放的 live pi 事件会封装为 `pi2ws/live`，使客户端能把每条事件及其 `seq` 原子写入本地 replay 缓存；未启用的旧客户端仍收到原始 pi 事件。
 
 attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` 表示历史、活动事件和实时广播之间的无缝切换已经完成，此时客户端才应发送 `get_state` 等 RPC：
 
@@ -211,11 +215,11 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 8. attach 高水位之后的实时 pi 事件
 
 ```json
-{"type":"pi2ws","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41}
+{"type":"pi2ws","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41,"total_bytes":287104}
 {"type":"pi2ws","event":"history_chunk","data":"eyJ0eXBlIjoibWVzc2FnZSIsImlkIjoiZW50cnktNDUifQo="}
 {"type":"pi2ws","event":"history_end","entry_id":"entry-45","through_seq":41}
 {"type":"pi2ws","event":"replay_begin","from_seq":42,"through_seq":45}
-{"type":"pi2ws","event":"replay_chunk","seq":42,"data":"eyJ0eXBlIjoiYWdlbnRfc3RhcnQifQ==","final":true}
+{"type":"pi2ws","event":"replay_chunk","seq":42,"data":"eyJ0eXBlIjoiYWdlbnRfc3RhcnQifQ==","final":true,"total_bytes":22}
 {"type":"pi2ws","event":"replay_end","through_seq":45}
 {
   "type": "pi2ws",
@@ -228,7 +232,15 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 
 `history_chunk.data` 是 Base64 编码的原始 JSONL 字节。把所有 chunk 解码后按顺序追加到 staging 文件，得到的是 `entry_since` 之后的完整 entry 行。客户端只能在收到 `history_end` 后原子提交 staging 文件和新的 `entry_id` 游标；中途断线必须回滚。
 
-`replay_chunk.data` 同样是 Base64 字节。同一个 `seq` 的 chunk 拼成一条网关已持久化的 JSON 事件（user 事件可能已增加 `source_id`），`final: true` 表示该事件结束。
+`history_begin.total_bytes` 是本阶段解码后的 JSONL 总字节数，可与客户端累计解码的 chunk 字节数计算恢复进度。值为零时字段可能省略。
+
+`replay_chunk.data` 同样是 Base64 字节。同一个 `seq` 的 chunk 拼成一条网关已持久化的 JSON 事件（user 事件可能已增加 `source_id`），`final: true` 表示该事件结束，`total_bytes` 是该完整 JSON 事件的解码后大小。结合 `replay_begin.from_seq` / `through_seq`，客户端可显示事件级和大事件分块级进度。
+
+启用 `replay_cursor=1` 后，`ready` 之后的可回放事件格式如下；`payload` 就是旧客户端会直接收到的原始 pi JSON 对象：
+
+```json
+{"type":"pi2ws","event":"live","seq":46,"payload":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"..."}}}
+```
 
 每个 chunk 最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会被一个 WebSocket 帧或旧的 64 MiB 内存回放上限截断。活动事件先落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
 

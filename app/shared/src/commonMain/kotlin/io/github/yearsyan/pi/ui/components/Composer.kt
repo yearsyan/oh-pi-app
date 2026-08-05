@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -61,7 +62,7 @@ fun Composer(
     onPromptSent: () -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
-    var image by remember { mutableStateOf<PromptImage?>(null) }
+    var images by remember { mutableStateOf<List<PromptImage>>(emptyList()) }
     var pickerError by remember { mutableStateOf<String?>(null) }
     var submittedSourceId by remember { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
@@ -70,7 +71,7 @@ fun Composer(
         val confirmed = controller.lastConfirmedPromptSourceId
         if (confirmed != null && confirmed == submittedSourceId) {
             text = ""
-            image = null
+            images = emptyList()
             pickerError = null
             submittedSourceId = null
             onPromptSent()
@@ -83,15 +84,15 @@ fun Composer(
             if (controller.isPromptPending) return@rememberImagePicker
             when (result) {
                 is ImagePickResult.Success -> {
-                    image = result.image
+                    images = (images + result.images).take(MaxPickedImageCount)
                     pickerError = null
                 }
                 ImagePickResult.TooLarge -> pickerError = imageTooLarge
                 ImagePickResult.Failed -> pickerError = imageReadFailed
             }
         }
-    val hasPrompt = text.isNotBlank() || image != null
-    val canSend = controller.canSubmitInput(text, image != null)
+    val hasPrompt = text.isNotBlank() || images.isNotEmpty()
+    val canSend = controller.canSubmitInput(text, images.isNotEmpty())
     val showStop = controller.isStreaming && !hasPrompt
     val slashMatches =
         matchingSlashCommands(
@@ -167,15 +168,22 @@ fun Composer(
                     )
                 }
 
-                image?.let { selected ->
-                    SelectedImageChip(
-                        image = selected,
-                        enabled = !promptPending,
-                        onRemove = {
-                            image = null
-                            pickerError = null
-                        },
-                    )
+                if (images.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        images.forEachIndexed { index, selected ->
+                            SelectedImageChip(
+                                image = selected,
+                                enabled = !promptPending,
+                                onRemove = {
+                                    images = images.filterIndexed { i, _ -> i != index }
+                                    pickerError = null
+                                },
+                            )
+                        }
+                    }
                 }
                 pickerError?.let { error ->
                     Text(
@@ -217,7 +225,7 @@ fun Composer(
                                 when {
                                     showStop -> controller.abort()
                                     canSend -> {
-                                        submittedSourceId = controller.submitInput(text, listOfNotNull(image))
+                                        submittedSourceId = controller.submitInput(text, images)
                                     }
                                 }
                             },
@@ -352,7 +360,7 @@ private fun SelectedImageChip(
         Spacer(Modifier.width(6.dp))
         Text(
             image.name.ifBlank { S.imageAttachment(1) },
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.widthIn(max = 180.dp),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             maxLines = 1,

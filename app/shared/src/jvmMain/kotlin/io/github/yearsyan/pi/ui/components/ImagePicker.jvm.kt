@@ -20,28 +20,34 @@ internal actual fun rememberImagePicker(onResult: (ImagePickResult) -> Unit): Im
     return remember {
         ImagePicker(available = true) {
             scope.launch {
-                val result = withContext(Dispatchers.IO) { chooseImage() }
+                val result = withContext(Dispatchers.IO) { chooseImages() }
                 if (result != null) currentOnResult.value(result)
             }
         }
     }
 }
 
-private fun chooseImage(): ImagePickResult? {
-    val dialog = FileDialog(null as Frame?, "Choose image", FileDialog.LOAD)
+private fun chooseImages(): ImagePickResult? {
+    val dialog = FileDialog(null as Frame?, "Choose images", FileDialog.LOAD)
+    dialog.isMultipleMode = true
     dialog.isVisible = true
-    val fileName = dialog.file ?: return null
-    val file = dialog.directory?.let { java.io.File(it, fileName) } ?: return null
-    if (!file.isFile) return ImagePickResult.Failed
-    if (file.length() > MaxPickedImageBytes) return ImagePickResult.TooLarge
-    return runCatching {
-        val mimeType = Files.probeContentType(file.toPath())?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
-        ImagePickResult.Success(
-            PromptImage(
-                data = Base64.getEncoder().encodeToString(file.readBytes()),
-                mimeType = mimeType,
-                name = file.name,
-            ),
-        )
-    }.getOrElse { ImagePickResult.Failed }
+    val files = dialog.files?.filter { it.isFile }?.take(MaxPickedImageCount).orEmpty()
+    if (files.isEmpty()) return null
+    val images = mutableListOf<PromptImage>()
+    for (file in files) {
+        if (file.length() > MaxPickedImageBytes) return ImagePickResult.TooLarge
+        val image = readImage(file) ?: return ImagePickResult.Failed
+        images += image
+    }
+    return ImagePickResult.Success(images)
 }
+
+private fun readImage(file: java.io.File): PromptImage? =
+    runCatching {
+        val mimeType = Files.probeContentType(file.toPath())?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
+        PromptImage(
+            data = Base64.getEncoder().encodeToString(file.readBytes()),
+            mimeType = mimeType,
+            name = file.name,
+        )
+    }.getOrNull()

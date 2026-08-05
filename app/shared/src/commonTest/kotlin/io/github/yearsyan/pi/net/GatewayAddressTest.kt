@@ -45,7 +45,7 @@ class GatewayAddressTest {
             ),
         )
         assertEquals(
-            "ws://gateway.test:8080/ws?action=attach&session_id=session&entry_since=entry-42&token=token",
+            "ws://gateway.test:8080/ws?action=attach&session_id=session&entry_since=entry-42&replay_cursor=1&replay_base=40&replay_since=47&token=token",
             buildWsUrl(
                 base = "ws://gateway.test:8080",
                 token = "token",
@@ -54,6 +54,9 @@ class GatewayAddressTest {
                 initialModel = "ignored/model",
                 initialThinking = "high",
                 entrySince = "entry-42",
+                replayCursor = true,
+                replayBase = 40,
+                replaySince = 47,
             ),
         )
     }

@@ -25,6 +25,12 @@ type attachSnapshot struct {
 	outputSeq      uint64
 }
 
+type replayResume struct {
+	Base    uint64
+	Since   uint64
+	Present bool
+}
+
 func (s *piSession) addLiveClient(client *wsClient, ready []byte) bool {
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
@@ -91,16 +97,35 @@ func (s *piSession) finishAttachSync() {
 // syncAttach sends a stable entry delta followed by every WAL record after
 // that stable boundary. The last catch-up check and live registration are
 // atomic with respect to output sequencing, so there is no replay/live gap.
-func (s *piSession) syncAttach(client *wsClient, ready []byte, entrySince string) error {
+func (s *piSession) syncAttach(
+	client *wsClient,
+	ready []byte,
+	entrySince string,
+	resume replayResume,
+) error {
 	snapshot, err := s.beginAttachSync(client)
 	if err != nil {
 		return err
 	}
 	defer s.finishAttachSync()
 
-	reset, historyStart, err := s.findHistoryStart(snapshot, entrySince)
+	reset, historyStart, historyBytes, err := s.findHistoryStart(snapshot, entrySince)
 	if err != nil {
 		return err
+	}
+	// An empty entry cursor is still an exact stable-history cursor while a
+	// brand-new turn has not produced its first persistent entry. The replay
+	// base disambiguates that resumable case from a client asking for a reset.
+	if reset && resume.Present && entrySince == "" && snapshot.historyEntryID == "" &&
+		resume.Base == snapshot.historyThrough {
+		reset = false
+		historyStart = snapshot.historyOffset
+		historyBytes = 0
+	}
+	replayAfter := snapshot.historyThrough
+	if resume.Present && !reset && entrySince == snapshot.historyEntryID &&
+		resume.Base == snapshot.historyThrough && resume.Since <= snapshot.outputSeq {
+		replayAfter = resume.Since
 	}
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
 		Type:       "pi2ws",
@@ -108,6 +133,7 @@ func (s *piSession) syncAttach(client *wsClient, ready []byte, entrySince string
 		Reset:      boolPointer(reset),
 		EntryID:    snapshot.historyEntryID,
 		ThroughSeq: snapshot.historyThrough,
+		TotalBytes: uint64(historyBytes),
 	})) {
 		return errors.New("client disconnected during history sync")
 	}
@@ -125,7 +151,7 @@ func (s *piSession) syncAttach(client *wsClient, ready []byte, entrySince string
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
 		Type:       "pi2ws",
 		Event:      "replay_begin",
-		FromSeq:    snapshot.historyThrough + 1,
+		FromSeq:    replayAfter + 1,
 		ThroughSeq: snapshot.outputSeq,
 	})) {
 		return errors.New("client disconnected before replay sync")
@@ -158,7 +184,7 @@ func (s *piSession) syncAttach(client *wsClient, ready []byte, entrySince string
 				replayFile,
 				&replayOffset,
 				targetOffset,
-				snapshot.historyThrough,
+				replayAfter,
 			); err != nil {
 				return err
 			}
@@ -201,13 +227,17 @@ func boolPointer(value bool) *bool {
 	return &value
 }
 
-func (s *piSession) findHistoryStart(snapshot attachSnapshot, entrySince string) (bool, int64, error) {
+func (s *piSession) findHistoryStart(
+	snapshot attachSnapshot,
+	entrySince string,
+) (bool, int64, int64, error) {
 	if entrySince == "" || snapshot.historyFile == "" || snapshot.historyOffset == 0 {
-		return true, 0, nil
+		bytes, err := s.historyTransferBytes(snapshot, 0)
+		return true, 0, bytes, err
 	}
 	file, err := os.Open(filepath.Join(s.dir, snapshot.historyFile))
 	if err != nil {
-		return false, 0, fmt.Errorf("open stable history cursor scan: %w", err)
+		return false, 0, 0, fmt.Errorf("open stable history cursor scan: %w", err)
 	}
 	defer file.Close()
 	reader := bufio.NewReader(io.LimitReader(file, snapshot.historyOffset))
@@ -216,20 +246,56 @@ func (s *piSession) findHistoryStart(snapshot attachSnapshot, entrySince string)
 		line, _ := reader.ReadBytes('\n')
 		offset += int64(len(line))
 		if len(line) == 0 || line[len(line)-1] != '\n' {
-			return false, 0, errors.New("stable history ends inside a JSONL record")
+			return false, 0, 0, errors.New("stable history ends inside a JSONL record")
 		}
 		var envelope struct {
 			Type string `json:"type"`
 			ID   string `json:"id"`
 		}
 		if err := json.Unmarshal(bytes.TrimSpace(line), &envelope); err != nil {
-			return false, 0, fmt.Errorf("decode stable history cursor record: %w", err)
+			return false, 0, 0, fmt.Errorf("decode stable history cursor record: %w", err)
 		}
 		if envelope.Type != "session" && envelope.ID == entrySince {
-			return false, offset, nil
+			return false, offset, snapshot.historyOffset - offset, nil
 		}
 	}
-	return true, 0, nil
+	transferBytes, err := s.historyTransferBytes(snapshot, 0)
+	return true, 0, transferBytes, err
+}
+
+// historyTransferBytes returns the exact decoded bytes sent in history_chunk
+// frames. A pi session file starts with one metadata record, which is not part
+// of the client entry cache.
+func (s *piSession) historyTransferBytes(snapshot attachSnapshot, start int64) (int64, error) {
+	if snapshot.historyFile == "" || snapshot.historyOffset == 0 || start >= snapshot.historyOffset {
+		return 0, nil
+	}
+	transferBytes := snapshot.historyOffset - start
+	if start != 0 {
+		return transferBytes, nil
+	}
+	file, err := os.Open(filepath.Join(s.dir, snapshot.historyFile))
+	if err != nil {
+		return 0, fmt.Errorf("open stable history size scan: %w", err)
+	}
+	defer file.Close()
+	line, err := bufio.NewReader(io.LimitReader(file, snapshot.historyOffset)).ReadBytes('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read stable history metadata: %w", err)
+	}
+	if len(line) == 0 || line[len(line)-1] != '\n' {
+		return 0, errors.New("stable history metadata is incomplete")
+	}
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(line), &envelope); err != nil {
+		return 0, fmt.Errorf("decode stable history metadata: %w", err)
+	}
+	if envelope.Type == "session" {
+		transferBytes -= int64(len(line))
+	}
+	return transferBytes, nil
 }
 
 func (s *piSession) streamHistory(client *wsClient, snapshot attachSnapshot, start int64) error {
@@ -352,11 +418,12 @@ func streamReplayPayload(client *wsClient, seq uint64, payload []byte) error {
 	for offset := 0; offset < len(payload); {
 		end := min(offset+syncChunkBytes, len(payload))
 		if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-			Type:  "pi2ws",
-			Event: "replay_chunk",
-			Seq:   seq,
-			Data:  base64.StdEncoding.EncodeToString(payload[offset:end]),
-			Final: end == len(payload),
+			Type:       "pi2ws",
+			Event:      "replay_chunk",
+			Seq:        seq,
+			Data:       base64.StdEncoding.EncodeToString(payload[offset:end]),
+			Final:      end == len(payload),
+			TotalBytes: uint64(len(payload)),
 		})) {
 			return errors.New("client disconnected during replay chunk")
 		}

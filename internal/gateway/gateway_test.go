@@ -807,6 +807,77 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	_ = app
 }
 
+func TestAttachResumesActiveReplayAndWrapsOptedInLiveOutput(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+	activeEvents := []any{
+		map[string]any{"type": "agent_start"},
+		map[string]any{"type": "message_update", "marker": "middle"},
+		map[string]any{"type": "message_update", "marker": "latest"},
+	}
+	writeJSON(t, first, map[string]any{"id": "active", "type": "fake_emit", "events": activeEvents})
+	for range activeEvents {
+		_ = readEvent(t, first)
+	}
+	_ = readEvent(t, first)
+
+	full := dialWebSocket(t, server, url.Values{
+		"action": {"attach"}, "session_id": {sessionID}, "token": {testToken},
+	})
+	_, history, replay := readAttachHistory(t, full)
+	_ = full.Close()
+	if len(replay) != len(activeEvents) {
+		t.Fatalf("full replay count = %d, want %d", len(replay), len(activeEvents))
+	}
+	resumeSeq := uint64(replay[1].number("_pi2ws_seq"))
+	baseSeq := uint64(history.number("through_seq"))
+	mismatched := dialWebSocket(t, server, url.Values{
+		"action":        {"attach"},
+		"session_id":    {sessionID},
+		"token":         {testToken},
+		"replay_cursor": {"1"},
+		"replay_base":   {fmt.Sprint(baseSeq + 1)},
+		"replay_since":  {fmt.Sprint(max(resumeSeq, baseSeq+1))},
+	})
+	_, _, fallback := readAttachHistory(t, mismatched)
+	_ = mismatched.Close()
+	if len(fallback) != len(activeEvents) {
+		t.Fatalf("mismatched replay base returned %d events, want safe full replay", len(fallback))
+	}
+
+	resumed := dialWebSocket(t, server, url.Values{
+		"action":        {"attach"},
+		"session_id":    {sessionID},
+		"token":         {testToken},
+		"replay_cursor": {"1"},
+		"replay_base":   {fmt.Sprint(baseSeq)},
+		"replay_since":  {fmt.Sprint(resumeSeq)},
+	})
+	defer resumed.Close()
+	_, _, delta := readAttachHistory(t, resumed)
+	if len(delta) != 1 || delta[0].string("marker") != "latest" {
+		t.Fatalf("resumed replay = %#v, want only latest event", delta)
+	}
+
+	live := map[string]any{"type": "message_update", "marker": "live"}
+	writeJSON(t, first, map[string]any{"id": "live", "type": "fake_emit", "events": []any{live}})
+	if got := readEvent(t, first); got.string("marker") != "live" {
+		t.Fatalf("legacy live event = %#v", got)
+	}
+	wrapped := readEvent(t, resumed)
+	if wrapped.string("type") != "pi2ws" || wrapped.string("event") != "live" || wrapped.number("seq") <= float64(resumeSeq) {
+		t.Fatalf("opted-in live envelope = %#v", wrapped)
+	}
+	payload, _ := wrapped["payload"].(map[string]any)
+	if payload["marker"] != "live" {
+		t.Fatalf("opted-in live payload = %#v", payload)
+	}
+}
+
 func TestAttachChunksLargeActiveReplayRecord(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 	first := dialWebSocket(t, server, url.Values{
@@ -837,6 +908,9 @@ func TestAttachChunksLargeActiveReplayRecord(t *testing.T) {
 	}
 	if replay[0].number("_pi2ws_chunk_count") < 2 {
 		t.Fatalf("large active record used %.0f chunks, want multiple", replay[0].number("_pi2ws_chunk_count"))
+	}
+	if replay[0].number("_pi2ws_total_bytes") <= float64(len(largeDelta)) {
+		t.Fatalf("replay total bytes = %.0f, want full JSON payload size", replay[0].number("_pi2ws_total_bytes"))
 	}
 	update, _ := replay[0]["assistantMessageEvent"].(map[string]any)
 	if delta, _ := update["delta"].(string); delta != largeDelta {
@@ -1007,6 +1081,13 @@ func TestAttachChunksStableEntryLargerThanOneFramePage(t *testing.T) {
 	_, history, replay := readAttachHistory(t, attached)
 	if history.number("chunk_count") < 2 {
 		t.Fatalf("large entry used %.0f history chunks, want multiple bounded chunks", history.number("chunk_count"))
+	}
+	if history.number("total_bytes") != history.number("_pi2ws_bytes") {
+		t.Fatalf(
+			"history progress total = %.0f, transferred %.0f",
+			history.number("total_bytes"),
+			history.number("_pi2ws_bytes"),
+		)
 	}
 	data, _ := history["data"].(map[string]any)
 	gotEntries, _ := data["entries"].([]any)
@@ -1403,7 +1484,9 @@ historyComplete:
 	history := event{
 		"type": "pi2ws", "event": "history_end",
 		"reset": historyBegin["reset"], "entry_id": historyEnd["entry_id"],
+		"through_seq": historyEnd["through_seq"], "total_bytes": historyBegin["total_bytes"],
 		"data": map[string]any{"entries": entries}, "chunk_count": float64(historyChunkCount),
+		"_pi2ws_bytes": float64(len(historyJSONL)),
 	}
 
 	begin := readEvent(t, conn)
@@ -1439,6 +1522,8 @@ historyComplete:
 					t.Fatalf("decode replay payload: %v", err)
 				}
 				payload["_pi2ws_chunk_count"] = float64(replayChunkCount)
+				payload["_pi2ws_seq"] = seq
+				payload["_pi2ws_total_bytes"] = message["total_bytes"]
 				replay = append(replay, payload)
 				replaySeq = 0
 				replayPayload = nil

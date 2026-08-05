@@ -48,6 +48,11 @@ internal data class DecodedEntryCache(
     val lastEntryId: String,
 )
 
+private data class LoadedAttachCache(
+    val entries: EntryCacheSnapshot,
+    val replay: DecodedReplayCache?,
+)
+
 internal data class UserMessageContent(
     val text: String,
     val images: List<TimelineImage>,
@@ -207,6 +212,8 @@ class ChatController(
     private var rateWindowChars = 0
     var isLoadingHistory by mutableStateOf(false); private set
     var syncPhase by mutableStateOf(SessionSyncPhase.Idle); private set
+    /** Determinate progress for the current history/replay phase, when supported by the gateway. */
+    var syncProgress by mutableStateOf<Float?>(null); private set
     var steeringQueue = mutableStateListOf<String>(); private set
     var followUpQueue = mutableStateListOf<String>(); private set
     var dialog by mutableStateOf<UiDialogRequest?>(null); private set
@@ -271,10 +278,22 @@ class ChatController(
     private var activeEntryCacheKey = ""
     private var requestedEntryCursor = ""
     private var historyTargetCursor = ""
+    private var historyTargetThroughSeq = 0L
     private var historyUpdating = false
+    private var replayBaseEntryId = ""
+    private var replayBaseThroughSeq = 0L
+    private var replayCacheThroughSeq = 0L
+    private var replayCacheReady = false
+    private var reuseCachedReplay = false
     private var replayChunkSeq: Long? = null
     private val replayChunkParts = mutableListOf<ByteArray>()
     private var replayChunkBytes = 0
+    private var historyProgressBytes = 0L
+    private var historyProgressTotal: Long? = null
+    private var replayProgressFromSeq = 0L
+    private var replayProgressThroughSeq = -1L
+    private var replayProgressPayloadBytes = 0L
+    private var replayProgressPayloadTotal: Long? = null
     private var draftWorkDir by mutableStateOf<String?>(null)
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
@@ -420,15 +439,18 @@ class ChatController(
         val generation = ++connectionGeneration
         println("[PiChat] connect action=$lastAction sid=$lastSessionId workDir=$lastWorkDir")
         connectionSetupJob?.cancel()
+        runCatching { entryCache.closeReplay() }
         client.disconnect()
         conn = ConnState.Connecting
         syncPhase = SessionSyncPhase.Idle
+        syncProgress = null
         stagedItems = null
         if (clearTimeline) {
             items.clear()
         }
         entryCache.abort()
         historyUpdating = false
+        reuseCachedReplay = false
         replayChunkSeq = null
         replayChunkParts.clear()
         replayChunkBytes = 0
@@ -439,27 +461,45 @@ class ChatController(
                 val key = entryCacheKey(cacheNamespace, lastSessionId.orEmpty())
                 val cached = withContext(Dispatchers.Default) {
                     runCatching {
-                        if (clearTimeline) entryCache.snapshot(key)
-                        else EntryCacheSnapshot(entryCache.cursor(key), ByteArray(0))
+                        val entries = if (clearTimeline) {
+                            entryCache.snapshot(key)
+                        } else {
+                            EntryCacheSnapshot(entryCache.cursor(key), ByteArray(0))
+                        }
+                        LoadedAttachCache(
+                            entries = entries,
+                            replay = decodeReplayCache(entryCache.replaySnapshot(key)),
+                        )
                     }.getOrElse {
                         runCatching { entryCache.clear(key) }
-                        EntryCacheSnapshot("", ByteArray(0))
+                        LoadedAttachCache(EntryCacheSnapshot("", ByteArray(0)), null)
                     }
                 }
                 if (generation != connectionGeneration) return@launch
                 activeEntryCacheKey = key
-                entryCursor = cached.cursor
+                entryCursor = cached.entries.cursor
+                var replay = cached.replay?.takeIf { it.baseEntryId == entryCursor }
                 if (clearTimeline) {
-                    val decoded = withContext(Dispatchers.Default) { decodeEntryCache(cached.entries) }
-                    if (decoded == null || decoded.lastEntryId != cached.cursor) {
+                    val decoded = withContext(Dispatchers.Default) { decodeEntryCache(cached.entries.entries) }
+                    if (decoded == null || decoded.lastEntryId != cached.entries.cursor) {
                         withContext(Dispatchers.Default) { runCatching { entryCache.clear(key) } }
                         entryCursor = ""
-                    } else if (decoded.entries.isNotEmpty()) {
-                        rebuildFromEntries(decoded.entries)
+                        replay = null
+                    } else {
+                        if (decoded.entries.isNotEmpty()) rebuildFromEntries(decoded.entries)
+                        replay?.records?.forEach { dispatchMessage(it.payload) }
                     }
                 }
+                replayBaseEntryId = replay?.baseEntryId.orEmpty()
+                replayBaseThroughSeq = replay?.baseThroughSeq ?: 0L
+                replayCacheThroughSeq = replay?.throughSeq ?: 0L
+                replayCacheReady = replay != null
             } else {
                 activeEntryCacheKey = ""
+                replayBaseEntryId = ""
+                replayBaseThroughSeq = 0L
+                replayCacheThroughSeq = 0L
+                replayCacheReady = false
             }
             requestedEntryCursor = entryCursor
             val resolvedGateway =
@@ -492,6 +532,9 @@ class ChatController(
                     initialModel = if (lastAction == "create") currentModel?.qualified.orEmpty() else "",
                     initialThinking = if (lastAction == "create") thinkingLevel else "",
                     entrySince = entryCursor,
+                    replayCursor = true,
+                    replayBase = replayBaseThroughSeq.takeIf { replayCacheReady },
+                    replaySince = replayCacheThroughSeq.takeIf { replayCacheReady },
                 ),
                 object : PiClient.Listener {
                     override fun onOpen() {}
@@ -536,11 +579,13 @@ class ChatController(
         reconnectAttempt = 0
         connectionGeneration++
         entryCache.abort()
+        runCatching { entryCache.closeReplay() }
         historyUpdating = false
         stagedItems = null
         client.disconnect()
         conn = ConnState.Disconnected
         syncPhase = SessionSyncPhase.Idle
+        syncProgress = null
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
         isStreaming = false
@@ -556,9 +601,11 @@ class ChatController(
 
     private fun handleConnectionClosed(code: Short, reason: String) {
         entryCache.abort()
+        runCatching { entryCache.closeReplay() }
         historyUpdating = false
         stagedItems = null
         syncPhase = SessionSyncPhase.Idle
+        syncProgress = null
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
@@ -578,9 +625,11 @@ class ChatController(
 
     private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
         entryCache.abort()
+        runCatching { entryCache.closeReplay() }
         historyUpdating = false
         stagedItems = null
         syncPhase = SessionSyncPhase.Idle
+        syncProgress = null
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
@@ -890,24 +939,22 @@ class ChatController(
             "history_begin" -> beginHistorySync(msg)
             "history_chunk" -> {
                 check(historyUpdating) { "unexpected history chunk" }
-                entryCache.append(Base64.decode(msg.strOrEmpty("data")))
+                val bytes = Base64.decode(msg.strOrEmpty("data"))
+                entryCache.append(bytes)
+                historyProgressBytes += bytes.size
+                syncProgress = progressFraction(historyProgressBytes, historyProgressTotal)
             }
             "history_end" -> finishHistorySync(msg)
-            "replay_begin" -> {
-                replayChunkSeq = null
-                replayChunkParts.clear()
-                replayChunkBytes = 0
-            }
+            "replay_begin" -> beginReplaySync(msg)
             "replay_chunk" -> handleReplayChunk(msg)
-            "replay_end" -> {
-                check(replayChunkSeq == null) { "replay ended inside a payload" }
-                isLoadingHistory = false
-            }
+            "replay_end" -> finishReplaySync(msg)
+            "live" -> handleLiveEvent(msg)
             "ready" -> {
                 swapStagedTimeline()
                 val created = msg.str("action") == "create"
                 conn = ConnState.Ready
                 isLoadingHistory = false
+                syncProgress = null
                 val sid = msg.strOrEmpty("session_id")
                 sessionId = sid
                 workDir = msg.strOrEmpty("work_dir")
@@ -919,6 +966,7 @@ class ChatController(
                     lastSessionId = sid
                     lastWorkDir = ""
                 }
+                if (created && sid.isNotBlank()) initializeCreatedReplayCache(sid)
                 if (created) draftWorkDir = null
                 println("[PiChat] ready sid=$sid action=${msg.str("action")} workDir=$workDir")
                 onSessionReady(sid, created, workDir)
@@ -944,9 +992,17 @@ class ChatController(
         check(activeEntryCacheKey.isNotBlank()) { "attach cache key is missing" }
         stagedItems = items.toMutableList()
         historyTargetCursor = msg.strOrEmpty("entry_id")
+        historyTargetThroughSeq = msg.long("through_seq")?.coerceAtLeast(0L) ?: 0L
         val reset = msg.bool("reset") == true
+        reuseCachedReplay = !reset && replayCacheReady &&
+            historyTargetCursor == requestedEntryCursor &&
+            replayBaseEntryId == historyTargetCursor &&
+            replayBaseThroughSeq == historyTargetThroughSeq
         historyUpdating = reset || historyTargetCursor != requestedEntryCursor
         if (historyUpdating) entryCache.begin(activeEntryCacheKey, reset)
+        historyProgressBytes = 0L
+        historyProgressTotal = msg.long("total_bytes")?.coerceAtLeast(0L)
+        syncProgress = progressFraction(0L, historyProgressTotal)
     }
 
     private fun finishHistorySync(msg: JsonObject) {
@@ -960,8 +1016,34 @@ class ChatController(
         historyUpdating = false
         val decoded = decodeEntryCache(snapshot.entries) ?: error("cached history is not valid JSONL")
         check(decoded.lastEntryId == cursor) { "cached history cursor does not match server cursor" }
-        rebuildFromEntries(decoded.entries)
+        if (!reuseCachedReplay) {
+            rebuildFromEntries(decoded.entries)
+            resetReplayCache(cursor, historyTargetThroughSeq)
+        }
         requestedEntryCursor = cursor
+        syncProgress = 1f
+    }
+
+    private fun beginReplaySync(msg: JsonObject) {
+        replayChunkSeq = null
+        replayChunkParts.clear()
+        replayChunkBytes = 0
+        replayProgressPayloadBytes = 0L
+        replayProgressPayloadTotal = null
+        val fromSeq = msg.long("from_seq")?.coerceAtLeast(0L) ?: 0L
+        if (reuseCachedReplay && fromSeq != replayCacheThroughSeq + 1L) {
+            // Older gateways ignore replay resume parameters. Rebase to stable
+            // history before accepting their full replay to avoid duplicates.
+            val snapshot = entryCache.snapshot(activeEntryCacheKey)
+            val decoded = decodeEntryCache(snapshot.entries) ?: error("cached history is not valid JSONL")
+            check(decoded.lastEntryId == historyTargetCursor) { "cached history cursor changed before replay" }
+            rebuildFromEntries(decoded.entries)
+            resetReplayCache(historyTargetCursor, historyTargetThroughSeq)
+            reuseCachedReplay = false
+        }
+        replayProgressFromSeq = fromSeq
+        replayProgressThroughSeq = msg.long("through_seq") ?: (fromSeq - 1L)
+        syncProgress = if (fromSeq > replayProgressThroughSeq) 1f else 0f
     }
 
     private fun handleReplayChunk(msg: JsonObject) {
@@ -972,6 +1054,10 @@ class ChatController(
         val part = Base64.decode(msg.strOrEmpty("data"))
         replayChunkParts.add(part)
         replayChunkBytes += part.size
+        replayProgressPayloadBytes += part.size
+        replayProgressPayloadTotal = msg.long("total_bytes")?.coerceAtLeast(0L)
+            ?: replayProgressPayloadTotal
+        updateReplayProgress(seq, msg.bool("final") == true)
         if (msg.bool("final") != true) return
 
         val payload = ByteArray(replayChunkBytes)
@@ -983,8 +1069,97 @@ class ChatController(
         replayChunkSeq = null
         replayChunkParts.clear()
         replayChunkBytes = 0
-        parseMessage(payload.decodeToString())?.let { dispatchMessage(it) }
-            ?: error("replay payload is not a JSON object")
+        replayProgressPayloadBytes = 0L
+        replayProgressPayloadTotal = null
+        val event = parseMessage(payload.decodeToString()) ?: error("replay payload is not a JSON object")
+        appendReplayEvent(seq, event)
+        dispatchMessage(event)
+    }
+
+    private fun finishReplaySync(msg: JsonObject) {
+        check(replayChunkSeq == null) { "replay ended inside a payload" }
+        val throughSeq = msg.long("through_seq")?.coerceAtLeast(0L) ?: replayCacheThroughSeq
+        if (replayCacheReady && throughSeq > replayCacheThroughSeq) {
+            entryCache.appendReplay(activeEntryCacheKey, encodeReplayCacheCheckpoint(throughSeq))
+            replayCacheThroughSeq = throughSeq
+        }
+        entryCache.flushReplay()
+        syncProgress = 1f
+        isLoadingHistory = false
+    }
+
+    private fun handleLiveEvent(msg: JsonObject) {
+        val seq = msg.long("seq") ?: return
+        val payload = msg.obj("payload") ?: return
+        if (replayCacheReady && seq > replayCacheThroughSeq) {
+            runCatching {
+                appendReplayEvent(seq, payload)
+                if (payload.strOrEmpty("type") in setOf(
+                        "message_end", "tool_execution_end", "agent_settled",
+                    )
+                ) {
+                    entryCache.flushReplay()
+                }
+            }.onFailure { disableReplayCache() }
+        }
+        dispatchMessage(payload)
+    }
+
+    private fun initializeCreatedReplayCache(createdSessionId: String) {
+        activeEntryCacheKey = entryCacheKey(cacheNamespace, createdSessionId)
+        requestedEntryCursor = ""
+        runCatching { resetReplayCache("", 0L) }
+            .onFailure { disableReplayCache() }
+    }
+
+    private fun resetReplayCache(entryId: String, throughSeq: Long) {
+        check(activeEntryCacheKey.isNotBlank()) { "replay cache key is missing" }
+        val base = throughSeq.coerceAtLeast(0L)
+        entryCache.resetReplay(activeEntryCacheKey, encodeReplayCacheHeader(entryId, base))
+        replayBaseEntryId = entryId
+        replayBaseThroughSeq = base
+        replayCacheThroughSeq = base
+        replayCacheReady = true
+    }
+
+    private fun appendReplayEvent(seq: Long, payload: JsonObject) {
+        check(replayCacheReady) { "replay cache has no stable base" }
+        check(seq > replayCacheThroughSeq) { "replay sequence did not advance" }
+        entryCache.appendReplay(activeEntryCacheKey, encodeReplayCacheRecord(seq, payload))
+        replayCacheThroughSeq = seq
+    }
+
+    private fun disableReplayCache() {
+        activeEntryCacheKey.takeIf { it.isNotBlank() }?.let { key ->
+            runCatching { entryCache.clearReplay(key) }
+        }
+        replayBaseEntryId = ""
+        replayBaseThroughSeq = 0L
+        replayCacheThroughSeq = 0L
+        replayCacheReady = false
+        reuseCachedReplay = false
+    }
+
+    private fun updateReplayProgress(seq: Long, final: Boolean) {
+        val totalUnits = replayProgressThroughSeq - replayProgressFromSeq + 1L
+        if (totalUnits <= 0L) {
+            syncProgress = 1f
+            return
+        }
+        val payloadFraction = replayProgressPayloadTotal?.let { total ->
+            if (total <= 0L) 1f
+            else (replayProgressPayloadBytes.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        } ?: if (final) 1f else 0f
+        val completedBefore = (seq - replayProgressFromSeq).coerceAtLeast(0L).toDouble()
+        syncProgress = ((completedBefore + payloadFraction) / totalUnits.toDouble())
+            .coerceIn(0.0, 1.0)
+            .toFloat()
+    }
+
+    private fun progressFraction(completed: Long, total: Long?): Float? = when {
+        total == null -> null
+        total <= 0L -> 1f
+        else -> (completed.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
     }
 
     /** Swaps the attach-synced timeline into the visible list in one update. */
@@ -1006,6 +1181,7 @@ class ChatController(
         client.disconnect()
         conn = ConnState.Error
         syncPhase = SessionSyncPhase.Idle
+        syncProgress = null
         isLoadingHistory = false
         onToast("Session synchronization failed: ${failure.message.orEmpty()}", Toast.Kind.Error)
     }

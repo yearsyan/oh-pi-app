@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -59,13 +61,16 @@ import io.github.yearsyan.pi.net.FileListResponse
 import io.github.yearsyan.pi.net.FileReadResponse
 import io.github.yearsyan.pi.syntax.Syntax
 import io.github.yearsyan.pi.theme.piExtras
+import io.github.yearsyan.pi.ui.components.ImagePreviewDialog
+import io.github.yearsyan.pi.ui.components.ImagePreviewState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.compose.resources.decodeToImageBitmap
 
-/** State for the bottom-sheet text preview of one remote file. */
+/** State for the preview of one remote file (text sheet or image viewer). */
 class FilePreview(
     val name: String,
     val path: String,
@@ -73,14 +78,17 @@ class FilePreview(
     val content: String = "",
     val truncated: Boolean = false,
     val error: String? = null,
+    val image: ImageBitmap? = null,
+    val isImage: Boolean = false,
 )
 
-/** Drives a FileBrowserScreen: directory navigation and text preview state. */
+/** Drives a FileBrowserScreen: directory navigation and file preview state. */
 class FileBrowserController(
     private val scope: CoroutineScope,
     initialPath: String,
     private val listFiles: suspend (String) -> FileListResponse,
     private val readFile: suspend (String) -> FileReadResponse,
+    private val downloadFile: suspend (String) -> ByteArray,
 ) {
     var currentPath by mutableStateOf(initialPath); private set
     var parentPath by mutableStateOf(""); private set
@@ -133,6 +141,10 @@ class FileBrowserController(
             navigateTo(entry.path)
             return
         }
+        if (isImageFile(entry.name)) {
+            openImageEntry(entry)
+            return
+        }
         preview = FilePreview(name = entry.name, path = entry.path, loading = true)
         scope.launch {
             try {
@@ -157,6 +169,44 @@ class FileBrowserController(
                         path = entry.path,
                         loading = false,
                         error = failure.message ?: "unknown error",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Downloads an image via the raw download endpoint (the text read endpoint
+     * rejects binaries) and decodes it off the main thread.
+     */
+    private fun openImageEntry(entry: FileEntry) {
+        preview = FilePreview(name = entry.name, path = entry.path, loading = true, isImage = true)
+        scope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.Default) {
+                    downloadFile(entry.path).decodeToImageBitmap()
+                }
+                val current = preview
+                if (current != null && current.path == entry.path) {
+                    preview = FilePreview(
+                        name = entry.name,
+                        path = entry.path,
+                        loading = false,
+                        image = bitmap,
+                        isImage = true,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                val current = preview
+                if (current != null && current.path == entry.path) {
+                    preview = FilePreview(
+                        name = entry.name,
+                        path = entry.path,
+                        loading = false,
+                        error = failure.message ?: "unknown error",
+                        isImage = true,
                     )
                 }
             }
@@ -210,7 +260,22 @@ fun FileBrowserScreen(
     }
 
     controller.preview?.let { preview ->
-        FilePreviewSheet(preview, onDismiss = controller::dismissPreview)
+        if (preview.isImage) {
+            ImagePreviewDialog(
+                state = when {
+                    preview.loading -> ImagePreviewState.Loading
+                    preview.error != null ->
+                        ImagePreviewState.Failed(S.fileOpenFailed(preview.error.orEmpty()))
+                    preview.image != null -> ImagePreviewState.Ready(preview.image)
+                    else -> ImagePreviewState.Failed()
+                },
+                onDismiss = controller::dismissPreview,
+                title = preview.name,
+                subtitle = preview.path,
+            )
+        } else {
+            FilePreviewSheet(preview, onDismiss = controller::dismissPreview)
+        }
     }
 }
 
@@ -300,6 +365,7 @@ private fun FileRow(entry: FileEntry, onClick: () -> Unit) {
             imageVector = when {
                 entry.isDir -> Icons.Filled.Folder
                 isApk(entry) -> Icons.Filled.Android
+                isImageFile(entry.name) -> Icons.Filled.Image
                 else -> Icons.AutoMirrored.Filled.InsertDriveFile
             },
             contentDescription = null,
@@ -307,6 +373,7 @@ private fun FileRow(entry: FileEntry, onClick: () -> Unit) {
             tint = when {
                 entry.isDir -> MaterialTheme.colorScheme.primary
                 isApk(entry) -> MaterialTheme.colorScheme.tertiary
+                isImageFile(entry.name) -> MaterialTheme.colorScheme.secondary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
@@ -452,6 +519,12 @@ private fun CenteredState(content: @Composable () -> Unit) {
 
 private fun isApk(entry: FileEntry): Boolean =
     !entry.isDir && entry.name.endsWith(".apk", ignoreCase = true)
+
+/** Extensions decodable by Compose resources (gif/ico render as still frames). */
+private val ImageExtensions = setOf("png", "jpg", "jpeg", "webp", "bmp", "gif", "ico")
+
+private fun isImageFile(name: String): Boolean =
+    name.substringAfterLast('.', "").lowercase() in ImageExtensions
 
 private fun isMarkdownFile(name: String): Boolean {
     val lower = name.lowercase()

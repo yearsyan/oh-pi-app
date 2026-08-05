@@ -72,6 +72,7 @@ import io.github.yearsyan.pi.ui.components.ChatTopBar
 import io.github.yearsyan.pi.ui.components.Composer
 import io.github.yearsyan.pi.ui.components.ConfirmDialog
 import io.github.yearsyan.pi.ui.components.ExtensionDialog
+import io.github.yearsyan.pi.ui.components.KeepScreenOn
 import io.github.yearsyan.pi.ui.components.RenameDialog
 import io.github.yearsyan.pi.ui.components.StatusLine
 import io.github.yearsyan.pi.ui.components.StreamingCaret
@@ -103,6 +104,9 @@ fun ChatScreen(
     var composerHeightPx by remember { mutableIntStateOf(0) }
     var scrollToBottomTick by remember { mutableIntStateOf(0) }
     val composerBottomPadding = with(LocalDensity.current) { composerHeightPx.toDp() }
+
+    // Keep the display awake while the model is generating output.
+    KeepScreenOn(controller.isStreaming)
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ChatTopBar(
@@ -192,7 +196,8 @@ private fun SessionLoadingState(
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         Text(
-            resolveSessionStatus(controller.conn, controller.syncPhase).localizedLabel(),
+            resolveSessionStatus(controller.conn, controller.syncPhase)
+                .localizedLabel(controller.syncProgress),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.alpha(0.8f),

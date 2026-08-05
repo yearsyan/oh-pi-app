@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import io.github.yearsyan.pi.data.ConnState
 import io.github.yearsyan.pi.data.SessionSyncPhase
 import io.github.yearsyan.pi.i18n.S
+import kotlin.math.roundToInt
 
 internal enum class SessionStatus {
     Connected,
@@ -30,11 +31,17 @@ internal fun resolveSessionStatus(
     }
 
 @Composable
-internal fun SessionStatus.localizedLabel(): String = when (this) {
-    SessionStatus.Connected -> S.connected
-    SessionStatus.Connecting -> S.connecting
-    SessionStatus.RestoringSession -> S.restoringSession
-    SessionStatus.SyncingLatestActivity -> S.syncingLatestActivity
-    SessionStatus.Disconnected -> S.disconnected
-    SessionStatus.ConnectionError -> S.connectionError
+internal fun SessionStatus.localizedLabel(progress: Float? = null): String {
+    val label = when (this) {
+        SessionStatus.Connected -> S.connected
+        SessionStatus.Connecting -> S.connecting
+        SessionStatus.RestoringSession -> S.restoringSession
+        SessionStatus.SyncingLatestActivity -> S.syncingLatestActivity
+        SessionStatus.Disconnected -> S.disconnected
+        SessionStatus.ConnectionError -> S.connectionError
+    }
+    val determinate = progress?.takeIf {
+        this == SessionStatus.RestoringSession || this == SessionStatus.SyncingLatestActivity
+    } ?: return label
+    return "$label ${(determinate.coerceIn(0f, 1f) * 100f).roundToInt()}%"
 }

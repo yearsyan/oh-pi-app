@@ -54,10 +54,12 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 attach 分为稳定历史、活动 turn 回放和实时广播三个阶段：
 
 1. 从 pi 的 append-only session JSONL 读取 `entry_since` 之后的稳定 entry。
-2. 从磁盘 replay WAL 读取稳定历史高水位之后的活动事件。
+2. 当客户端的稳定基线完全匹配时，从 `replay_since` 之后读取活动事件；否则从磁盘 replay WAL 的稳定历史高水位之后读取。
 3. 在同一序列化临界区内结束 replay 并注册实时高水位，随后转入 live 广播。
 
 稳定历史和 replay 都以分块方式传输，不需要把完整历史读入内存。正在 attach 时会延迟压缩 WAL，避免读者丢失日志尾部。
+
+支持 replay 游标的客户端会把活动事件与其网关序号一起持久化，并在 live 阶段接收带 `seq` 的 `pi2ws/live` 封装。稳定 entry 游标、稳定序号基线和 replay 高水位三者必须同时匹配才允许跳过旧 WAL；任一不匹配都会回退到安全的稳定边界。这既避免长时间运行的 turn 在每次重连时被完整重传，也不会以流量优化换取历史缺口。
 
 `agent_settled` 后，pi2ws 会在 `pi2ws-history.json` 中原子记录新的稳定边界，并压缩已经稳定的 replay 日志。详细消息顺序和 chunk 格式见 [attach 历史 session](api.md#连接历史-session)。
 

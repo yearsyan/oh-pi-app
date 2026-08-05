@@ -187,6 +187,7 @@ fun HomeScreen(vm: AppViewModel) {
                         initialPath = route.path,
                         listFiles = vm::listFiles,
                         readFile = vm::readFile,
+                        downloadFile = vm::downloadFile,
                     )
                 }
                 FileBrowserScreen(

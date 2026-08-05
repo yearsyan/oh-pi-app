@@ -14,6 +14,7 @@ type wsClient struct {
 	done         chan struct{}
 	writeTimeout time.Duration
 	pongTimeout  time.Duration
+	replayCursor bool
 	closeOnce    sync.Once
 }
 
@@ -22,7 +23,12 @@ type syncWrite struct {
 	result  chan bool
 }
 
-func newWSClient(conn *websocket.Conn, queueSize int, writeTimeout, pongTimeout time.Duration) *wsClient {
+func newWSClient(
+	conn *websocket.Conn,
+	queueSize int,
+	writeTimeout, pongTimeout time.Duration,
+	replayCursor bool,
+) *wsClient {
 	return &wsClient{
 		conn:         conn,
 		send:         make(chan []byte, queueSize),
@@ -30,6 +36,7 @@ func newWSClient(conn *websocket.Conn, queueSize int, writeTimeout, pongTimeout 
 		done:         make(chan struct{}),
 		writeTimeout: writeTimeout,
 		pongTimeout:  pongTimeout,
+		replayCursor: replayCursor,
 	}
 }
 

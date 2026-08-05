@@ -1,5 +1,6 @@
 package io.github.yearsyan.pi.chat
 
+import okio.BufferedSink
 import okio.FileSystem
 import okio.Path
 import okio.Path.Companion.toPath
@@ -12,7 +13,7 @@ internal data class EntryCacheSnapshot(
     val entries: ByteArray,
 )
 
-/** Transactional, file-backed stable-entry cache for one app installation. */
+/** Transactional stable-entry cache plus an append-only active replay cache. */
 internal class EntryCacheStore(
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     rootPath: String = entryCacheRootPath(),
@@ -20,6 +21,8 @@ internal class EntryCacheStore(
     private val root = rootPath.toPath()
     private var activeKey: String? = null
     private var activeStage: Path? = null
+    private var replaySinkKey: String? = null
+    private var replaySink: BufferedSink? = null
 
     fun snapshot(key: String): EntryCacheSnapshot {
         requireValidKey(key)
@@ -38,6 +41,52 @@ internal class EntryCacheStore(
         return cursorPath(key).takeIf(fileSystem::exists)?.let { path ->
             fileSystem.read(path) { readUtf8().trim() }
         }.orEmpty()
+    }
+
+    /** Returns the locally committed active-turn replay log for [key]. */
+    fun replaySnapshot(key: String): ByteArray {
+        requireValidKey(key)
+        closeReplaySink()
+        fileSystem.createDirectories(root)
+        recoverFile(replayPath(key), replayBackupPath(key))
+        return replayPath(key).takeIf(fileSystem::exists)?.let { path ->
+            fileSystem.read(path) { readByteArray() }
+        } ?: ByteArray(0)
+    }
+
+    /** Replaces the replay log with a new stable-history base and opens it for appends. */
+    fun resetReplay(key: String, header: ByteArray) {
+        requireValidKey(key)
+        require(header.isNotEmpty()) { "replay cache header is empty" }
+        closeReplaySink()
+        fileSystem.createDirectories(root)
+        recoverFile(replayPath(key), replayBackupPath(key))
+        val stage = replayStagePath(key)
+        fileSystem.delete(stage, mustExist = false)
+        fileSystem.write(stage) { write(header) }
+        replaceWithBackup(stage, replayPath(key), replayBackupPath(key))
+        openReplaySink(key)
+    }
+
+    /** Appends one complete replay record to the current log. */
+    fun appendReplay(key: String, record: ByteArray) {
+        requireValidKey(key)
+        if (record.isEmpty()) return
+        if (replaySinkKey != key || replaySink == null) {
+            closeReplaySink()
+            check(fileSystem.exists(replayPath(key))) { "replay cache has no base" }
+            openReplaySink(key)
+        }
+        replaySink?.write(record)
+    }
+
+    /** Flushes buffered replay records without closing the active log. */
+    fun flushReplay() {
+        replaySink?.flush()
+    }
+
+    fun closeReplay() {
+        closeReplaySink()
     }
 
     fun begin(key: String, reset: Boolean) {
@@ -91,6 +140,7 @@ internal class EntryCacheStore(
     fun clear(key: String) {
         requireValidKey(key)
         if (activeKey == key) abort()
+        clearReplay(key)
         listOf(
             dataPath(key),
             backupPath(key),
@@ -99,6 +149,27 @@ internal class EntryCacheStore(
             stagePath(key),
             cursorStagePath(key),
         ).forEach { fileSystem.delete(it, mustExist = false) }
+    }
+
+    fun clearReplay(key: String) {
+        requireValidKey(key)
+        if (replaySinkKey == key) closeReplaySink()
+        listOf(
+            replayPath(key),
+            replayBackupPath(key),
+            replayStagePath(key),
+        ).forEach { fileSystem.delete(it, mustExist = false) }
+    }
+
+    private fun openReplaySink(key: String) {
+        replaySinkKey = key
+        replaySink = fileSystem.appendingSink(replayPath(key)).buffer()
+    }
+
+    private fun closeReplaySink() {
+        replaySink?.close()
+        replaySink = null
+        replaySinkKey = null
     }
 
     private fun replaceWithBackup(source: Path, target: Path, backup: Path) {
@@ -135,6 +206,9 @@ internal class EntryCacheStore(
     private fun cursorPath(key: String): Path = root / "$key.cursor"
     private fun cursorBackupPath(key: String): Path = root / "$key.cursor.backup"
     private fun cursorStagePath(key: String): Path = root / "$key.cursor.stage"
+    private fun replayPath(key: String): Path = root / "$key.replay.jsonl"
+    private fun replayBackupPath(key: String): Path = root / "$key.replay.backup"
+    private fun replayStagePath(key: String): Path = root / "$key.replay.stage"
 }
 
 internal fun entryCacheKey(gateway: String, sessionId: String): String {

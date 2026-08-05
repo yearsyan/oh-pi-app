@@ -382,7 +382,7 @@ private fun ConnectionBadge(controller: ChatController) {
         SessionStatus.RestoringSession,
         SessionStatus.SyncingLatestActivity -> piExtras.warning
     }
-    val label = status.localizedLabel()
+    val label = status.localizedLabel(controller.syncProgress)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier

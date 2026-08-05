@@ -193,7 +193,7 @@ func (s *piSession) removeClient(client *wsClient) {
 	s.clientsMu.Unlock()
 }
 
-func (s *piSession) broadcast(message []byte, outputSeq uint64) {
+func (s *piSession) broadcast(message []byte, outputSeq uint64, replayable bool) {
 	s.clientsMu.Lock()
 	type target struct {
 		client    *wsClient
@@ -209,7 +209,16 @@ func (s *piSession) broadcast(message []byte, outputSeq uint64) {
 		if outputSeq <= target.liveAfter {
 			continue
 		}
-		if !target.client.enqueue(message) {
+		outgoing := message
+		if replayable && target.client.replayCursor {
+			outgoing = mustGatewayEvent(gatewayEvent{
+				Type:    "pi2ws",
+				Event:   "live",
+				Seq:     outputSeq,
+				Payload: message,
+			})
+		}
+		if !target.client.enqueue(outgoing) {
 			s.removeClient(target.client)
 		}
 	}

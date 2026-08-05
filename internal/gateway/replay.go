@@ -219,7 +219,7 @@ func (s *piSession) handleOutput(message []byte) {
 	if checkpointToken != 0 {
 		s.scheduleCheckpoint(outputSeq, checkpointToken, checkpointSnapshot, checkpointSnapshotErr)
 	}
-	s.broadcast(message, outputSeq)
+	s.broadcast(message, outputSeq, validJSON && replayableOutput(envelope.Type))
 }
 
 func (s *piSession) adoptObservedSessionName(message []byte) {
