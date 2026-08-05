@@ -384,7 +384,7 @@ private fun ToolDetail(tool: ToolCallView) {
 private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String =
     friendlyToolAction(strings, toolAction(tool.name, tool.args))
 
-/** Full path in the expanded detail: "Edited /Users/.../MessageItems.kt". */
+/** Full path in the expanded detail: "Edited /path/to/MessageItems.kt". */
 private fun friendlyToolAction(strings: Strings, action: ToolAction): String =
     when (action.kind) {
         ToolActionKind.Execute -> strings.toolExecuted(action.target)
