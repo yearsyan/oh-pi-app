@@ -236,6 +236,7 @@ fun HomeScreen(vm: AppViewModel) {
     newChatWide?.let { wide ->
         WorkspaceDialog(
             initial = vm.lastWorkspace,
+            workspaces = vm.sessions.map { it.workDir }.distinct(),
             fetchDirs = { path -> vm.listDirs(path) },
             createDir = { parent, name -> vm.createDir(parent, name) },
             onDismiss = { newChatWide = null },

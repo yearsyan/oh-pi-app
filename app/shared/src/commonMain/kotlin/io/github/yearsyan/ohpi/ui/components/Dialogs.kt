@@ -98,14 +98,151 @@ fun RenameDialog(
     )
 }
 
-/** New-chat workspace picker: browses directories on the gateway host. */
+/**
+ * New-chat workspace picker: a dropdown of known workspaces, plus a "+" action
+ * that opens a bottom-sheet directory browser to add a new one.
+ */
 @Composable
 fun WorkspaceDialog(
     initial: String,
+    workspaces: List<String>,
     fetchDirs: suspend (String) -> FsListResponse,
     createDir: suspend (parent: String, name: String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+) {
+    var options by remember {
+        mutableStateOf(
+            buildList {
+                add("")
+                addAll(workspaces)
+                if (initial.isNotBlank()) add(initial)
+            }.distinct(),
+        )
+    }
+    var selected by remember {
+        mutableStateOf(
+            initial.takeIf { it.isNotBlank() }
+                ?: options.firstOrNull { it.isNotBlank() }
+                ?: "",
+        )
+    }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(S.workspaceDialogTitle) },
+        text = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = if (selected.isBlank()) S.defaultWorkspace else selected,
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        label = { Text(S.workspaceLabel) },
+                        trailingIcon = {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // The read-only field consumes touches; overlay a tap target.
+                    Box(Modifier.matchParentSize().clickable { menuOpen = true })
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                    ) {
+                        options.forEach { dir ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                workspaceDisplayName(dir),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            if (dir.isNotBlank()) {
+                                                Text(
+                                                    dir,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                        }
+                                        if (dir == selected) {
+                                            Icon(
+                                                Icons.Filled.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = {
+                                    selected = dir
+                                    menuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = { showPicker = true }) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = S.addWorkspace,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(selected); onDismiss() }) {
+                Text(S.confirm)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(S.cancel) }
+        },
+    )
+
+    if (showPicker) {
+        WorkspacePickerSheet(
+            initial = selected,
+            fetchDirs = fetchDirs,
+            createDir = createDir,
+            onDismiss = { showPicker = false },
+            onSelect = { path ->
+                if (path.isNotBlank() && path !in options) options = options + path
+                selected = path
+            },
+        )
+    }
+}
+
+/** Short label for a workspace path, mirroring the session list header. */
+@Composable
+private fun workspaceDisplayName(dir: String): String =
+    if (dir.isBlank()) S.defaultWorkspace
+    else dir.substringAfterLast('/').ifBlank { dir }
+
+/** Bottom-sheet directory browser used to add a workspace on the gateway host. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkspacePickerSheet(
+    initial: String,
+    fetchDirs: suspend (String) -> FsListResponse,
+    createDir: suspend (parent: String, name: String) -> Unit,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
 ) {
     var pathInput by remember { mutableStateOf(initial) }
     var current by remember { mutableStateOf<FsListResponse?>(null) }
@@ -135,106 +272,103 @@ fun WorkspaceDialog(
 
     val canGoUp = !loading && current != null && current!!.parent.isNotBlank() && current!!.parent != current!!.path
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(S.workspaceDialogTitle) },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = pathInput,
-                        onValueChange = { pathInput = it },
-                        label = { Text(S.workspaceLabel) },
-                        placeholder = { Text(S.workspaceHint) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { navigate(pathInput.trim()) }),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = pathInput,
+                    onValueChange = { pathInput = it },
+                    label = { Text(S.workspaceLabel) },
+                    placeholder = { Text(S.workspaceHint) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { navigate(pathInput.trim()) }),
+                )
+                IconButton(onClick = { navigate(current!!.parent) }, enabled = canGoUp) {
+                    Icon(
+                        Icons.Filled.ArrowUpward,
+                        contentDescription = S.upLevel,
+                        tint = if (canGoUp) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline,
                     )
-                    IconButton(onClick = { navigate(current!!.parent) }, enabled = canGoUp) {
-                        Icon(
-                            Icons.Filled.ArrowUpward,
-                            contentDescription = S.upLevel,
-                            tint = if (canGoUp) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline,
-                        )
-                    }
-                    val canCreate = !loading && current != null && error.isBlank()
-                    IconButton(onClick = { showCreateFolder = true }, enabled = canCreate) {
-                        Icon(
-                            Icons.Filled.CreateNewFolder,
-                            contentDescription = S.createFolder,
-                            tint = if (canCreate) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline,
-                        )
-                    }
                 }
-                Spacer(Modifier.height(10.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(260.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLow),
-                ) {
-                    when {
-                        loading -> CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center).size(28.dp),
-                        )
-                        error.isNotBlank() -> Text(
-                            error,
-                            modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                        )
-                        current?.dirs.isNullOrEmpty() -> Text(
-                            S.noSubdirectories,
-                            modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        else -> LazyColumn(Modifier.fillMaxSize()) {
-                            items(current!!.dirs, key = { it.path }) { dir ->
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { navigate(dir.path) }
-                                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Folder,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(17.dp),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                    Spacer(Modifier.size(10.dp))
-                                    Text(
-                                        dir.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                val canCreate = !loading && current != null && error.isBlank()
+                IconButton(onClick = { showCreateFolder = true }, enabled = canCreate) {
+                    Icon(
+                        Icons.Filled.CreateNewFolder,
+                        contentDescription = S.createFolder,
+                        tint = if (canCreate) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(320.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                when {
+                    loading -> CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center).size(28.dp),
+                    )
+                    error.isNotBlank() -> Text(
+                        error,
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                    )
+                    current?.dirs.isNullOrEmpty() -> Text(
+                        S.noSubdirectories,
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    else -> LazyColumn(Modifier.fillMaxSize()) {
+                        items(current!!.dirs, key = { it.path }) { dir ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { navigate(dir.path) }
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.size(10.dp))
+                                Text(
+                                    dir.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(pathInput.trim()); onDismiss() },
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onSelect(pathInput.trim()); onDismiss() },
                 enabled = pathInput.trim().isNotEmpty() && !loading,
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(S.selectThisDirectory)
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(S.cancel) }
-        },
-    )
+            Spacer(Modifier.height(28.dp))
+        }
+    }
 
     if (showCreateFolder) {
         CreateFolderDialog(
