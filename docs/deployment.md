@@ -63,7 +63,7 @@ curl http://127.0.0.1:8080/healthz
 | `--token` | `PI2WS_TOKEN` | 无 | 必填鉴权 token |
 | `--data-dir` | `PI2WS_DATA_DIR` | `~/.local/state/pi2ws` | session 持久化目录 |
 | `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
-| `--title-model` | `PI2WS_TITLE_MODEL` | `auto` | 首轮结束后生成标题；见下文模型选择 |
+| `--title-model` | `PI2WS_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
 | `--pi` | `PI2WS_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
@@ -85,7 +85,7 @@ curl http://127.0.0.1:8080/healthz
 
 ### 会话标题模型
 
-pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-title.ts`，并为每个 pi 子进程显式加载它。extension 在首个 `agent_settled` 后，用第一条用户消息和第一条助手回复生成标题；模型调用与主对话分离，不会写入对话上下文。生成结果经 pi 的 `session_info_changed` 事件回到网关，由网关持久化并广播。手工名称始终优先，生成失败则退化为第一条用户消息。
+pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-title.ts`，并为每个 pi 子进程显式加载它。extension 在首个 `before_agent_start` 收到已展开的用户请求后立即异步生成标题，不等待主 agent 的回复或工具执行，也不会阻塞主对话、写入对话上下文。生成结果经 pi 的 `session_info_changed` 事件回到网关，由网关持久化并广播。App 在首条用户消息出现时会先显示一个不写回服务端的临时标题，正式模型标题到达后自动替换。手工名称始终优先，生成失败则退化为第一条用户消息。
 
 `PI2WS_TITLE_MODEL` 支持：
 

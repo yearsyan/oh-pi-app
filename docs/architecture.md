@@ -45,7 +45,7 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 
 ## 会话标题
 
-标题生成采用 extension 与网关分工：随二进制内嵌的 pi extension 在首轮完全结束后调用配置的轻量模型，再通过 pi 原生 `setSessionName()` 产生 `session_info_changed`；网关接收该事件、写入 `pi2ws-session.json` 并原样广播给客户端。客户端不再用第一条消息自行命名，而是监听该事件更新 UI。
+标题生成采用 extension 与网关分工：随二进制内嵌的 pi extension 在首个 `before_agent_start` 收到用户请求后立即并行调用配置的轻量模型，再通过 pi 原生 `setSessionName()` 产生 `session_info_changed`；模型调用不阻塞主 agent。网关接收该事件、写入 `pi2ws-session.json` 并原样广播给客户端。客户端先用第一条用户消息显示不持久化的临时标题，再监听该事件替换为正式标题。
 
 网关元数据是最终权威来源。首个有效的 pi 标题只会填充尚未命名的 session；HTTP 或 WebSocket 手工重命名一旦写入，之后到达的冲突生成结果会被丢弃。这样即使手工重命名和异步模型调用并发，手工名称也不会被覆盖。
 

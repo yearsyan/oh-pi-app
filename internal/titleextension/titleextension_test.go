@@ -35,3 +35,12 @@ func TestInstallMaterializesEmbeddedExtension(t *testing.T) {
 		t.Fatalf("second Install failed: %v", err)
 	}
 }
+
+func TestEmbeddedExtensionStartsTitleBeforeAgent(t *testing.T) {
+	if !bytes.Contains(extensionSource, []byte(`pi.on("before_agent_start"`)) {
+		t.Fatal("embedded extension does not start title generation before the agent")
+	}
+	if bytes.Contains(extensionSource, []byte(`pi.on("agent_settled"`)) {
+		t.Fatal("embedded extension still waits for agent_settled")
+	}
+}
