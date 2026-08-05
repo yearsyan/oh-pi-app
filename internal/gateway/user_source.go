@@ -35,7 +35,7 @@ func userSourceFromCommand(command []byte) (userInputSource, bool) {
 		ID                string            `json:"id"`
 		Message           string            `json:"message"`
 		Images            []json.RawMessage `json:"images"`
-		ConfirmOnResponse bool              `json:"pi2ws_confirm_on_response"`
+		ConfirmOnResponse bool              `json:"ohpi_confirm_on_response"`
 	}
 	if json.Unmarshal(command, &decoded) != nil || decoded.ID == "" {
 		return userInputSource{}, false
@@ -60,10 +60,10 @@ func stripUserSourceMetadata(command []byte) []byte {
 	if json.Unmarshal(command, &fields) != nil {
 		return command
 	}
-	if _, exists := fields["pi2ws_confirm_on_response"]; !exists {
+	if _, exists := fields["ohpi_confirm_on_response"]; !exists {
 		return command
 	}
-	delete(fields, "pi2ws_confirm_on_response")
+	delete(fields, "ohpi_confirm_on_response")
 	stripped, err := json.Marshal(fields)
 	if err != nil {
 		return command

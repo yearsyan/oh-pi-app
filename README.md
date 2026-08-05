@@ -1,6 +1,9 @@
-# pi2ws
+# Oh Pi App
 
-`pi2ws` 是用 Go 实现的 [pi](https://github.com/badlogic/pi-mono) 网关。HTTP API 负责持久化会话的发现与管理，WebSocket 负责 pi RPC 和实时事件。一个网关进程可以管理多个互相独立的 `pi --mode rpc` 子进程；同一个 pi session 可以被多个 WebSocket 客户端同时连接、输入和监听输出。
+**Oh Pi App**（短名 `ohpi`）是 [pi](https://github.com/badlogic/pi-mono) 的远程网关 + 多端客户端 monorepo。
+
+- **网关** `ohpi-gateway`：Go 实现。HTTP API 负责持久化会话的发现与管理，WebSocket 负责 pi RPC 和实时事件。一个网关进程可以管理多个互相独立的 `pi --mode rpc` 子进程；同一个 pi session 可以被多个 WebSocket 客户端同时连接、输入和监听输出。
+- **客户端** `app/`：Kotlin Multiplatform（Android / Desktop / iOS），连接你自建的网关。
 
 ```text
 WebSocket A ─┐
@@ -32,10 +35,10 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 ```bash
 mkdir -p bin
-go build -o bin/pi2ws ./cmd/pi2ws
+go build -o bin/ohpi-gateway ./cmd/ohpi-gateway
 
-export PI2WS_TOKEN="$(openssl rand -hex 32)"
-./bin/pi2ws \
+export OHPI_TOKEN="$(openssl rand -hex 32)"
+./bin/ohpi-gateway \
   --listen 127.0.0.1:18080 \
   --work-dir /path/to/project
 ```
@@ -64,3 +67,9 @@ go vet ./...
 ```
 
 测试使用受控的假 pi 子进程，不会调用模型或消耗 API。涉及 WebSocket、队列、进程或关闭流程的变更应运行 race detector。
+
+## License
+
+Oh Pi App 自有代码以 [Apache License 2.0](LICENSE) 授权，见 [NOTICE](NOTICE)。
+
+客户端原生 SSH 栈还包含第三方组件（尤其是 LGPL-2.1+ 的 libssh），完整说明见 [`native/pi_ssh/licenses/`](native/pi_ssh/licenses/)。

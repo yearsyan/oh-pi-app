@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-const extensionFileName = "pi2ws-session-title.ts"
+const extensionFileName = "ohpi-session-title.ts"
 
 //go:embed session-title.ts
 var extensionSource []byte
@@ -44,7 +44,7 @@ func Install(dataDir string) (string, error) {
 		return target, nil
 	}
 
-	temporary, err := os.CreateTemp(runtimeDir, ".pi2ws-session-title-*.tmp")
+	temporary, err := os.CreateTemp(runtimeDir, ".ohpi-session-title-*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("create temporary title extension: %w", err)
 	}

@@ -1,4 +1,4 @@
-// Package filebrowser implements the pi2ws HTTP file browsing API: directory
+// Package filebrowser implements the ohpi HTTP file browsing API: directory
 // listing, text file preview, and raw file download. Every endpoint is GET
 // only and gated by the gateway's token authentication.
 package filebrowser

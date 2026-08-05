@@ -1,4 +1,4 @@
-rootProject.name = "PiApp"
+rootProject.name = "OhPiApp"
 
 pluginManagement {
     repositories {

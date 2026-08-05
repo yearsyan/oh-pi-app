@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- `cmd/pi2ws/main.go` is the executable entry point and owns flags, environment configuration, signals, and HTTP lifecycle.
+- `cmd/ohpi-gateway/main.go` is the executable entry point and owns flags, environment configuration, signals, and HTTP lifecycle.
 - `internal/gateway/` contains the application: WebSocket handling, authentication, session persistence, client fan-out, and pi subprocess management.
 - Tests live beside implementation files as `*_test.go`. Integration tests use a fake pi subprocess and loopback HTTP/WebSocket servers.
 - `README.md` documents the public WebSocket protocol and operational configuration. There are no repository assets or generated sources.
@@ -12,15 +12,15 @@ Keep protocol policy in `server.go`, process lifecycle in `session.go`/`manager.
 ## Build, Test, and Development Commands
 
 ```bash
-go build -o bin/pi2ws ./cmd/pi2ws
-PI2WS_TOKEN=local-dev-token go run ./cmd/pi2ws --work-dir .
+go build -o bin/ohpi-gateway ./cmd/ohpi-gateway
+OHPI_TOKEN=local-dev-token go run ./cmd/ohpi-gateway --work-dir .
 go test ./...
 go test -race ./...
 go vet ./...
-gofmt -w cmd/pi2ws internal/gateway
+gofmt -w cmd/ohpi-gateway internal/gateway
 ```
 
-The build command creates the ignored `bin/pi2ws` binary. Run normal tests before every change; use the race detector for WebSocket, queue, process, or shutdown changes. `go vet` and `gofmt` are the required static and formatting checks.
+The build command creates the ignored `bin/ohpi-gateway` binary. Run normal tests before every change; use the race detector for WebSocket, queue, process, or shutdown changes. `go vet` and `gofmt` are the required static and formatting checks.
 
 ### KMP Android App (`app/`)
 
@@ -46,7 +46,7 @@ STORE_PASS=$(openssl rand -hex 16)
 keytool -genkeypair -v -keystore app/androidApp/pi-release.keystore -alias pi \
   -keyalg RSA -keysize 2048 -validity 10950 \
   -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
-  -dname "CN=Pi App, OU=pi2ws, O=yearsyan, L=Shanghai, ST=Shanghai, C=CN"
+  -dname "CN=Oh Pi App, OU=ohpi, O=yearsyan, L=Shanghai, ST=Shanghai, C=CN"
 printf "storeFile=pi-release.keystore\nstorePassword=%s\nkeyAlias=pi\nkeyPassword=%s\n" \
   "$STORE_PASS" "$STORE_PASS" > app/keystore.properties
 chmod 600 app/keystore.properties
@@ -78,4 +78,4 @@ Pull requests should explain behavior and protocol changes, list verification co
 
 ## Security & Configuration
 
-Never log or pass `PI2WS_TOKEN` to pi children. Preserve constant-time token comparison, session ID validation, Origin checks, and the block on session-changing RPC commands. Do not commit credentials, runtime session data, or built binaries.
+Never log or pass `OHPI_TOKEN` to pi children. Preserve constant-time token comparison, session ID validation, Origin checks, and the block on session-changing RPC commands. Do not commit credentials, runtime session data, or built binaries.

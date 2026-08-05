@@ -85,7 +85,7 @@ kotlin {
     jvm()
     
     android {
-       namespace = "io.github.yearsyan.pi.shared"
+       namespace = "io.github.yearsyan.ohpi.shared"
        compileSdk = libs.versions.android.compileSdk.get().toInt()
        minSdk = libs.versions.android.minSdk.get().toInt()
     

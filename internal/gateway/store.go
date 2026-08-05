@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const metadataFileName = "pi2ws-session.json"
+const (
+	metadataFileName       = "ohpi-session.json"
+	legacyMetadataFileName = "pi2ws-session.json" // pre-rename brand
+)
 
 var errSessionNotFound = errors.New("session not found")
 
@@ -95,16 +98,12 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 		return sessionMetadata{}, "", fmt.Errorf("%w: invalid session directory", errSessionNotFound)
 	}
 
-	path := filepath.Join(dir, metadataFileName)
-	info, err = os.Lstat(path)
+	path, err := resolveExistingFile(dir, metadataFileName, legacyMetadataFileName)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return sessionMetadata{}, "", errSessionNotFound
 		}
 		return sessionMetadata{}, "", fmt.Errorf("inspect session metadata: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return sessionMetadata{}, "", fmt.Errorf("%w: invalid session metadata", errSessionNotFound)
 	}
 
 	data, err := os.ReadFile(path)
@@ -220,10 +219,15 @@ func (s *sessionStore) discard(id string) error {
 		return fmt.Errorf("invalid session id %q", id)
 	}
 	dir := s.sessionDir(id)
-	if err := os.Remove(filepath.Join(dir, metadataFileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove session metadata: %w", err)
+	for _, name := range []string{metadataFileName, legacyMetadataFileName} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove session metadata: %w", err)
+		}
 	}
-	for _, name := range []string{historyCacheFileName, replayLogFileName} {
+	for _, name := range []string{
+		historyCacheFileName, legacyHistoryCacheFileName,
+		replayLogFileName, legacyReplayLogFileName,
+	} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove session gateway state %q: %w", name, err)
 		}
@@ -275,7 +279,7 @@ func replaceMetadata(dir string, meta sessionMetadata) error {
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(dir, ".pi2ws-session-*.tmp")
+	temporary, err := os.CreateTemp(dir, ".ohpi-session-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary session metadata: %w", err)
 	}
@@ -303,7 +307,35 @@ func replaceMetadata(dir string, meta sessionMetadata) error {
 		return fmt.Errorf("replace session metadata: %w", err)
 	}
 	committed = true
+	// Drop pre-rename metadata once the new name is in place.
+	_ = os.Remove(filepath.Join(dir, legacyMetadataFileName))
 	return nil
+}
+
+// resolveExistingFile returns the first regular file among names that exists in dir.
+func resolveExistingFile(dir string, names ...string) (string, error) {
+	var firstErr error
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("%w: invalid session metadata", errSessionNotFound)
+		}
+		return path, nil
+	}
+	if firstErr != nil {
+		return "", firstErr
+	}
+	return "", fs.ErrNotExist
 }
 
 func encodeMetadata(meta sessionMetadata) ([]byte, error) {

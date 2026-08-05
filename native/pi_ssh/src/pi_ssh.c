@@ -656,7 +656,7 @@ static void pi_ssh_worker_main(void *userdata)
         now = pi_ssh_platform_monotonic_seconds();
         if (tunnel->keepalive_interval_seconds > 0 && now > 0 &&
             now - last_keepalive >= tunnel->keepalive_interval_seconds) {
-            int keepalive_result = ssh_send_ignore(tunnel->session, "pi2ws");
+            int keepalive_result = ssh_send_ignore(tunnel->session, "ohpi");
             if (keepalive_result == SSH_ERROR) {
                 pi_ssh_set_tunnel_error(tunnel,
                                         PI_SSH_ERROR_SSH_DISCONNECTED,

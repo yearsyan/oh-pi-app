@@ -53,10 +53,10 @@ jobs:
       - name: Stage APK artifact
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cp app/androidApp/build/outputs/apk/release/androidApp-release.apk "pi-app-${VERSION}.apk"
+          cp app/androidApp/build/outputs/apk/release/androidApp-release.apk "ohpi-app-${VERSION}.apk"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: pi-app-*.apk
+          files: ohpi-app-*.apk
           generate_release_notes: true

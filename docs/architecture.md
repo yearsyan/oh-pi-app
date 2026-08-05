@@ -1,10 +1,10 @@
 # 架构与持久化
 
-本文说明 pi2ws 的进程模型、session 生命周期以及历史和实时事件如何保持一致。接口格式见 [API 与 WebSocket 协议](api.md)，运行参数见[部署与配置](deployment.md)。
+本文说明 ohpi-gateway 的进程模型、session 生命周期以及历史和实时事件如何保持一致。接口格式见 [API 与 WebSocket 协议](api.md)，运行参数见[部署与配置](deployment.md)。
 
 ## 进程模型
 
-一个 pi2ws 网关进程管理多个相互独立的 pi RPC 子进程。每个 session 同一时间最多有一个 pi 子进程，但可以有多个 WebSocket 客户端共享它：
+一个 ohpi-gateway 进程管理多个相互独立的 pi RPC 子进程。每个 session 同一时间最多有一个 pi 子进程，但可以有多个 WebSocket 客户端共享它：
 
 ```text
 WebSocket A ─┐
@@ -24,13 +24,13 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 ```text
 <data-dir>/sessions/<session-id>/
-├── pi2ws-session.json
-├── pi2ws-history.json
-├── pi2ws-replay.log
+├── ohpi-session.json
+├── ohpi-history.json
+├── ohpi-replay.log
 └── <pi 创建的 session JSONL 文件>
 ```
 
-pi2ws 以以下受控参数启动子进程：
+ohpi 以以下受控参数启动子进程：
 
 ```text
 pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
@@ -38,14 +38,14 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 
 各文件的职责如下：
 
-- `pi2ws-session.json` 是会话列表元数据的权威来源，包含名称、工作区、创建时间和最近活跃时间；旧版元数据会兼容读取。
+- `ohpi-session.json` 是会话列表元数据的权威来源，包含名称、工作区、创建时间和最近活跃时间；旧版元数据会兼容读取。
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
-- `pi2ws-replay.log` 是当前活动 turn 的紧凑事件 WAL。pi2ws 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
-- `pi2ws-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
+- `ohpi-replay.log` 是当前活动 turn 的紧凑事件 WAL。ohpi 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
+- `ohpi-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
 
 ## 会话标题
 
-标题生成采用 extension 与网关分工：随二进制内嵌的 pi extension 在首个 `before_agent_start` 收到用户请求后立即并行调用配置的轻量模型，再通过 pi 原生 `setSessionName()` 产生 `session_info_changed`；模型调用不阻塞主 agent。网关接收该事件、写入 `pi2ws-session.json` 并原样广播给客户端。客户端先用第一条用户消息显示不持久化的临时标题，再监听该事件替换为正式标题。
+标题生成采用 extension 与网关分工：随二进制内嵌的 pi extension 在首个 `before_agent_start` 收到用户请求后立即并行调用配置的轻量模型，再通过 pi 原生 `setSessionName()` 产生 `session_info_changed`；模型调用不阻塞主 agent。网关接收该事件、写入 `ohpi-session.json` 并原样广播给客户端。客户端先用第一条用户消息显示不持久化的临时标题，再监听该事件替换为正式标题。
 
 网关元数据是最终权威来源。首个有效的 pi 标题只会填充尚未命名的 session；HTTP 或 WebSocket 手工重命名一旦写入，之后到达的冲突生成结果会被丢弃。这样即使手工重命名和异步模型调用并发，手工名称也不会被覆盖。
 
@@ -59,9 +59,9 @@ attach 分为稳定历史、活动 turn 回放和实时广播三个阶段：
 
 稳定历史直接以 WebSocket Binary 消息传输原始 JSONL 字节；普通 replay 记录作为嵌套 JSON 对象发送，超过 256 KiB 的单事件在文本元信息后以 Binary 消息传输原始 JSON 字节。两条路径都没有同步层 Base64。App 在接收协程中施加背压并顺序写入 staging 文件，以声明的原始字节数提交或回滚。正在 attach 时会延迟压缩 WAL，避免读者丢失日志尾部。
 
-支持 replay 游标的客户端会把活动事件与其网关序号一起持久化，并在 live 阶段接收带 `seq` 的 `pi2ws/live` 封装。稳定 entry 游标、稳定序号基线和 replay 高水位三者必须同时匹配才允许跳过旧 WAL；任一不匹配都会回退到安全的稳定边界。这既避免长时间运行的 turn 在每次重连时被完整重传，也不会以流量优化换取历史缺口。
+支持 replay 游标的客户端会把活动事件与其网关序号一起持久化，并在 live 阶段接收带 `seq` 的 `ohpi/live` 封装。稳定 entry 游标、稳定序号基线和 replay 高水位三者必须同时匹配才允许跳过旧 WAL；任一不匹配都会回退到安全的稳定边界。这既避免长时间运行的 turn 在每次重连时被完整重传，也不会以流量优化换取历史缺口。
 
-assistant 消息和工具执行结束时，pi2ws 会原子合并被最终状态覆盖的流式更新；`agent_settled` 后再在 `pi2ws-history.json` 中记录新的稳定边界，并删除已经进入稳定历史的 replay。启动恢复同样会迁移旧格式或未压缩 WAL。详细消息顺序和 chunk 格式见 [attach 历史 session](api.md#连接历史-session)。
+assistant 消息和工具执行结束时，ohpi 会原子合并被最终状态覆盖的流式更新；`agent_settled` 后再在 `ohpi-history.json` 中记录新的稳定边界，并删除已经进入稳定历史的 replay。启动恢复同样会迁移旧格式或未压缩 WAL。详细消息顺序和 chunk 格式见 [attach 历史 session](api.md#连接历史-session)。
 
 ## 输入关联与共享控制
 
@@ -80,6 +80,6 @@ session 是共享控制域：
 - session 在 `agent_settled` 后连续 5 分钟没有新 RPC 输入时会被优雅关闭；该时长可通过 `--session-idle-timeout` 调整。
 - 空闲回收会以正常关闭码断开仍连接的 WebSocket，原因是 `pi session idle timeout`。session 文件全部保留，下一次 attach 会启动新的 pi 子进程。
 - pi 异常退出时，该 session 的 WebSocket 以 1011 关闭；下一次 attach 会启动新进程并恢复持久化会话。
-- pi2ws 收到 `SIGINT` 或 `SIGTERM` 后，先关闭 WebSocket 和子进程 stdin，超时后强制结束仍未退出的子进程。
+- ohpi 收到 `SIGINT` 或 `SIGTERM` 后，先关闭 WebSocket 和子进程 stdin，超时后强制结束仍未退出的子进程。
 - 永久删除 session 时，活动子进程和 WebSocket 会先正常关闭，随后删除整个 session 目录。
-- `PI2WS_TOKEN` 不会传入 pi 子进程环境。
+- `OHPI_TOKEN` 不会传入 pi 子进程环境。

@@ -1,0 +1,27 @@
+package io.github.yearsyan.ohpi.ui.components
+
+import androidx.compose.runtime.Composable
+import io.github.yearsyan.ohpi.chat.PromptImage
+
+internal const val MaxPickedImageBytes = 8 * 1024 * 1024
+
+/** Upper bound on how many images can be attached to a single prompt. */
+internal const val MaxPickedImageCount = 9
+
+internal sealed interface ImagePickResult {
+    data class Success(val images: List<PromptImage>) : ImagePickResult
+
+    data object TooLarge : ImagePickResult
+
+    data object Failed : ImagePickResult
+}
+
+internal class ImagePicker(
+    val available: Boolean,
+    private val launchPicker: () -> Unit,
+) {
+    fun launch() = launchPicker()
+}
+
+@Composable
+internal expect fun rememberImagePicker(onResult: (ImagePickResult) -> Unit): ImagePicker

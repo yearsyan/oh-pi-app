@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	historyCacheFileName = "pi2ws-history.json"
-	replayLogFileName    = "pi2ws-replay.log"
-	replayStoreVersion   = 2
+	historyCacheFileName       = "ohpi-history.json"
+	legacyHistoryCacheFileName = "pi2ws-history.json" // pre-rename brand
+	replayLogFileName          = "ohpi-replay.log"
+	legacyReplayLogFileName    = "pi2ws-replay.log" // pre-rename brand
+	replayStoreVersion         = 2
 )
 
 type persistedHistory struct {
@@ -51,9 +53,12 @@ func (s *piSession) openReplayStore(newSession bool) error {
 			return err
 		}
 	} else {
-		cachePath := filepath.Join(s.dir, historyCacheFileName)
-		data, err := os.ReadFile(cachePath)
+		cachePath, err := firstExistingPath(s.dir, historyCacheFileName, legacyHistoryCacheFileName)
 		if err == nil {
+			data, readErr := os.ReadFile(cachePath)
+			if readErr != nil {
+				return fmt.Errorf("read history cache: %w", readErr)
+			}
 			var cache persistedHistory
 			if err := json.Unmarshal(data, &cache); err != nil {
 				return fmt.Errorf("decode history cache: %w", err)
@@ -75,6 +80,15 @@ func (s *piSession) openReplayStore(newSession bool) error {
 
 	logPath := filepath.Join(s.dir, replayLogFileName)
 	if !newSession {
+		// Prefer the new name; fall back to the pre-rename log and migrate on open.
+		if _, err := os.Lstat(logPath); errors.Is(err, os.ErrNotExist) {
+			legacyPath := filepath.Join(s.dir, legacyReplayLogFileName)
+			if _, legErr := os.Lstat(legacyPath); legErr == nil {
+				if renErr := os.Rename(legacyPath, logPath); renErr != nil {
+					return fmt.Errorf("migrate replay log: %w", renErr)
+				}
+			}
+		}
 		if err := s.loadReplayLogLocked(logPath); err != nil {
 			return err
 		}
@@ -156,7 +170,7 @@ func rewriteReplayLog(path string, throughSeq uint64) (uint64, error) {
 		return 0, fmt.Errorf("close replay log after recovery: %w", err)
 	}
 
-	temp, err := os.CreateTemp(filepath.Dir(path), ".pi2ws-replay-*")
+	temp, err := os.CreateTemp(filepath.Dir(path), ".ohpi-replay-*")
 	if err != nil {
 		return 0, fmt.Errorf("create replay log replacement: %w", err)
 	}
@@ -352,7 +366,25 @@ func (s *piSession) writeHistoryCacheLocked(throughSeq uint64, boundary historyB
 	if err != nil {
 		return fmt.Errorf("encode history cache: %w", err)
 	}
-	return writeAtomicFile(s.dir, historyCacheFileName, data)
+	if err := writeAtomicFile(s.dir, historyCacheFileName, data); err != nil {
+		return err
+	}
+	_ = os.Remove(filepath.Join(s.dir, legacyHistoryCacheFileName))
+	return nil
+}
+
+func firstExistingPath(dir string, names ...string) (string, error) {
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		_, err := os.Lstat(path)
+		if err == nil {
+			return path, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 func (s *piSession) compactReplayLogLocked(throughSeq uint64) error {
@@ -379,7 +411,7 @@ func (s *piSession) compactReplayLogLocked(throughSeq uint64) error {
 }
 
 func writeAtomicFile(dir, name string, data []byte) error {
-	temp, err := os.CreateTemp(dir, ".pi2ws-history-*")
+	temp, err := os.CreateTemp(dir, ".ohpi-history-*")
 	if err != nil {
 		return fmt.Errorf("create history cache replacement: %w", err)
 	}

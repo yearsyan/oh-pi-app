@@ -33,7 +33,7 @@ func TestPiHelperProcess(t *testing.T) {
 	}
 	if inMemory {
 		sessionID = "in-memory"
-		if probeLog := os.Getenv("PI2WS_TEST_PROBE_LOG"); probeLog != "" {
+		if probeLog := os.Getenv("OHPI_TEST_PROBE_LOG"); probeLog != "" {
 			logFile, err := os.OpenFile(probeLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 			if err != nil {
 				os.Exit(3)
@@ -170,7 +170,7 @@ func TestPiHelperProcess(t *testing.T) {
 				{"name": "fix-tests", "description": "Fix failing tests", "source": "prompt"},
 				{"name": "skill:review", "description": "Review changed code", "source": "skill"},
 			}}
-			if os.Getenv("PI2WS_TEST_NO_GET_COMMANDS") == "1" {
+			if os.Getenv("OHPI_TEST_NO_GET_COMMANDS") == "1" {
 				response["success"] = false
 				response["error"] = "Unknown command: get_commands"
 			}
@@ -208,7 +208,7 @@ func writeFakeSessionFile(path, sessionID string, entries []any) error {
 
 func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 	probeLog := filepath.Join(t.TempDir(), "capability-probes.log")
-	t.Setenv("PI2WS_TEST_PROBE_LOG", probeLog)
+	t.Setenv("OHPI_TEST_PROBE_LOG", probeLog)
 	app, server := startTestGateway(t, t.TempDir())
 	workDir := t.TempDir()
 	resolvedWorkDir, err := filepath.EvalSymlinks(workDir)
@@ -286,7 +286,7 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 }
 
 func TestCapabilitiesAllowPiWithoutGetCommands(t *testing.T) {
-	t.Setenv("PI2WS_TEST_NO_GET_COMMANDS", "1")
+	t.Setenv("OHPI_TEST_NO_GET_COMMANDS", "1")
 	_, server := startTestGateway(t, t.TempDir())
 	endpoint := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(t.TempDir())
 	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
@@ -388,8 +388,8 @@ func TestOnePiProcessSharedByMultipleWebSockets(t *testing.T) {
 	})
 	defer first.Close()
 	readyFirst := readEvent(t, first)
-	if readyFirst.string("type") != "pi2ws" || readyFirst.string("event") != "ready" {
-		t.Fatalf("first message = %#v, want pi2ws ready", readyFirst)
+	if readyFirst.string("type") != "ohpi" || readyFirst.string("event") != "ready" {
+		t.Fatalf("first message = %#v, want ohpi ready", readyFirst)
 	}
 	sessionID := readyFirst.string("session_id")
 	if !validSessionID(sessionID) {
@@ -924,7 +924,7 @@ func TestAttachResumesActiveReplayAndWrapsOptedInLiveOutput(t *testing.T) {
 	if len(replay) != len(activeEvents) {
 		t.Fatalf("full replay count = %d, want %d", len(replay), len(activeEvents))
 	}
-	resumeSeq := uint64(replay[1].number("_pi2ws_seq"))
+	resumeSeq := uint64(replay[1].number("_ohpi_seq"))
 	baseSeq := uint64(history.number("through_seq"))
 	mismatched := dialWebSocket(t, server, url.Values{
 		"action":        {"attach"},
@@ -960,7 +960,7 @@ func TestAttachResumesActiveReplayAndWrapsOptedInLiveOutput(t *testing.T) {
 		t.Fatalf("legacy live event = %#v", got)
 	}
 	wrapped := readEvent(t, resumed)
-	if wrapped.string("type") != "pi2ws" || wrapped.string("event") != "live" || wrapped.number("seq") <= float64(resumeSeq) {
+	if wrapped.string("type") != "ohpi" || wrapped.string("event") != "live" || wrapped.number("seq") <= float64(resumeSeq) {
 		t.Fatalf("opted-in live envelope = %#v", wrapped)
 	}
 	payload, _ := wrapped["payload"].(map[string]any)
@@ -998,11 +998,11 @@ func TestAttachChunksLargeActiveReplayRecord(t *testing.T) {
 	if len(replay) != 1 {
 		t.Fatalf("large active replay count = %d, want one", len(replay))
 	}
-	if replay[0].number("_pi2ws_chunk_count") < 2 {
-		t.Fatalf("large active record used %.0f chunks, want multiple", replay[0].number("_pi2ws_chunk_count"))
+	if replay[0].number("_ohpi_chunk_count") < 2 {
+		t.Fatalf("large active record used %.0f chunks, want multiple", replay[0].number("_ohpi_chunk_count"))
 	}
-	if replay[0].number("_pi2ws_total_bytes") <= float64(len(largeDelta)) {
-		t.Fatalf("replay total bytes = %.0f, want full JSON payload size", replay[0].number("_pi2ws_total_bytes"))
+	if replay[0].number("_ohpi_total_bytes") <= float64(len(largeDelta)) {
+		t.Fatalf("replay total bytes = %.0f, want full JSON payload size", replay[0].number("_ohpi_total_bytes"))
 	}
 	update, _ := replay[0]["assistantMessageEvent"].(map[string]any)
 	if delta, _ := update["delta"].(string); delta != largeDelta {
@@ -1174,11 +1174,11 @@ func TestAttachChunksStableEntryLargerThanOneFramePage(t *testing.T) {
 	if history.number("chunk_count") < 2 {
 		t.Fatalf("large entry used %.0f history chunks, want multiple bounded chunks", history.number("chunk_count"))
 	}
-	if history.number("total_bytes") != history.number("_pi2ws_bytes") {
+	if history.number("total_bytes") != history.number("_ohpi_bytes") {
 		t.Fatalf(
 			"history progress total = %.0f, transferred %.0f",
 			history.number("total_bytes"),
-			history.number("_pi2ws_bytes"),
+			history.number("_ohpi_bytes"),
 		)
 	}
 	data, _ := history["data"].(map[string]any)
@@ -1416,16 +1416,16 @@ func TestNormalizeCommandUsesOneStrictLFRecord(t *testing.T) {
 }
 
 func TestChildEnvironmentDoesNotExposeGatewayToken(t *testing.T) {
-	t.Setenv("PI2WS_TOKEN", "must-not-reach-pi")
-	t.Setenv("PI2WS_TEST_VISIBLE", "visible")
+	t.Setenv("OHPI_TOKEN", "must-not-reach-pi")
+	t.Setenv("OHPI_TEST_VISIBLE", "visible")
 
 	environment := childEnvironment()
 	foundVisible := false
 	for _, entry := range environment {
-		if strings.HasPrefix(entry, "PI2WS_TOKEN=") {
+		if strings.HasPrefix(entry, "OHPI_TOKEN=") {
 			t.Fatalf("child environment contains gateway token: %q", entry)
 		}
-		if entry == "PI2WS_TEST_VISIBLE=visible" {
+		if entry == "OHPI_TEST_VISIBLE=visible" {
 			foundVisible = true
 		}
 	}
@@ -1548,7 +1548,7 @@ func decodeEvent(t *testing.T, message []byte) event {
 func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []event) {
 	t.Helper()
 	historyBegin := readEvent(t, conn)
-	if historyBegin.string("type") != "pi2ws" || historyBegin.string("event") != "history_begin" {
+	if historyBegin.string("type") != "ohpi" || historyBegin.string("event") != "history_begin" {
 		t.Fatalf("attach first message = %#v, want history_begin", historyBegin)
 	}
 	var historyJSONL []byte
@@ -1602,15 +1602,15 @@ historyComplete:
 		entries = append(entries, entry)
 	}
 	history := event{
-		"type": "pi2ws", "event": "history_end",
+		"type": "ohpi", "event": "history_end",
 		"reset": historyBegin["reset"], "entry_id": historyEnd["entry_id"],
 		"through_seq": historyEnd["through_seq"], "total_bytes": historyBegin["total_bytes"],
 		"data": map[string]any{"entries": entries}, "chunk_count": float64(historyChunkCount),
-		"_pi2ws_bytes": float64(len(historyJSONL)),
+		"_ohpi_bytes": float64(len(historyJSONL)),
 	}
 
 	begin := readEvent(t, conn)
-	if begin.string("type") != "pi2ws" || begin.string("event") != "replay_begin" {
+	if begin.string("type") != "ohpi" || begin.string("event") != "replay_begin" {
 		t.Fatalf("attach replay start = %#v", begin)
 	}
 
@@ -1639,9 +1639,9 @@ historyComplete:
 				if err := json.Unmarshal(replayPayload, &payload); err != nil {
 					t.Fatalf("decode replay binary payload: %v", err)
 				}
-				payload["_pi2ws_chunk_count"] = float64(replayChunkCount)
-				payload["_pi2ws_seq"] = replaySeq
-				payload["_pi2ws_total_bytes"] = float64(replayTotalBytes)
+				payload["_ohpi_chunk_count"] = float64(replayChunkCount)
+				payload["_ohpi_seq"] = replaySeq
+				payload["_ohpi_total_bytes"] = float64(replayTotalBytes)
 				replay = append(replay, payload)
 				replaySeq = 0
 				replayPayload = nil
@@ -1654,7 +1654,7 @@ historyComplete:
 			t.Fatalf("replay message type = %d, want text or binary", messageType)
 		}
 		message := decodeEvent(t, raw)
-		if message.string("type") != "pi2ws" {
+		if message.string("type") != "ohpi" {
 			t.Fatalf("attach replay envelope = %#v", message)
 		}
 		switch message.string("event") {
@@ -1667,9 +1667,9 @@ historyComplete:
 				t.Fatalf("direct replay payload = %#v, want object", message["payload"])
 			}
 			payload := event(payloadMap)
-			payload["_pi2ws_chunk_count"] = float64(1)
-			payload["_pi2ws_seq"] = message.number("seq")
-			payload["_pi2ws_total_bytes"] = message["total_bytes"]
+			payload["_ohpi_chunk_count"] = float64(1)
+			payload["_ohpi_seq"] = message.number("seq")
+			payload["_ohpi_total_bytes"] = message["total_bytes"]
 			replay = append(replay, payload)
 		case "replay_binary_begin":
 			if replaySeq != 0 {
@@ -1693,7 +1693,7 @@ historyComplete:
 				t.Fatal("replay ended with an incomplete payload")
 			}
 			ready := readEvent(t, conn)
-			if ready.string("type") != "pi2ws" || ready.string("event") != "ready" {
+			if ready.string("type") != "ohpi" || ready.string("event") != "ready" {
 				t.Fatalf("attach handoff message = %#v, want ready", ready)
 			}
 			return ready, history, replay

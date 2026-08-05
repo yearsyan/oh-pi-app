@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.yearsyan.ohpi.gateway</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__OHPI_LAUNCHER__</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__OHPI_PATH__</string>
+		<key>OHPI_BINARY</key>
+		<string>__OHPI_BINARY__</string>
+		<key>OHPI_CONFIG_FILE</key>
+		<string>__OHPI_CONFIG_FILE__</string>
+		<key>OHPI_PI_COMMAND</key>
+		<string>__OHPI_PI_COMMAND__</string>
+		<key>OHPI_TOKEN_FILE</key>
+		<string>__OHPI_TOKEN_FILE__</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>__OHPI_WORK_DIR__</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>__OHPI_STDOUT_LOG__</string>
+	<key>StandardErrorPath</key>
+	<string>__OHPI_STDERR_LOG__</string>
+</dict>
+</plist>

@@ -1,13 +1,15 @@
 # 部署与配置
 
-本文介绍 pi2ws 的 macOS LaunchAgent 部署、全部运行参数和生产安全建议。首次运行可先参考根目录的[快速开始](../README.md#快速开始)。
+本文介绍 Oh Pi App 网关（`ohpi-gateway`）的 macOS LaunchAgent 部署、全部运行参数和生产安全建议。首次运行可先参考根目录的[快速开始](../README.md#快速开始)。
+
+从旧名 **pi2ws** 升级时，直接重新执行 `./scripts/deploy-launchd.sh` 即可：脚本会停掉旧 LaunchAgent、迁移 `~/.config/pi2ws` → `~/.config/ohpi`（配置键 `PI2WS_*` → `OHPI_*`）、迁移 `~/.local/state/pi2ws` → `~/.local/state/ohpi`，并把会话目录里的 `pi2ws-*.json/log` 重命名为 `ohpi-*`。
 
 ## macOS LaunchAgent 部署
 
-仓库提供可重复执行的生产部署脚本。首次执行时传入 token；脚本会构建去除本地路径和调试符号的二进制、安装到 `~/.local/bin/pi2ws`，然后创建并启动当前用户的 LaunchAgent：
+仓库提供可重复执行的生产部署脚本。首次执行时传入 token；脚本会构建去除本地路径和调试符号的二进制、安装到 `~/.local/bin/ohpi-gateway`，然后创建并启动当前用户的 LaunchAgent：
 
 ```bash
-PI2WS_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
+OHPI_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
 ```
 
 之后更新代码时直接重复执行即可；现有 token 和部署配置会被保留：
@@ -19,38 +21,38 @@ PI2WS_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
 首次部署或需要修改配置时，可通过环境变量覆盖默认值：
 
 ```bash
-PI2WS_TOKEN="<TOKEN>" \
-PI2WS_LISTEN="0.0.0.0:18080" \
-PI2WS_DATA_DIR="$HOME/.local/state/pi2ws" \
-PI2WS_WORK_DIR="/path/to/project" \
-PI2WS_TITLE_MODEL="openai/gpt-5-nano" \
-PI2WS_PI_COMMAND="/absolute/path/to/pi" \
+OHPI_TOKEN="<TOKEN>" \
+OHPI_LISTEN="0.0.0.0:18080" \
+OHPI_DATA_DIR="$HOME/.local/state/ohpi" \
+OHPI_WORK_DIR="/path/to/project" \
+OHPI_TITLE_MODEL="openai/gpt-5-nano" \
+OHPI_PI_COMMAND="/absolute/path/to/pi" \
 ./scripts/deploy-launchd.sh
 ```
 
 部署文件及运行状态：
 
-- 二进制：`~/.local/bin/pi2ws`
-- LaunchAgent：`~/Library/LaunchAgents/io.github.yearsyan.pi2ws.plist`
-- 配置文件：`~/.config/pi2ws/config.json`
-- token：`~/.config/pi2ws/token`（权限 `0600`，不会写入 plist 或命令行）
-- session 与日志：`~/.local/state/pi2ws/`
+- 二进制：`~/.local/bin/ohpi-gateway`
+- LaunchAgent：`~/Library/LaunchAgents/io.github.yearsyan.ohpi.gateway.plist`
+- 配置文件：`~/.config/ohpi/config.json`
+- token：`~/.config/ohpi/token`（权限 `0600`，不会写入 plist 或命令行）
+- session 与日志：`~/.local/state/ohpi/`
 
 ```bash
-launchctl print "gui/$(id -u)/io.github.yearsyan.pi2ws"
+launchctl print "gui/$(id -u)/io.github.yearsyan.ohpi.gateway"
 curl http://127.0.0.1:18080/healthz
 ```
 
 ## 配置
 
-部署脚本会创建并维护 `~/.config/pi2ws/config.json`。pi2ws 默认读取 `$XDG_CONFIG_HOME/pi2ws/config.json`，未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/pi2ws/config.json`；文件不存在时继续使用环境变量和内置默认值。也可以通过 `--config` 或 `PI2WS_CONFIG_FILE` 指定其他文件；显式指定的文件不存在或内容无效时，进程会拒绝启动。文件使用 JSON 对象格式：
+部署脚本会创建并维护 `~/.config/ohpi/config.json`。ohpi-gateway 默认读取 `$XDG_CONFIG_HOME/ohpi/config.json`，未设置 `XDG_CONFIG_HOME` 时使用 `~/.config/ohpi/config.json`；文件不存在时继续使用环境变量和内置默认值。也可以通过 `--config` 或 `OHPI_CONFIG_FILE` 指定其他文件；显式指定的文件不存在或内容无效时，进程会拒绝启动。文件使用 JSON 对象格式：
 
 ```json
 {
-  "PI2WS_LISTEN": "127.0.0.1:18080",
-  "PI2WS_DATA_DIR": "/path/to/state",
-  "PI2WS_WORK_DIR": "/path/to/project",
-  "PI2WS_TITLE_MODEL": "auto"
+  "OHPI_LISTEN": "127.0.0.1:18080",
+  "OHPI_DATA_DIR": "/path/to/state",
+  "OHPI_WORK_DIR": "/path/to/project",
+  "OHPI_TITLE_MODEL": "auto"
 }
 ```
 
@@ -58,13 +60,13 @@ curl http://127.0.0.1:18080/healthz
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
-| `--config` | `PI2WS_CONFIG_FILE` | `$XDG_CONFIG_HOME/pi2ws/config.json` 或 `~/.config/pi2ws/config.json` | JSON 配置文件；默认文件不存在时忽略 |
-| `--listen` | `PI2WS_LISTEN` | `127.0.0.1:18080` | HTTP 监听地址 |
-| `--token` | `PI2WS_TOKEN` | 无 | 必填鉴权 token |
-| `--data-dir` | `PI2WS_DATA_DIR` | `~/.local/state/pi2ws` | session 持久化目录 |
-| `--work-dir` | `PI2WS_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
-| `--title-model` | `PI2WS_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
-| `--pi` | `PI2WS_PI_COMMAND` | `pi` | pi 可执行文件 |
+| `--config` | `OHPI_CONFIG_FILE` | `$XDG_CONFIG_HOME/ohpi/config.json` 或 `~/.config/ohpi/config.json` | JSON 配置文件；默认文件不存在时忽略 |
+| `--listen` | `OHPI_LISTEN` | `127.0.0.1:18080` | HTTP 监听地址 |
+| `--token` | `OHPI_TOKEN` | 无 | 必填鉴权 token |
+| `--data-dir` | `OHPI_DATA_DIR` | `~/.local/state/ohpi` | session 持久化目录 |
+| `--work-dir` | `OHPI_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
+| `--title-model` | `OHPI_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
+| `--pi` | `OHPI_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
 | `--max-message-bytes` | 无 | `134217728` | 单条 WS 命令和 pi 事件上限 |
@@ -74,7 +76,7 @@ curl http://127.0.0.1:18080/healthz
 额外 pi 参数示例：
 
 ```bash
-./bin/pi2ws \
+./bin/ohpi-gateway \
   --pi-arg=--provider \
   --pi-arg=openai \
   --pi-arg=--model \
@@ -85,9 +87,9 @@ curl http://127.0.0.1:18080/healthz
 
 ### 会话标题模型
 
-pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-title.ts`，并为每个 pi 子进程显式加载它。extension 在首个 `before_agent_start` 收到已展开的用户请求后立即异步生成标题，不等待主 agent 的回复或工具执行，也不会阻塞主对话、写入对话上下文。生成结果经 pi 的 `session_info_changed` 事件回到网关，由网关持久化并广播。App 在首条用户消息出现时会先显示一个不写回服务端的临时标题，正式模型标题到达后自动替换。手工名称始终优先，生成失败则退化为第一条用户消息。
+ohpi 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/ohpi-session-title.ts`，并为每个 pi 子进程显式加载它。extension 在首个 `before_agent_start` 收到已展开的用户请求后立即异步生成标题，不等待主 agent 的回复或工具执行，也不会阻塞主对话、写入对话上下文。生成结果经 pi 的 `session_info_changed` 事件回到网关，由网关持久化并广播。App 在首条用户消息出现时会先显示一个不写回服务端的临时标题，正式模型标题到达后自动替换。手工名称始终优先，生成失败则退化为第一条用户消息。
 
-`PI2WS_TITLE_MODEL` 支持：
+`OHPI_TITLE_MODEL` 支持：
 
 - `auto`（默认）：从当前会话 provider 已认证、可用的文本模型中选择稳定且较新的 `nano`、`mini`、`flash-lite`、`haiku` 等轻量模型；没有候选时回退当前会话模型，不会把标题内容自动切到另一家 provider。
 - `active`：始终使用当前会话模型。最省配置，但主模型较贵时标题也会调用该模型。
@@ -96,9 +98,9 @@ pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-t
 
 如果 pi 使用 OpenAI API Key，推荐固定为 `openai/gpt-5-nano`；使用 Google API Key 可固定为 `google/gemini-2.5-flash-lite`。如果使用 ChatGPT/Codex OAuth 或不确定当前认证支持哪些模型，保留 `auto`。OpenRouter 的模型 ID 本身可以含 `/`，例如 `openrouter/openai/gpt-5-nano`。
 
-先在终端启动一次 `pi` 并通过 `/login` 配好对应 provider；extension 读取的仍是 pi 自己的认证存储。不要把 OpenAI、Google 等 provider Key 写入 pi2ws 的 JSON 配置，LaunchAgent 也不需要新增一份 Key。
+先在终端启动一次 `pi` 并通过 `/login` 配好对应 provider；extension 读取的仍是 pi 自己的认证存储。不要把 OpenAI、Google 等 provider Key 写入 ohpi 的 JSON 配置，LaunchAgent 也不需要新增一份 Key。
 
-标题请求限制为 128 个输出 token、10 秒超时且最多重试一次。模型支持 `minimal` reasoning 时使用该档位；不支持但允许关闭思考时关闭，只有无法关闭时才选择最低可用档位。实际选中的模型会记录为 pi stderr 日志中的 `[pi2ws-title] using provider/model-id`。
+标题请求限制为 128 个输出 token、10 秒超时且最多重试一次。模型支持 `minimal` reasoning 时使用该档位；不支持但允许关闭思考时关闭，只有无法关闭时才选择最低可用档位。实际选中的模型会记录为 pi stderr 日志中的 `[ohpi-title] using provider/model-id`。
 
 ## 安全建议
 
@@ -106,4 +108,4 @@ pi2ws 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/pi2ws-session-t
 - WebSocket token 会出现在请求 URL 中。关闭或脱敏反向代理的 `/ws` query 日志并定期轮换 token；普通 HTTP API 使用 Bearer 请求头。
 - 默认只允许无 `Origin` 的非浏览器客户端和同源浏览器连接。跨域前端需要显式配置 `--allow-origin=https://app.example.com`。
 - 共享同一个 session 的客户端拥有同等控制权，也会看到彼此的输入、模型响应和工具输出。只把同一个 session ID 发给互相信任的客户端。
-- token 文件权限应限制为 `0600`。`PI2WS_TOKEN` 不会传入 pi 子进程环境。
+- token 文件权限应限制为 `0600`。`OHPI_TOKEN` 不会传入 pi 子进程环境。

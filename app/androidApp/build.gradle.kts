@@ -37,7 +37,7 @@ dependencies {
 }
 
 android {
-    namespace = "io.github.yearsyan.pi"
+    namespace = "io.github.yearsyan.ohpi"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     val keystoreProperties = Properties().apply {
@@ -56,7 +56,7 @@ android {
 
     defaultConfig {
         ndkVersion = "28.2.13676358"
-        applicationId = "io.github.yearsyan.pi"
+        applicationId = "io.github.yearsyan.ohpi"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 26

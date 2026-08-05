@@ -21,6 +21,6 @@
 #-renamesourcefileattribute SourceFile
 
 # JNI entry points use the class and method names as their exported ABI.
--keep class io.github.yearsyan.pi.ssh.NativeSshBridge {
+-keep class io.github.yearsyan.ohpi.ssh.NativeSshBridge {
     native <methods>;
 }

@@ -211,9 +211,9 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 
 	encoder := json.NewEncoder(stdin)
 	commands := []map[string]string{
-		{"id": "pi2ws-capabilities-state", "type": "get_state"},
-		{"id": "pi2ws-capabilities-models", "type": "get_available_models"},
-		{"id": "pi2ws-capabilities-commands", "type": "get_commands"},
+		{"id": "ohpi-capabilities-state", "type": "get_state"},
+		{"id": "ohpi-capabilities-models", "type": "get_available_models"},
+		{"id": "ohpi-capabilities-commands", "type": "get_commands"},
 	}
 	for _, rpcCommand := range commands {
 		if err := encoder.Encode(rpcCommand); err != nil {
@@ -239,14 +239,14 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 			continue
 		}
 		if !response.Success {
-			if response.ID == "pi2ws-capabilities-commands" {
+			if response.ID == "ohpi-capabilities-commands" {
 				// get_commands was added after the core capability RPCs. Keep
 				// older pi binaries usable and return an empty command list.
 				commandsDone = true
 				if state != nil && models != nil {
 					break
 				}
-			} else if response.ID == "pi2ws-capabilities-state" || response.ID == "pi2ws-capabilities-models" {
+			} else if response.ID == "ohpi-capabilities-state" || response.ID == "ohpi-capabilities-models" {
 				_ = stdin.Close()
 				_ = command.Wait()
 				return capabilitiesResponse{}, fmt.Errorf("%s: %s", response.Command, response.Error)
@@ -254,7 +254,7 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 			continue
 		}
 		switch response.ID {
-		case "pi2ws-capabilities-state":
+		case "ohpi-capabilities-state":
 			var value capabilityRPCState
 			if err := json.Unmarshal(response.Data, &value); err != nil {
 				_ = stdin.Close()
@@ -262,7 +262,7 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 				return capabilitiesResponse{}, fmt.Errorf("decode capability state: %w", err)
 			}
 			state = &value
-		case "pi2ws-capabilities-models":
+		case "ohpi-capabilities-models":
 			var value capabilityRPCModels
 			if err := json.Unmarshal(response.Data, &value); err != nil {
 				_ = stdin.Close()
@@ -270,7 +270,7 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 				return capabilitiesResponse{}, fmt.Errorf("decode capability models: %w", err)
 			}
 			models = &value
-		case "pi2ws-capabilities-commands":
+		case "ohpi-capabilities-commands":
 			if err := json.Unmarshal(response.Data, &availableCommands); err != nil {
 				_ = stdin.Close()
 				_ = command.Wait()

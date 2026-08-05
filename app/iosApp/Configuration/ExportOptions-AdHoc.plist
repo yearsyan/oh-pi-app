@@ -5,7 +5,7 @@
 	<key>destination</key>
 	<string>export</string>
 	<key>distributionBundleIdentifier</key>
-	<string>io.github.yearsyan.pi.PiApp</string>
+	<string>io.github.yearsyan.ohpi.OhPiApp</string>
 	<key>method</key>
 	<string>release-testing</string>
 	<key>signingStyle</key>

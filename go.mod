@@ -1,4 +1,4 @@
-module github.com/yearsyan/pi2ws
+module github.com/yearsyan/oh-pi-app
 
 go 1.26.2
 

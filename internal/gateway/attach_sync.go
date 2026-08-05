@@ -127,7 +127,7 @@ func (s *piSession) syncAttach(
 		replayAfter = resume.Since
 	}
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-		Type:       "pi2ws",
+		Type:       "ohpi",
 		Event:      "history_begin",
 		Reset:      boolPointer(reset),
 		EntryID:    snapshot.historyEntryID,
@@ -140,7 +140,7 @@ func (s *piSession) syncAttach(
 		return err
 	}
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-		Type:       "pi2ws",
+		Type:       "ohpi",
 		Event:      "history_end",
 		EntryID:    snapshot.historyEntryID,
 		ThroughSeq: snapshot.historyThrough,
@@ -148,7 +148,7 @@ func (s *piSession) syncAttach(
 		return errors.New("client disconnected after history sync")
 	}
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-		Type:       "pi2ws",
+		Type:       "ohpi",
 		Event:      "replay_begin",
 		FromSeq:    replayAfter + 1,
 		ThroughSeq: snapshot.outputSeq,
@@ -206,7 +206,7 @@ func (s *piSession) syncAttach(
 
 		throughSeq := s.outputSeq
 		if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-			Type:       "pi2ws",
+			Type:       "ohpi",
 			Event:      "replay_end",
 			ThroughSeq: throughSeq,
 		})) || !client.sendBlocking(ready) {
@@ -406,7 +406,7 @@ func streamReplayPayload(client *wsClient, seq uint64, payload []byte) error {
 	}
 	if len(payload) <= syncChunkBytes {
 		if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-			Type:       "pi2ws",
+			Type:       "ohpi",
 			Event:      "replay_event",
 			Seq:        seq,
 			Payload:    payload,
@@ -417,7 +417,7 @@ func streamReplayPayload(client *wsClient, seq uint64, payload []byte) error {
 		return nil
 	}
 	if !client.sendBlocking(mustGatewayEvent(gatewayEvent{
-		Type:       "pi2ws",
+		Type:       "ohpi",
 		Event:      "replay_binary_begin",
 		Seq:        seq,
 		TotalBytes: uint64(len(payload)),

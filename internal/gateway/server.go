@@ -19,7 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
-	"github.com/yearsyan/pi2ws/internal/filebrowser"
+	"github.com/yearsyan/oh-pi-app/internal/filebrowser"
 )
 
 var sessionChangingCommands = map[string]struct{}{
@@ -346,7 +346,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	if err != nil {
 		g.cfg.Logger.Error("open session", "action", action, "session_id", sessionID, "error", err)
 		sendAndClose(conn, g.cfg.WriteTimeout, gatewayEvent{
-			Type:    "pi2ws",
+			Type:    "ohpi",
 			Event:   "error",
 			Code:    "session_start_failed",
 			Message: "could not start pi session",
@@ -371,7 +371,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	})
 
 	ready, _ := json.Marshal(gatewayEvent{
-		Type:      "pi2ws",
+		Type:      "ohpi",
 		Event:     "ready",
 		Action:    action,
 		SessionID: session.id,
@@ -473,7 +473,7 @@ func (g *Gateway) readClient(client *wsClient, session *piSession) {
 			gatewayError(
 				client,
 				"session_command_forbidden",
-				fmt.Sprintf("%q is managed by pi2ws; use a create or attach connection instead", commandType),
+				fmt.Sprintf("%q is managed by ohpi; use a create or attach connection instead", commandType),
 			)
 			continue
 		}
@@ -579,7 +579,7 @@ func normalizeCommand(message []byte) ([]byte, string, error) {
 	if len(envelope.ID) > 0 {
 		var id string
 		if json.Unmarshal(envelope.ID, &id) == nil && strings.HasPrefix(id, internalRPCIDPrefix) {
-			return nil, "", errors.New("command id uses a reserved pi2ws prefix")
+			return nil, "", errors.New("command id uses a reserved ohpi prefix")
 		}
 	}
 	return command, envelope.Type, nil
@@ -651,7 +651,7 @@ type gatewayEvent struct {
 
 func gatewayError(client *wsClient, code, message string) {
 	event, _ := json.Marshal(gatewayEvent{
-		Type:    "pi2ws",
+		Type:    "ohpi",
 		Event:   "error",
 		Code:    code,
 		Message: message,

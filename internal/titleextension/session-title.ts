@@ -2,7 +2,7 @@ import { uuidv7, type Model } from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const MODEL_FLAG = "pi2ws-title-model";
+const MODEL_FLAG = "ohpi-title-model";
 const MAX_SOURCE_CHARS = 2_000;
 const MAX_TITLE_CHARS = 40;
 const TITLE_TIMEOUT_MS = 10_000;
@@ -177,7 +177,7 @@ async function generateTitle(seed: ConversationSeed, model: Model<any>, ctx: Ext
 }
 
 function report(message: string): void {
-	console.error(`[pi2ws-title] ${message}`);
+	console.error(`[ohpi-title] ${message}`);
 }
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {

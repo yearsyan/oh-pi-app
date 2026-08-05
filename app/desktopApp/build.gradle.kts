@@ -100,13 +100,13 @@ tasks.named("processResources") {
 
 compose.desktop {
     application {
-        mainClass = "io.github.yearsyan.pi.MainKt"
+        mainClass = "io.github.yearsyan.ohpi.MainKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "io.github.yearsyan.pi"
+            packageName = "io.github.yearsyan.ohpi"
             packageVersion = "1.0.0"
-            vendor = "yearsyan"
+            vendor = "Oh Pi App"
         }
     }
 }

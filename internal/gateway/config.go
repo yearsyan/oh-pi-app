@@ -101,7 +101,7 @@ func (c Config) withDefaults() (Config, error) {
 
 	for _, arg := range c.PiArgs {
 		if isReservedPiArg(arg) {
-			return Config{}, fmt.Errorf("pi argument %q is managed by pi2ws", arg)
+			return Config{}, fmt.Errorf("pi argument %q is managed by ohpi", arg)
 		}
 	}
 

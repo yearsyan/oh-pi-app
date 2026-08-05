@@ -212,7 +212,7 @@ func (s *piSession) broadcast(message, replayMessage []byte, outputSeq uint64, r
 		outgoing := message
 		if replayable && target.client.replayCursor {
 			outgoing = mustGatewayEvent(gatewayEvent{
-				Type:    "pi2ws",
+				Type:    "ohpi",
 				Event:   "live",
 				Seq:     outputSeq,
 				Payload: replayMessage,
@@ -225,7 +225,7 @@ func (s *piSession) broadcast(message, replayMessage []byte, outputSeq uint64, r
 }
 
 func (s *piSession) requestStop() {
-	s.stop(websocket.CloseGoingAway, "pi2ws is shutting down")
+	s.stop(websocket.CloseGoingAway, "ohpi is shutting down")
 }
 
 func (s *piSession) stop(code int, reason string) {
@@ -387,7 +387,7 @@ func splitLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 }
 
 func childEnvironment() []string {
-	const secretName = "PI2WS_TOKEN="
+	const secretName = "OHPI_TOKEN="
 	environment := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
 		if strings.HasPrefix(entry, secretName) {

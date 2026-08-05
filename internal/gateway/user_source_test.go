@@ -45,7 +45,7 @@ func TestRejectedPromptSourceIsNotAppliedToLaterUserEvent(t *testing.T) {
 
 func TestResponseConfirmedSlashSourceIsRemovedAndMetadataIsNotForwarded(t *testing.T) {
 	session := &piSession{}
-	command := []byte(`{"id":"slash","type":"prompt","message":"/skill:review","pi2ws_confirm_on_response":true}`)
+	command := []byte(`{"id":"slash","type":"prompt","message":"/skill:review","ohpi_confirm_on_response":true}`)
 	source, ok := userSourceFromCommand(command)
 	if !ok || !source.confirmOnResponse {
 		t.Fatal("slash prompt did not request response confirmation")
@@ -56,7 +56,7 @@ func TestResponseConfirmedSlashSourceIsRemovedAndMetadataIsNotForwarded(t *testi
 		t.Fatalf("response-confirmed sources = %#v, want none", session.userSources.pending)
 	}
 	if stripped := stripUserSourceMetadata(command); string(stripped) == string(command) ||
-		strings.Contains(string(stripped), "pi2ws_confirm_on_response") {
+		strings.Contains(string(stripped), "ohpi_confirm_on_response") {
 		t.Fatalf("stripped command = %s", stripped)
 	}
 }

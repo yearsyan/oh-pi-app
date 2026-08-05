@@ -1,0 +1,25 @@
+Oh Pi App
+Copyright 2025-2026 yearsyan
+
+This product includes software developed for Oh Pi App
+(https://github.com/yearsyan/oh-pi-app).
+
+The original code in this repository is licensed under the Apache License,
+Version 2.0. See the LICENSE file.
+
+Third-party components are redistributed under their own terms. In particular:
+
+  - libssh is licensed under LGPL-2.1-or-later
+  - Mbed TLS is used under Apache-2.0 (dual-licensed upstream)
+  - gorilla/websocket is licensed under BSD-2-Clause
+  - Kotlin, AndroidX, Compose Multiplatform and related libraries are
+    primarily Apache-2.0
+
+Complete texts, source checksums, patches, and relinking notes for the
+native SSH stack are in:
+
+  native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md
+
+Oh Pi App is a remote gateway and multiplatform client for the upstream
+"pi" coding agent (https://github.com/badlogic/pi-mono), which is MIT
+licensed and runs as a separate process; it is not redistributed here.

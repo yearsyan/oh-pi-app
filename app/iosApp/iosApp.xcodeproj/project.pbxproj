@@ -13,7 +13,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		0F15DB9BC8DF494FE6D074CC /* PiApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0F15DB9BC8DF494FE6D074CC /* OhPiApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OhPiApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A18D64000000000000000011 /* ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
 		A18D64000000000000000012 /* ../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "../../native/pi_ssh/licenses/libssh-LGPL-2.1-or-later.txt"; sourceTree = SOURCE_ROOT; };
 		A18D64000000000000000013 /* ../../native/pi_ssh/licenses/mbedtls-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "../../native/pi_ssh/licenses/mbedtls-LICENSE.txt"; sourceTree = SOURCE_ROOT; };
@@ -79,7 +79,7 @@
 		F6D181EADAF1767E5B0A31A8 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				0F15DB9BC8DF494FE6D074CC /* PiApp.app */,
+				0F15DB9BC8DF494FE6D074CC /* OhPiApp.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -107,7 +107,7 @@
 			packageProductDependencies = (
 			);
 			productName = iosApp;
-			productReference = 0F15DB9BC8DF494FE6D074CC /* PiApp.app */;
+			productReference = 0F15DB9BC8DF494FE6D074CC /* OhPiApp.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */

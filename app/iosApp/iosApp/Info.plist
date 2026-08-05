@@ -7,6 +7,6 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Pi connects to your configured pi2ws or SSH server on the local network.</string>
+	<string>Pi connects to your configured ohpi or SSH server on the local network.</string>
 </dict>
 </plist>

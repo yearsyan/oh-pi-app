@@ -1,6 +1,6 @@
 # API 与 WebSocket 协议
 
-pi2ws 使用 HTTP API 管理持久化 session 和浏览远程文件，使用 WebSocket 收发 pi RPC 与实时事件。进程和历史存储原理见[架构与持久化](architecture.md)。
+ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使用 WebSocket 收发 pi RPC 与实时事件。进程和历史存储原理见[架构与持久化](architecture.md)。
 
 ## 鉴权
 
@@ -139,7 +139,7 @@ Content-Type: application/json
 {"name":"new-folder","path":"/path/to/project/new-folder"}
 ```
 
-父目录不存在时返回 404 `not_found`，名称或路径无效时返回 400 `invalid_name` / `invalid_path`，目标已存在时返回 409 `already_exists`，无法解析或无写权限时返回 403 `resolve_failed` / `mkdir_failed`。与目录浏览一致，该接口不限制在 `--work-dir` 下；鉴权调用方可在 pi2ws 进程有权限访问的任意绝对目录中创建子目录。
+父目录不存在时返回 404 `not_found`，名称或路径无效时返回 400 `invalid_name` / `invalid_path`，目标已存在时返回 409 `already_exists`，无法解析或无写权限时返回 403 `resolve_failed` / `mkdir_failed`。与目录浏览一致，该接口不限制在 `--work-dir` 下；鉴权调用方可在 ohpi 进程有权限访问的任意绝对目录中创建子目录。
 
 ### 文件浏览（远程文件管理）
 
@@ -201,7 +201,7 @@ ws://127.0.0.1:18080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&mo
 
 ```json
 {
-  "type": "pi2ws",
+  "type": "ohpi",
   "event": "ready",
   "action": "create",
   "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
@@ -221,30 +221,30 @@ ws://127.0.0.1:18080/ws?action=attach&session_id=<SESSION_ID>&entry_since=<LAST_
 
 `replay_base` 与 `replay_since` 必须成对出现。前者是本地 replay 缓存所基于的稳定历史 `through_seq`，后者是本地已经完整提交的 replay 高水位。仅当 `entry_since`、`replay_base` 都与服务端当前稳定边界完全一致，且 `replay_since` 未超过服务端高水位时，网关才从该序号后继续；否则会安全地从当前稳定历史边界重新回放。因此客户端可以持久化仍在进行中的 turn，重连或重启后只补缺失尾部。
 
-`replay_cursor=1` 表示客户端需要带序号的实时事件。可回放的 live pi 事件会封装为 `pi2ws/live`，使客户端能把每条事件及其 `seq` 原子写入本地 replay 缓存。
+`replay_cursor=1` 表示客户端需要带序号的实时事件。可回放的 live pi 事件会封装为 `ohpi/live`，使客户端能把每条事件及其 `seq` 原子写入本地 replay 缓存。
 
-attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` 表示历史、活动事件和实时广播之间的无缝切换已经完成，此时客户端才应发送 `get_state` 等 RPC：
+attach 按以下顺序发送，最后才发送 `ohpi/ready`。收到 `ready` 表示历史、活动事件和实时广播之间的无缝切换已经完成，此时客户端才应发送 `get_state` 等 RPC：
 
-1. `pi2ws/history_begin`
+1. `ohpi/history_begin`
 2. 零到多个 WebSocket Binary 消息，内容是原始稳定历史 JSONL 字节
-3. `pi2ws/history_end`
-4. `pi2ws/replay_begin`
-5. 零到多个 `pi2ws/replay_event`；超大单事件则是一个 `pi2ws/replay_binary_begin`，随后跟随多个 WebSocket Binary 消息
-6. `pi2ws/replay_end`
-7. `pi2ws/ready`
+3. `ohpi/history_end`
+4. `ohpi/replay_begin`
+5. 零到多个 `ohpi/replay_event`；超大单事件则是一个 `ohpi/replay_binary_begin`，随后跟随多个 WebSocket Binary 消息
+6. `ohpi/replay_end`
+7. `ohpi/ready`
 8. attach 高水位之后的实时 pi 事件
 
 ```json
-{"type":"pi2ws","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41,"total_bytes":287104}
+{"type":"ohpi","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41,"total_bytes":287104}
 <WebSocket Binary: raw JSONL bytes>
-{"type":"pi2ws","event":"history_end","entry_id":"entry-45","through_seq":41}
-{"type":"pi2ws","event":"replay_begin","from_seq":42,"through_seq":45}
-{"type":"pi2ws","event":"replay_event","seq":42,"payload":{"type":"agent_start"},"total_bytes":22}
-{"type":"pi2ws","event":"replay_binary_begin","seq":43,"total_bytes":734003}
+{"type":"ohpi","event":"history_end","entry_id":"entry-45","through_seq":41}
+{"type":"ohpi","event":"replay_begin","from_seq":42,"through_seq":45}
+{"type":"ohpi","event":"replay_event","seq":42,"payload":{"type":"agent_start"},"total_bytes":22}
+{"type":"ohpi","event":"replay_binary_begin","seq":43,"total_bytes":734003}
 <WebSocket Binary: raw JSON event bytes>
-{"type":"pi2ws","event":"replay_end","through_seq":45}
+{"type":"ohpi","event":"replay_end","through_seq":45}
 {
-  "type": "pi2ws",
+  "type": "ohpi",
   "event": "ready",
   "action": "attach",
   "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
@@ -261,14 +261,14 @@ attach 按以下顺序发送，最后才发送 `pi2ws/ready`。收到 `ready` �
 启用 `replay_cursor=1` 后，`ready` 之后的可回放事件格式如下。网关会删除 `message_update` 中不影响重建结果的累计 `message` 快照，并且除 `start` 外删除重复的 `partial`；`turn_end` 中与 `message_end` 相同的完整消息也会被删除：
 
 ```json
-{"type":"pi2ws","event":"live","seq":46,"payload":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"..."}}}
+{"type":"ohpi","event":"live","seq":46,"payload":{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"..."}}}
 ```
 
 每个 Binary 消息最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会被一个 WebSocket 消息截断。活动事件先以紧凑形式落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
 
 replay 序号是单调高水位，不要求在磁盘中连续。网关在 assistant `message_end` 后只保留最终消息，在 `tool_execution_end` 后删除中间工具输出，并对 `queue_update`、会话名等状态采用 last-write-wins。被合并掉的序号不会造成缺口：带较旧 `replay_since` 的客户端会收到其后仍有效的最终状态，再由 `replay_end.through_seq` 提交新的高水位。启动恢复会用相同规则原子迁移旧 WAL。
 
-历史 session 必须由当前 `--data-dir` 对应的 pi2ws 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
+历史 session 必须由当前 `--data-dir` 对应的 ohpi 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
 
 ### 收发 pi RPC
 
@@ -292,7 +292,7 @@ replay 序号是单调高水位，不要求在磁盘中连续。网关在 assist
 
 关联后的事件会先写入 replay WAL 再广播，因此活动 turn 重连回放时仍保留同一个 `source_id`。命令没有字符串 `id` 时保持兼容，事件不会增加 `source_id`。客户端应使用不可复用的 ID，并以收到匹配 `source_id` 的 user 事件作为输入已进入 session 的确认。
 
-skill、prompt template 会展开输入文本，extension 指令也可能不产生 user 事件。此类 slash prompt 可额外发送 `"pi2ws_confirm_on_response":true`；网关会在转发给 pi 前移除该字段，并在成功的 prompt response 到达时释放关联状态。客户端应以该 response 作为输入确认。
+skill、prompt template 会展开输入文本，extension 指令也可能不产生 user 事件。此类 slash prompt 可额外发送 `"ohpi_confirm_on_response":true`；网关会在转发给 pi 前移除该字段，并在成功的 prompt response 到达时释放关联状态。客户端应以该 response 作为输入确认。
 
 除上述 user 事件关联字段外，pi 的 `agent_start`、`message_update`、`tool_execution_*`、`agent_end` 等事件保持原协议。完整命令和事件格式以本机 pi 的 `docs/rpc.md` 为准。
 
@@ -309,7 +309,7 @@ skill、prompt template 会展开输入文本，extension 指令也可能不产�
 - 普通 pi 事件（包括可能正阻塞 pi 的 `extension_ui_request`）都会进入活动 turn WAL；RPC `response` 不回放，避免 attach 客户端误处理并非由它发起的旧命令响应。
 - `abort`、`steer` 等命令会影响整个共享 session。
 - `new_session`、`switch_session`、`fork`、`clone` 会破坏网关的 session 与子进程映射，因此会被网关拒绝。新 session 应通过新的 `action=create` 连接创建。
-- 格式错误的命令只会向发送方返回 `pi2ws/error`，不会转发给 pi。
+- 格式错误的命令只会向发送方返回 `ohpi/error`，不会转发给 pi。
 
 浏览器端最小示例：
 
@@ -324,7 +324,7 @@ ws.onmessage = ({ data }) => {
   const message = JSON.parse(data);
   console.log(message);
 
-  if (message.type === "pi2ws" && message.event === "ready") {
+  if (message.type === "ohpi" && message.event === "ready") {
     localStorage.setItem("piSessionId", message.session_id);
     ws.send(JSON.stringify({
       id: crypto.randomUUID(),

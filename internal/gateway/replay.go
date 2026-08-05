@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const internalRPCIDPrefix = "pi2ws-internal:"
+const internalRPCIDPrefix = "ohpi-internal:"
 
 type replayRecord struct {
 	Seq     uint64

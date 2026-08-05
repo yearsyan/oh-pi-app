@@ -1,6 +1,6 @@
-# Pi — pi2ws Compose Multiplatform 客户端
+# Oh Pi App — Compose Multiplatform 客户端
 
-基于 pi2ws 网关的聊天客户端，面向 Android / Desktop (JVM) / iOS 18.5+。
+基于 ohpi-gateway 的聊天客户端，面向 Android / Desktop (JVM) / iOS 18.5+。
 UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 
 ## 功能
@@ -21,7 +21,7 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **自适应布局**：宽度 ≥ 840dp（平板/桌面）为「列表 + 详情」双栏；手机为单栏导航。
 - **多语言**：中文 / English / 跟随系统。
 - **深色 / 浅色**：跟随系统或手动指定。
-- **多服务器**：设置页维护多个 pi2ws 网关（名称 / 地址 / token），随时切换；
+- **多服务器**：设置页维护多个 ohpi-gateway（名称 / 地址 / token），随时切换；
   首次启动未配置时进入引导配置页。
 - **内置 SSH 隧道**：可通过 SSH 密码或内存私钥连接远端服务器，再让 WebSocket 与
   `/fs/list` 共同复用一条本机回环隧道。Android、Desktop 与 iOS 都调用相同的
@@ -53,7 +53,7 @@ Mbed TLS 3.6.6，一个 worker 线程复用多个 `direct-tcpip` channel。依�
 在服务器编辑页选择「SSH 隧道」，然后填写：
 
 - iOS：后端地址固定为 SSH 服务器上的 `127.0.0.1`（不可编辑，TLS 选项隐藏），只需填写后端端口（默认 `18080`）；
-- Android / Desktop：网关地址为 SSH 服务器自身看到的 pi2ws 地址，通常 `http://127.0.0.1:18080`；
+- Android / Desktop：网关地址为 SSH 服务器自身看到的 ohpi 地址，通常 `http://127.0.0.1:18080`；
 - SSH 主机、端口、用户名；
 - SSH 密码，或 OpenSSH / PEM 私钥的完整内容与可选口令。
 
@@ -68,7 +68,7 @@ SSH 模式下网关地址必须使用 `http://` 或 `ws://`。SSH 已加密整�
 
 - Android：`./gradlew :androidApp:assembleDebug`，安装 `androidApp/build/outputs/apk/debug/`。
   真机连接本机网关时，网关需监听 `0.0.0.0` 并在 App 内填写局域网地址，例如
-  `PI2WS_TOKEN=xxx ./bin/pi2ws --listen 0.0.0.0:18080 --allow-origin='*'`。
+  `OHPI_TOKEN=xxx ./bin/ohpi-gateway --listen 0.0.0.0:18080 --allow-origin='*'`。
 - Desktop：`./gradlew :desktopApp:run`。
 - iOS 18.5+：使用 `/iosApp` Xcode 工程入口。
 
@@ -83,7 +83,7 @@ $env:WIX_PATH = "C:\path\to\wix314"
 ```
 
 输出位于
-`desktopApp/build/compose/binaries/main/msi/io.github.yearsyan.pi-<version>.msi`。
+`desktopApp/build/compose/binaries/main/msi/io.github.yearsyan.ohpi-<version>.msi`。
 `WIX_PATH` 必须指向包含 `candle.exe` 与 `light.exe` 的 WiX 目录。
 
 ## 备注
