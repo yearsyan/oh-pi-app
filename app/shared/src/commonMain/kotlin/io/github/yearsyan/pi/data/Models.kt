@@ -56,3 +56,6 @@ enum class ThemeMode { System, Light, Dark }
 enum class AppLanguage { System, English, Chinese }
 
 enum class ConnState { Disconnected, Connecting, Ready, Error }
+
+/** Session restoration work performed after the transport connects but before it becomes live. */
+enum class SessionSyncPhase { Idle, RestoringHistory, CatchingUp }

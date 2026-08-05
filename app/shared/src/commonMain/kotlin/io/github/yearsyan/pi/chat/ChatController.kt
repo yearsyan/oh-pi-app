@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.yearsyan.pi.data.ConnState
+import io.github.yearsyan.pi.data.SessionSyncPhase
 import io.github.yearsyan.pi.net.GatewayCapabilities
 import io.github.yearsyan.pi.net.GatewayConnectionException
 import io.github.yearsyan.pi.net.PiClient
@@ -90,6 +91,13 @@ internal fun reconnectDelayMillis(attempt: Int): Long {
     return delayMillis
 }
 
+internal fun sessionSyncPhaseForEvent(event: String?): SessionSyncPhase? = when (event) {
+    "history_begin" -> SessionSyncPhase.RestoringHistory
+    "replay_begin" -> SessionSyncPhase.CatchingUp
+    "ready" -> SessionSyncPhase.Idle
+    else -> null
+}
+
 internal fun shouldFinalizeAssistant(eventType: String): Boolean = eventType == "message_end"
 
 internal fun clampDraftThinkingLevel(requested: String, available: List<String>): String {
@@ -168,6 +176,7 @@ class ChatController(
     private var rateWindowStart = 0L
     private var rateWindowChars = 0
     var isLoadingHistory by mutableStateOf(false); private set
+    var syncPhase by mutableStateOf(SessionSyncPhase.Idle); private set
     var steeringQueue = mutableStateListOf<String>(); private set
     var followUpQueue = mutableStateListOf<String>(); private set
     var dialog by mutableStateOf<UiDialogRequest?>(null); private set
@@ -374,6 +383,7 @@ class ChatController(
         connectionSetupJob?.cancel()
         client.disconnect()
         conn = ConnState.Connecting
+        syncPhase = SessionSyncPhase.Idle
         if (clearTimeline) {
             items.clear()
         }
@@ -489,6 +499,7 @@ class ChatController(
         historyUpdating = false
         client.disconnect()
         conn = ConnState.Disconnected
+        syncPhase = SessionSyncPhase.Idle
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
         isStreaming = false
@@ -506,6 +517,7 @@ class ChatController(
     private fun handleConnectionClosed(code: Short, reason: String) {
         entryCache.abort()
         historyUpdating = false
+        syncPhase = SessionSyncPhase.Idle
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
@@ -526,6 +538,7 @@ class ChatController(
     private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
         entryCache.abort()
         historyUpdating = false
+        syncPhase = SessionSyncPhase.Idle
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
@@ -821,7 +834,9 @@ class ChatController(
     }
 
     private fun handleGatewayEvent(msg: JsonObject) {
-        when (msg.str("event")) {
+        val event = msg.str("event")
+        sessionSyncPhaseForEvent(event)?.let { syncPhase = it }
+        when (event) {
             "history_begin" -> beginHistorySync(msg)
             "history_chunk" -> {
                 check(historyUpdating) { "unexpected history chunk" }
@@ -934,6 +949,7 @@ class ChatController(
         reconnectEnabled = false
         client.disconnect()
         conn = ConnState.Error
+        syncPhase = SessionSyncPhase.Idle
         isLoadingHistory = false
         onToast("Session synchronization failed: ${failure.message.orEmpty()}", Toast.Kind.Error)
     }

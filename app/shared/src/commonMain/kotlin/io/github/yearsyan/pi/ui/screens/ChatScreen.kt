@@ -69,8 +69,11 @@ import io.github.yearsyan.pi.ui.components.ConfirmDialog
 import io.github.yearsyan.pi.ui.components.ExtensionDialog
 import io.github.yearsyan.pi.ui.components.RenameDialog
 import io.github.yearsyan.pi.ui.components.StatusLine
+import io.github.yearsyan.pi.ui.components.StreamingCaret
 import io.github.yearsyan.pi.ui.components.UserMessageRow
 import io.github.yearsyan.pi.ui.components.animateScrollToBottom
+import io.github.yearsyan.pi.ui.components.localizedLabel
+import io.github.yearsyan.pi.ui.components.resolveSessionStatus
 import io.github.yearsyan.pi.ui.components.scrollToBottom
 import kotlinx.coroutines.launch
 
@@ -119,7 +122,7 @@ fun ChatScreen(
                 label = "chatBody",
             ) { state ->
                 when (state) {
-                    ChatBodyState.Loading -> SessionLoadingState(Modifier.fillMaxSize())
+                    ChatBodyState.Loading -> SessionLoadingState(controller, Modifier.fillMaxSize())
                     ChatBodyState.Empty -> EmptyChatState(Modifier.fillMaxSize())
                     ChatBodyState.Messages ->
                         MessageList(
@@ -163,7 +166,10 @@ fun ChatScreen(
 }
 
 @Composable
-private fun SessionLoadingState(modifier: Modifier = Modifier) {
+private fun SessionLoadingState(
+    controller: ChatController,
+    modifier: Modifier = Modifier,
+) {
     val transition = rememberInfiniteTransition(label = "sessionLoading")
     val pulse by transition.animateFloat(
         initialValue = 0.35f,
@@ -181,7 +187,7 @@ private fun SessionLoadingState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         Text(
-            S.connecting,
+            resolveSessionStatus(controller.conn, controller.syncPhase).localizedLabel(),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.alpha(0.8f),
@@ -233,8 +239,16 @@ private fun MessageList(
     var pinned by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     val renderGroups = groupTimelineItems(controller.items)
-    val lastAssistantRunKey =
-        renderGroups.lastOrNull { it is TimelineRenderGroup.AssistantRun }?.key
+    val lastGroupKey = renderGroups.lastOrNull()?.key
+    val anyRunStreaming = renderGroups.any { group ->
+        group is TimelineRenderGroup.AssistantRun &&
+            group.items.any { it is TimelineItem.AssistantItem && it.streaming }
+    }
+    // While streaming with no live assistant run (e.g. right after the user
+    // submits a prompt, before the first assistant block arrives), the caret
+    // belongs under the last group — pinning it to the previous run would draw
+    // it above the just-sent user message.
+    val caretUnderLastGroup = controller.isStreaming && !anyRunStreaming
 
     // Track whether the user is near the bottom. The last render group is a
     // single item that can be taller than the viewport (a long assistant run),
@@ -280,13 +294,20 @@ private fun MessageList(
                             items = group.items,
                             isStreaming =
                                 group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
-                                    (controller.isStreaming && group.key == lastAssistantRunKey),
+                                    (caretUnderLastGroup && group.key == lastGroupKey),
                         )
                     is TimelineRenderGroup.Single -> {
                         when (val item = group.item) {
                             is TimelineItem.UserItem -> UserMessageRow(item)
                             is TimelineItem.StatusItem -> StatusLine(item)
                             is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> Unit
+                        }
+                        if (caretUnderLastGroup && group.key == lastGroupKey) {
+                            Box(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                StreamingCaret()
+                            }
                         }
                     }
                 }
