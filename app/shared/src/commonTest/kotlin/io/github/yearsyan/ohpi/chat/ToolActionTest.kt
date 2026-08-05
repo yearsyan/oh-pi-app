@@ -31,9 +31,19 @@ class ToolActionTest {
     @Test
     fun fileNameDropsDirectoryPrefix() {
         assertEquals("index.ts", fileNameOf("src/components/index.ts"))
-        assertEquals("server.go", fileNameOf("/home/dev/workspace/ohpi/internal/gateway/server.go"))
+        assertEquals("server.go", fileNameOf("/home/dev/workspace/oh-pi-app/internal/gateway/server.go"))
         assertEquals("app.kt", fileNameOf("app.kt"))
         assertEquals("win.kt", fileNameOf("C:\\repo\\win.kt"))
         assertEquals("dir", fileNameOf("a/b/dir/"))
+    }
+
+    @Test
+    fun longFilePathsStayWholeSoTheBasenameIsNotMangled() {
+        val longPath = "/home/dev/workspace/oh-pi-app/" + "x".repeat(80) + "/MessageItems.kt"
+        val action = toolAction("edit", """{"path":"$longPath"}""")
+        // the full path must survive parsing so fileNameOf can find the real basename;
+        // truncating it would turn the name into a "…" fragment
+        assertEquals(longPath, action.target)
+        assertEquals("MessageItems.kt", fileNameOf(action.target))
     }
 }

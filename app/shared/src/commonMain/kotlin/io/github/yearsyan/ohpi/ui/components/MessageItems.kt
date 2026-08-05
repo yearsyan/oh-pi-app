@@ -128,7 +128,7 @@ private fun AgentProcessBlock(
     val summary =
         if (isStreaming) {
             when (val latest = details.lastOrNull()) {
-                is AssistantProcessDetail.Tool -> friendlyToolAction(strings, latest.tool)
+                is AssistantProcessDetail.Tool -> friendlyToolHeader(strings, latest.tool)
                 else -> strings.thinkingInProgress
             }
         } else {
@@ -384,15 +384,28 @@ private fun ToolDetail(tool: ToolCallView) {
 private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String =
     friendlyToolAction(strings, toolAction(tool.name, tool.args))
 
+/** Full path in the expanded detail: "Edited /Users/.../MessageItems.kt". */
 private fun friendlyToolAction(strings: Strings, action: ToolAction): String =
     when (action.kind) {
         ToolActionKind.Execute -> strings.toolExecuted(action.target)
-        ToolActionKind.Read -> strings.toolRead(fileNameOf(action.target))
-        ToolActionKind.Write -> strings.toolWrote(fileNameOf(action.target))
-        ToolActionKind.Edit -> strings.toolEdited(fileNameOf(action.target))
+        ToolActionKind.Read -> strings.toolRead(action.target)
+        ToolActionKind.Write -> strings.toolWrote(action.target)
+        ToolActionKind.Edit -> strings.toolEdited(action.target)
         ToolActionKind.Search -> strings.toolSearched(action.target)
         ToolActionKind.List -> strings.toolListed(action.target)
         ToolActionKind.Call -> strings.toolCalled(action.target)
+    }
+
+/** Basename only in the collapsed block header: "Edited MessageItems.kt". */
+private fun friendlyToolHeader(strings: Strings, tool: ToolCallView): String =
+    friendlyToolHeader(strings, toolAction(tool.name, tool.args))
+
+private fun friendlyToolHeader(strings: Strings, action: ToolAction): String =
+    when (action.kind) {
+        ToolActionKind.Read -> strings.toolRead(fileNameOf(action.target))
+        ToolActionKind.Write -> strings.toolWrote(fileNameOf(action.target))
+        ToolActionKind.Edit -> strings.toolEdited(fileNameOf(action.target))
+        else -> friendlyToolAction(strings, action)
     }
 
 private fun toolActionIcon(kind: ToolActionKind): ImageVector =

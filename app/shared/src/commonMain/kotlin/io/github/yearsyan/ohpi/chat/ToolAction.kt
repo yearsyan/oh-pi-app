@@ -54,9 +54,19 @@ internal fun toolAction(name: String, args: String): ToolAction {
             ToolActionKind.List -> argument("path", "directory")
             ToolActionKind.Call -> name
         }
+    val fallback = name.ifBlank { "tool" }
+    val target =
+        when (kind) {
+            // Keep the full path for file tools: the header renders only the basename
+            // (fileNameOf) and summaries count distinct files. Truncating here would
+            // mangle the basename into a "…" fragment for long paths.
+            ToolActionKind.Read, ToolActionKind.Write, ToolActionKind.Edit ->
+                rawTarget.orEmpty().lineSequence().firstOrNull().orEmpty().trim().ifBlank { fallback }
+            else -> compactToolTarget(rawTarget.orEmpty().ifBlank { fallback })
+        }
     return ToolAction(
         kind = kind,
-        target = compactToolTarget(rawTarget.orEmpty().ifBlank { name.ifBlank { "tool" } }),
+        target = target,
     )
 }
 

@@ -35,7 +35,7 @@ class CompletedProcessSummaryTest {
                 ProcessSummary(
                     thinkingCount = 1,
                     filesWritten = 1,
-                    writtenFiles = listOf("/home/dev/workspace/ohpi/internal/gateway/server.go"),
+                    writtenFiles = listOf("/home/dev/workspace/oh-pi-app/internal/gateway/server.go"),
                 ),
             ),
         )
@@ -49,6 +49,15 @@ class CompletedProcessSummaryTest {
                     readFiles = listOf("shared/src/components/index.ts"),
                 ),
             ),
+        )
+    }
+
+    @Test
+    fun longFilePathStillYieldsPlainBasenameInSummary() {
+        val longPath = "/home/dev/workspace/oh-pi-app/" + "y".repeat(80) + "/ServerEditor.kt"
+        assertEquals(
+            "read ServerEditor.kt",
+            completedProcessSummary(EnStrings, ProcessSummary(filesRead = 1, readFiles = listOf(longPath))),
         )
     }
 
