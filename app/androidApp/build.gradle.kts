@@ -59,8 +59,23 @@ android {
         applicationId = "io.github.yearsyan.ohpi"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 26
-        versionName = "1.25"
+
+        // Version rule: each dot-segment is a two-digit field, e.g. 1.10.1 → 11001
+        // (major×10000 + minor×100 + patch). CI passes -PversionName from the git tag;
+        // local builds fall back to the last released version.
+        val releaseVersionName = providers.gradleProperty("versionName").getOrElse("1.25")
+        val releaseVersionCode = run {
+            val parts = releaseVersionName.split(".").map { it.toIntOrNull() ?: -1 }
+            require(parts.size in 1..3 && parts.all { it in 0..99 }) {
+                "versionName must be major[.minor[.patch]] with each part in 0..99, got: $releaseVersionName"
+            }
+            val major = parts[0]
+            val minor = parts.getOrElse(1) { 0 }
+            val patch = parts.getOrElse(2) { 0 }
+            major * 10000 + minor * 100 + patch
+        }
+        versionCode = releaseVersionCode
+        versionName = releaseVersionName
 
         externalNativeBuild {
             cmake {
