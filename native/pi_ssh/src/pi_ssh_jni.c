@@ -111,7 +111,7 @@ static void pi_ssh_jni_write_error(JNIEnv *environment,
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeStart(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeStart(
     JNIEnv *environment,
     jobject receiver,
     jbyteArray ssh_host,
@@ -189,7 +189,7 @@ cleanup:
 }
 
 JNIEXPORT jint JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLocalPort(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLocalPort(
     JNIEnv *environment,
     jobject receiver,
     jlong handle)
@@ -201,7 +201,7 @@ Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLocalPort(
 }
 
 JNIEXPORT jint JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeState(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeState(
     JNIEnv *environment,
     jobject receiver,
     jlong handle)
@@ -213,7 +213,7 @@ Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeState(
 }
 
 JNIEXPORT void JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLastError(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLastError(
     JNIEnv *environment,
     jobject receiver,
     jlong handle,
@@ -232,7 +232,7 @@ Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLastError(
 }
 
 JNIEXPORT void JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeFree(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeFree(
     JNIEnv *environment,
     jobject receiver,
     jlong handle)
@@ -243,7 +243,7 @@ Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeFree(
 }
 
 JNIEXPORT jstring JNICALL
-Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeVersion(
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeVersion(
     JNIEnv *environment,
     jobject receiver)
 {

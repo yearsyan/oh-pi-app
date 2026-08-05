@@ -187,12 +187,12 @@ if(PI_SSH_BUILD_SHARED)
         if(PI_SSH_ENABLE_JNI)
             list(
                 APPEND PI_SSH_EXPORTED_SYMBOLS
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeStart
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLocalPort
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeState
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeLastError
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeFree
-                Java_io_github_yearsyan_pi_ssh_NativeSshBridge_nativeVersion
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeStart
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLocalPort
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeState
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLastError
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeFree
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeVersion
             )
         endif()
         foreach(_symbol IN LISTS PI_SSH_EXPORTED_SYMBOLS)
