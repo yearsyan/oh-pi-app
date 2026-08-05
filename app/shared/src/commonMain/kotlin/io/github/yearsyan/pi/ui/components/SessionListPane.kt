@@ -106,7 +106,7 @@ fun SessionListPane(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (activeServer != null) {
-                ServerChip(servers, activeServer, onSelectServer, Modifier.weight(1f, fill = false))
+                ServerChip(servers, activeServer, onSelectServer, Modifier.weight(1f))
             } else {
                 Spacer(Modifier.weight(1f))
             }

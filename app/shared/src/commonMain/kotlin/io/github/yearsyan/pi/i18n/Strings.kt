@@ -97,7 +97,6 @@ interface Strings {
 
     // chat
     val messagePlaceholder: String
-    val messagePlaceholderStreaming: String
     val send: String
     val stop: String
     val scrollToBottom: String
@@ -306,7 +305,6 @@ object EnStrings : Strings {
     override val apkInstallFailed = { error: String -> "Could not install APK: $error" }
 
     override val messagePlaceholder = "Message Pi…"
-    override val messagePlaceholderStreaming = "Steer the agent…"
     override val send = "Send"
     override val stop = "Stop"
     override val scrollToBottom = "Scroll to bottom"
@@ -514,7 +512,6 @@ object ZhStrings : Strings {
     override val apkInstallFailed = { error: String -> "无法安装 APK：$error" }
 
     override val messagePlaceholder = "给 Pi 发送消息…"
-    override val messagePlaceholderStreaming = "引导智能体…"
     override val send = "发送"
     override val stop = "停止"
     override val scrollToBottom = "滚动到底部"

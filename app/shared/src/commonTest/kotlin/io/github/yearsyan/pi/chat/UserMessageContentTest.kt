@@ -3,6 +3,7 @@ package io.github.yearsyan.pi.chat
 import io.github.yearsyan.pi.net.PiJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UserMessageContentTest {
@@ -35,5 +36,17 @@ class UserMessageContentTest {
 
         assertTrue(content.text.isEmpty())
         assertEquals(1, content.images.size)
+    }
+
+    @Test
+    fun provisionalTitleUsesFirstNonBlankLine() {
+        assertEquals("修复会话标题延迟", provisionalSessionTitle("\n  修复会话标题延迟  \n更多内容"))
+        assertNull(provisionalSessionTitle(" \n\t"))
+    }
+
+    @Test
+    fun provisionalTitleIsBounded() {
+        val source = "a".repeat(40)
+        assertEquals("a".repeat(30) + "…", provisionalSessionTitle(source))
     }
 }

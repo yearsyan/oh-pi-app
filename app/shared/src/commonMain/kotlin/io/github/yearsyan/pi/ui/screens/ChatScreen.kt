@@ -12,7 +12,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -338,8 +337,8 @@ private fun MessageList(
             visible = !pinned,
             modifier =
                 Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = bottomPadding + 14.dp),
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 18.dp, bottom = bottomPadding + 16.dp),
             enter = fadeIn(tween(150)) + scaleIn(initialScale = 0.85f, animationSpec = tween(150)),
             exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.85f, animationSpec = tween(150)),
         ) {
@@ -351,8 +350,7 @@ private fun MessageList(
                 modifier = Modifier.size(38.dp),
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shadowElevation = 2.dp,
+                shadowElevation = 3.dp,
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(

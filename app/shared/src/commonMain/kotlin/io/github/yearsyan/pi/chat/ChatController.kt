@@ -40,6 +40,7 @@ import kotlin.random.Random
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
 private const val RateWindowMillis = 500L
+private const val ProvisionalTitleMaxChars = 30
 private val OrderedThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 internal data class DecodedEntryCache(
@@ -66,6 +67,15 @@ internal fun userMessageContent(content: JsonElement?): UserMessageContent {
             )
         }
     return UserMessageContent(text = text, images = images)
+}
+
+internal fun provisionalSessionTitle(text: String): String? {
+    val firstLine = text.lineSequence().map(String::trim).firstOrNull(String::isNotEmpty) ?: return null
+    return if (firstLine.length > ProvisionalTitleMaxChars) {
+        firstLine.take(ProvisionalTitleMaxChars).trimEnd() + "…"
+    } else {
+        firstLine
+    }
 }
 
 internal fun decodeEntryCache(bytes: ByteArray): DecodedEntryCache? {
@@ -732,6 +742,13 @@ class ChatController(
         sessionId.takeIf { it.isNotBlank() }?.let { onSessionNameChanged(it, normalized) }
     }
 
+    private fun applyProvisionalSessionName(text: String) {
+        if (sessionName.isNotBlank()) return
+        val title = provisionalSessionTitle(text) ?: return
+        sessionName = title
+        sessionId.takeIf { it.isNotBlank() }?.let { onSessionNameChanged(it, title) }
+    }
+
     fun abort() {
         sendCommand { put("type", "abort") }
         status(strings().abortSent, TimelineItem.StatusItem.Tone.Warn)
@@ -1261,6 +1278,7 @@ class ChatController(
                 ),
             )
         }
+        applyProvisionalSessionName(content.text)
         if (sourceId.isNotBlank()) confirmPendingPrompt(sourceId)
     }
 

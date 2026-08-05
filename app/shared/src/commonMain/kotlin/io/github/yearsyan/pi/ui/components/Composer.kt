@@ -123,9 +123,8 @@ fun Composer(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             tonalElevation = 0.dp,
-            shadowElevation = 2.dp,
+            shadowElevation = 4.dp,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -149,7 +148,7 @@ fun Composer(
                 ) {
                     if (text.isEmpty()) {
                         Text(
-                            if (controller.isStreaming) S.messagePlaceholderStreaming else S.messagePlaceholder,
+                            S.messagePlaceholder,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
