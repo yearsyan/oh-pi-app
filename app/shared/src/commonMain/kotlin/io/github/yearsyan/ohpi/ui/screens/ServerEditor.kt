@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -227,7 +228,11 @@ internal fun ServerEditorFields(
                 },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
                 modifier = Modifier.weight(1f),
-            ) { Text(label) }
+            ) {
+                // Keep every segment two lines tall so a wrapping label does not
+                // make its segment taller than its siblings.
+                Text(label, minLines = 2, maxLines = 2, textAlign = TextAlign.Center)
+            }
         }
     }
     Spacer(Modifier.height(10.dp))
@@ -411,7 +416,8 @@ internal fun SshAuthenticationFields(
                 selected = authentication == option,
                 onClick = { onAuthenticationChange(option) },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
-            ) { Text(label) }
+                modifier = Modifier.weight(1f),
+            ) { Text(label, maxLines = 1, textAlign = TextAlign.Center) }
         }
     }
     Spacer(Modifier.height(10.dp))
