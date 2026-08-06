@@ -89,6 +89,11 @@ uint64_t pi_ssh_platform_monotonic_seconds(void)
     return (uint64_t)(GetTickCount64() / 1000u);
 }
 
+uint64_t pi_ssh_platform_monotonic_millis(void)
+{
+    return (uint64_t)GetTickCount64();
+}
+
 int pi_ssh_mutex_initialize(pi_ssh_mutex *mutex)
 {
     InitializeSRWLock(mutex);

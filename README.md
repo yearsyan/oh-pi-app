@@ -21,6 +21,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。
 - 支持工作区能力探测、目录浏览与创建，以及远程文件读取与下载。
 - App 可在独立设置页登录、重新登录和登出 pi 内置 Provider，并查看各 Provider 的模型。
+- App 可仅凭普通用户 SSH 凭据自动引导 Node.js/Pi、安装并托管网关：macOS 使用 LaunchAgent、Linux 使用 systemd user、Windows 使用当前用户计划任务。
 - 用户提交首条请求后立即并行调用可配置的轻量模型生成会话标题，并同步到所有客户端。
 - 提供 token 鉴权、Origin 校验、消息大小限制、慢客户端隔离和优雅退出。
 
@@ -57,6 +58,7 @@ curl http://127.0.0.1:18080/healthz
 - [API 与 WebSocket 协议](docs/api.md)：HTTP 会话管理、文件浏览、WebSocket create/attach、历史同步和 pi RPC。
 - [架构与持久化](docs/architecture.md)：进程模型、session 生命周期、稳定历史、replay WAL 和关闭语义。
 - [部署与配置](docs/deployment.md)：macOS LaunchAgent、命令行参数、环境变量和安全建议。
+- [SSH 自动安装模式](docs/managed-install.md)：三平台用户级托管、自动拉起/停止、Windows 与 macOS 签名边界。
 - [Kotlin Multiplatform 客户端](app/README.md)：Android、桌面和 iOS 客户端的构建说明。
 
 ## 开发与测试

@@ -456,6 +456,7 @@ fun ConfirmDialog(
     body: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    confirmLabel: String? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -463,7 +464,7 @@ fun ConfirmDialog(
         text = { Text(body) },
         confirmButton = {
             TextButton(onClick = { onConfirm(); onDismiss() }) {
-                Text(S.confirm, color = MaterialTheme.colorScheme.error)
+                Text(confirmLabel ?: S.confirm, color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {

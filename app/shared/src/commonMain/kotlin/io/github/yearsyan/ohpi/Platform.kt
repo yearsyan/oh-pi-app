@@ -14,3 +14,6 @@ expect fun getPlatform(): Platform
 
 /** Returns the installed app version (for example, "1.15"), or "unknown" when unavailable. */
 expect fun appVersion(): String
+
+/** Returns cryptographically secure random bytes encoded as lower-case hex. */
+expect fun secureRandomHex(byteCount: Int): String

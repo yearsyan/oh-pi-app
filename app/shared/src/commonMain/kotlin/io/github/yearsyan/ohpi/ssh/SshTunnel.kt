@@ -34,6 +34,9 @@ enum class SshTunnelErrorCode(val nativeValue: Int) {
     Disconnected(11),
     RemoteForward(12),
     Internal(13),
+    RemoteCommand(14),
+    CommandTimeout(15),
+    OutputLimit(16),
     ;
 
     companion object {
@@ -57,6 +60,34 @@ data class SshTunnelConfig(
     val keepaliveIntervalSeconds: Int = 30,
 )
 
+data class SshCommandConfig(
+    val sshHost: String,
+    val sshPort: Int = 22,
+    val username: String,
+    val authType: SshAuthType,
+    val password: String? = null,
+    val privateKey: String? = null,
+    val privateKeyPassphrase: String? = null,
+    val expectedHostKeySha256: String? = null,
+    val command: String,
+    val stdin: ByteArray = byteArrayOf(),
+    val connectTimeoutMillis: Int = 15_000,
+    val commandTimeoutMillis: Int = 120_000,
+    val maxOutputBytes: Int = 1024 * 1024,
+)
+
+data class SshCommandResult(
+    val exitStatus: Int,
+    val stdout: ByteArray,
+    val stderr: ByteArray,
+) {
+    val stdoutText: String
+        get() = stdout.decodeToString()
+
+    val stderrText: String
+        get() = stderr.decodeToString()
+}
+
 data class SshTunnelError(
     val code: SshTunnelErrorCode,
     val message: String,
@@ -77,6 +108,8 @@ internal interface SshTunnelHandle {
 
 internal expect object PlatformSsh {
     fun start(config: SshTunnelConfig): SshTunnelHandle
+
+    fun execute(config: SshCommandConfig): SshCommandResult
 
     fun libraryVersion(): String
 }

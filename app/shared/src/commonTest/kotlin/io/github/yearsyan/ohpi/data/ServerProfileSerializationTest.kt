@@ -66,4 +66,21 @@ class ServerProfileSerializationTest {
 
         assertEquals(original.portForwards, decoded.portForwards)
     }
+
+    @Test
+    fun managedSshModeRoundTrips() {
+        val original =
+            ServerProfile(
+                id = "managed",
+                name = "Managed",
+                url = "ws://127.0.0.1:18080",
+                token = "managed-token",
+                connectionMode = ServerConnectionMode.ManagedSsh,
+                ssh = SshServerProfile(host = "host", username = "user", password = "password"),
+            )
+
+        val decoded = PiJson.decodeFromString<ServerProfile>(PiJson.encodeToString(original))
+
+        assertEquals(original, decoded)
+    }
 }

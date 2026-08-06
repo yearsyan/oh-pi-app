@@ -51,26 +51,33 @@ curl http://127.0.0.1:18080/healthz
   "OHPI_LISTEN": "127.0.0.1:18080",
   "OHPI_DATA_DIR": "/path/to/state",
   "OHPI_WORK_DIR": "/path/to/project",
-  "OHPI_TITLE_MODEL": "auto"
+  "OHPI_TITLE_MODEL": "auto",
+  "OHPI_PI_COMMAND": "/absolute/path/to/pi",
+  "OHPI_PI_ENV_PATH": "/absolute/path/to/node/bin:/usr/local/bin:/usr/bin:/bin"
 }
 ```
 
-配置文件只接受上面四个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
+配置文件只接受上面六个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
 | `--config` | `OHPI_CONFIG_FILE` | `$XDG_CONFIG_HOME/oh-pi-app/config.json` 或 `~/.config/oh-pi-app/config.json` | JSON 配置文件；默认文件不存在时忽略 |
 | `--listen` | `OHPI_LISTEN` | `127.0.0.1:18080` | HTTP 监听地址 |
 | `--token` | `OHPI_TOKEN` | 无 | 必填鉴权 token |
+| `--token-file` | `OHPI_TOKEN_FILE` | 无 | 从仅含一行内容的文件读取 token；显式 token 非空时优先 |
+| `--version` | 无 | `false` | 输出构建版本并退出 |
 | `--data-dir` | `OHPI_DATA_DIR` | `$XDG_STATE_HOME/oh-pi-app` 或 `~/.local/state/oh-pi-app` | session 持久化目录 |
 | `--work-dir` | `OHPI_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
 | `--title-model` | `OHPI_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
 | `--pi` | `OHPI_PI_COMMAND` | `pi` | pi 可执行文件 |
+| `--pi-env-path` | `OHPI_PI_ENV_PATH` | 继承网关 `PATH` | 只提供给 pi 子进程的 `PATH`；适用于 fnm、nvm 等 Node 安装 |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
 | `--max-message-bytes` | 无 | `134217728` | 单条 WS 命令和 pi 事件上限 |
 | `--session-idle-timeout` | 无 | `5m` | `agent_settled` 后无新 RPC 输入的 pi 进程回收时间 |
 | `--shutdown-timeout` | 无 | `10s` | 优雅退出等待时间 |
+
+只需普通用户 SSH 凭据的三平台自动部署方式见 [SSH 自动安装模式](managed-install.md)。
 
 额外 pi 参数示例：
 

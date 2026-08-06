@@ -50,7 +50,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun PortForwardsScreen(vm: AppViewModel, onBack: () -> Unit) {
     val server = vm.activeServer
-    val sshAvailable = server?.connectionMode == ServerConnectionMode.Ssh
+    val sshAvailable = server?.connectionMode?.usesSsh == true
     var adding by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<PortForward?>(null) }
 

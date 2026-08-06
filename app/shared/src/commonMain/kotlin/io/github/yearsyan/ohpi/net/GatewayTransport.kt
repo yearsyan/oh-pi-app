@@ -5,6 +5,8 @@ import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ssh.SshAuthType
+import io.github.yearsyan.ohpi.ssh.SshCommandConfig
+import io.github.yearsyan.ohpi.ssh.SshCommandResult
 import io.github.yearsyan.ohpi.ssh.SshTunnelConfig
 import io.github.yearsyan.ohpi.ssh.SshTunnelErrorCode
 import io.github.yearsyan.ohpi.ssh.SshTunnelException
@@ -101,6 +103,13 @@ internal class GatewayTransport(
 
     private var trustedHostKey = profile.ssh.hostKeySha256.trim()
 
+    private val managedProvisioner by lazy {
+        ManagedGatewayProvisioner(
+            profile = profile,
+            execute = ::executeCommand,
+        )
+    }
+
     suspend fun resolveGateway(): String {
         if (profile.connectionMode == ServerConnectionMode.Direct) {
             if (closed) throw GatewayConnectionException("Connection transport is closed", false)
@@ -110,12 +119,28 @@ internal class GatewayTransport(
             if (closed) throw GatewayConnectionException("Connection transport is closed", false)
 
             val target = gatewayTarget(profile.url, requirePlaintext = true)
+            var managedRestarted = false
             tunnel?.let { current ->
                 if (current.state == SshTunnelState.Running) {
-                    return@withLock loopbackGatewayUrl(target, current.localPort)
+                    val localGateway = loopbackGatewayUrl(target, current.localPort)
+                    if (!profile.connectionMode.isManaged) return@withLock localGateway
+                    try {
+                        awaitManagedGatewayHealth(localGateway)
+                        return@withLock localGateway
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        // The SSH session can outlive a stopped remote service.
+                        // Drop it so the managed provisioner can start the service.
+                        managedRestarted = true
+                    }
                 }
                 tunnel = null
                 current.close()
+            }
+
+            if (profile.connectionMode.isManaged) {
+                managedProvisioner.ensureRunning(forceRestart = managedRestarted)
             }
 
             while (true) {
@@ -166,9 +191,84 @@ internal class GatewayTransport(
                     started.close()
                     throw GatewayConnectionException("Connection transport is closed", false)
                 }
-                return@withLock loopbackGatewayUrl(target, started.localPort)
+                val localGateway = loopbackGatewayUrl(target, started.localPort)
+                if (profile.connectionMode.isManaged) {
+                    try {
+                        awaitManagedGatewayHealth(localGateway)
+                    } catch (failure: Throwable) {
+                        tunnel = null
+                        started.close()
+                        if (failure is CancellationException || managedRestarted) throw failure
+                        managedProvisioner.ensureRunning(forceRestart = true)
+                        managedRestarted = true
+                        continue
+                    }
+                }
+                return@withLock localGateway
             }
             error("unreachable")
+        }
+    }
+
+    suspend fun stopManagedGateway() {
+        if (!profile.connectionMode.isManaged) {
+            throw GatewayConnectionException("This server is not managed by the app", false)
+        }
+        mutex.withLock {
+            if (closed) throw GatewayConnectionException("Connection transport is closed", false)
+            val current = tunnel
+            tunnel = null
+            current?.close()
+            managedProvisioner.stop()
+        }
+    }
+
+    private suspend fun executeCommand(
+        command: String,
+        stdin: ByteArray,
+        timeoutMillis: Int,
+    ): SshCommandResult {
+        while (true) {
+            try {
+                return withContext(Dispatchers.Default) {
+                    PlatformSsh.execute(
+                        profile.toSshCommandConfig(
+                            command = command,
+                            stdin = stdin,
+                            hostKey = trustedHostKey,
+                            commandTimeoutMillis = timeoutMillis,
+                        ),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: SshTunnelException) {
+                val error = failure.error
+                if (
+                    error.code != SshTunnelErrorCode.HostKeyUnknown &&
+                    error.code != SshTunnelErrorCode.HostKeyMismatch
+                ) {
+                    throw failure.toGatewayFailure()
+                }
+                val observed = error.hostKeySha256.orEmpty()
+                if (observed.isBlank()) throw failure.toGatewayFailure()
+                val accepted =
+                    confirmHostKey(
+                        SshHostKeyPrompt(
+                            serverId = profile.id,
+                            serverName = profile.displayName,
+                            sshHost = profile.ssh.host,
+                            sshPort = profile.ssh.port,
+                            observedFingerprint = observed,
+                            expectedFingerprint = trustedHostKey.takeIf { it.isNotBlank() },
+                        ),
+                    )
+                if (!accepted) {
+                    throw GatewayConnectionException("SSH host key was not trusted", false)
+                }
+                trustedHostKey = observed
+                onHostKeyTrusted(observed)
+            }
         }
     }
 
@@ -208,6 +308,33 @@ internal fun ServerProfile.toSshTunnelConfig(
         remotePort = remotePort,
     )
 
+/** Native command config using the same SSH credentials and host trust. */
+internal fun ServerProfile.toSshCommandConfig(
+    command: String,
+    stdin: ByteArray = byteArrayOf(),
+    hostKey: String = ssh.hostKeySha256,
+    commandTimeoutMillis: Int = 120_000,
+): SshCommandConfig =
+    SshCommandConfig(
+        sshHost = ssh.host.trim(),
+        sshPort = ssh.port,
+        username = ssh.username.trim(),
+        authType =
+            when (ssh.authentication) {
+                SshAuthentication.Password -> SshAuthType.Password
+                SshAuthentication.PrivateKey -> SshAuthType.PrivateKey
+            },
+        password = ssh.password.takeIf { ssh.authentication == SshAuthentication.Password },
+        privateKey = ssh.privateKey.takeIf { ssh.authentication == SshAuthentication.PrivateKey },
+        privateKeyPassphrase =
+            ssh.privateKeyPassphrase
+                .takeIf { ssh.authentication == SshAuthentication.PrivateKey && it.isNotEmpty() },
+        expectedHostKeySha256 = hostKey.takeIf { it.isNotBlank() },
+        command = command,
+        stdin = stdin,
+        commandTimeoutMillis = commandTimeoutMillis,
+    )
+
 private fun SshTunnelException.toGatewayFailure(): GatewayConnectionException {
     val canRetry =
         error.code in
@@ -217,6 +344,8 @@ private fun SshTunnelException.toGatewayFailure(): GatewayConnectionException {
                 SshTunnelErrorCode.Thread,
                 SshTunnelErrorCode.Disconnected,
                 SshTunnelErrorCode.RemoteForward,
+                SshTunnelErrorCode.RemoteCommand,
+                SshTunnelErrorCode.CommandTimeout,
             )
     return GatewayConnectionException(
         message = error.message.ifBlank { "SSH connection failed (${error.code.name})" },

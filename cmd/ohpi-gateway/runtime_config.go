@@ -102,7 +102,7 @@ func decodeRuntimeConfig(reader io.Reader) (runtimeConfig, error) {
 
 func isRuntimeConfigKey(key string) bool {
 	switch key {
-	case "OHPI_LISTEN", "OHPI_DATA_DIR", "OHPI_WORK_DIR", "OHPI_TITLE_MODEL":
+	case "OHPI_LISTEN", "OHPI_DATA_DIR", "OHPI_WORK_DIR", "OHPI_TITLE_MODEL", "OHPI_PI_COMMAND", "OHPI_PI_ENV_PATH":
 		return true
 	default:
 		return false
@@ -141,4 +141,26 @@ func resolveRuntimeConfigValue(
 		return value
 	}
 	return flagValue
+}
+
+func resolveAuthenticationToken(value, path string) (string, error) {
+	if value != "" || path == "" {
+		return value, nil
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read token file %q: %w", path, err)
+	}
+	if len(contents) > 64<<10 {
+		return "", fmt.Errorf("token file %q is too large", path)
+	}
+	token := strings.TrimSuffix(string(contents), "\n")
+	token = strings.TrimSuffix(token, "\r")
+	if token == "" {
+		return "", fmt.Errorf("token file %q is empty", path)
+	}
+	if strings.ContainsAny(token, "\r\n") {
+		return "", fmt.Errorf("token file %q must contain exactly one line", path)
+	}
+	return token, nil
 }

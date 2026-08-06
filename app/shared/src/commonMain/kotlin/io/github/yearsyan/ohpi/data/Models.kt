@@ -3,7 +3,19 @@ package io.github.yearsyan.ohpi.data
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class ServerConnectionMode { Direct, Ssh }
+enum class ServerConnectionMode {
+    Direct,
+    Ssh,
+    /** The app installs and supervises the gateway through the SSH account. */
+    ManagedSsh,
+    ;
+
+    val usesSsh: Boolean
+        get() = this != Direct
+
+    val isManaged: Boolean
+        get() = this == ManagedSsh
+}
 
 @Serializable
 enum class SshAuthentication { Password, PrivateKey }

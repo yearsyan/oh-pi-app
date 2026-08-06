@@ -1478,20 +1478,60 @@ func TestNormalizeCommandUsesOneStrictLFRecord(t *testing.T) {
 
 func TestChildEnvironmentDoesNotExposeGatewayToken(t *testing.T) {
 	t.Setenv("OHPI_TOKEN", "must-not-reach-pi")
+	t.Setenv("OHPI_TOKEN_FILE", "/must/not/reach/pi")
+	t.Setenv("OHPI_PI_ENV_PATH", "/must/be/replaced")
 	t.Setenv("OHPI_TEST_VISIBLE", "visible")
 
-	environment := childEnvironment()
+	environment := childEnvironment("/managed/pi/bin:/usr/bin:/bin")
 	foundVisible := false
+	foundPath := false
 	for _, entry := range environment {
 		if strings.HasPrefix(entry, "OHPI_TOKEN=") {
 			t.Fatalf("child environment contains gateway token: %q", entry)
 		}
+		if strings.HasPrefix(entry, "OHPI_TOKEN_FILE=") {
+			t.Fatalf("child environment contains gateway token path: %q", entry)
+		}
+		if strings.HasPrefix(entry, "OHPI_PI_ENV_PATH=") {
+			t.Fatalf("child environment contains gateway path override: %q", entry)
+		}
 		if entry == "OHPI_TEST_VISIBLE=visible" {
 			foundVisible = true
+		}
+		if entry == "PATH=/managed/pi/bin:/usr/bin:/bin" {
+			foundPath = true
 		}
 	}
 	if !foundVisible {
 		t.Fatal("child environment unexpectedly removed a non-secret variable")
+	}
+	if !foundPath {
+		t.Fatal("child environment lost managed pi PATH")
+	}
+}
+
+func TestHealthIdentifiesGatewayVersion(t *testing.T) {
+	_, server := startTestGatewayWithConfig(t, t.TempDir(), func(cfg *Config) {
+		cfg.Version = "1.2.3"
+	})
+	response, err := http.Get(server.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var health struct {
+		Status   string `json:"status"`
+		Service  string `json:"service"`
+		Version  string `json:"version"`
+		Protocol int    `json:"protocol"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || health.Status != "ok" ||
+		health.Service != "ohpi-gateway" || health.Version != "1.2.3" ||
+		health.Protocol != gatewayProtocolVersion {
+		t.Fatalf("unexpected health response: status=%d body=%+v", response.StatusCode, health)
 	}
 }
 

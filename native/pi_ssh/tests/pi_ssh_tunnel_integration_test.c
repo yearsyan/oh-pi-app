@@ -214,6 +214,8 @@ static void *verify_http_forward_thread(void *userdata)
 int main(int argc, char **argv)
 {
     pi_ssh_tunnel_config config;
+    pi_ssh_command_config command_config;
+    pi_ssh_command_result command_result;
     pi_ssh_error error;
     pi_ssh_tunnel *tunnel;
     char *private_key;
@@ -253,6 +255,35 @@ int main(int argc, char **argv)
     assert(strcmp(error.host_key_sha256, fingerprint) == 0);
 
     config.expected_host_key_sha256 = fingerprint;
+
+    {
+        static const uint8_t command_input[] = {'a', 0, 'b', '\n'};
+        pi_ssh_command_config_init(&command_config);
+        pi_ssh_command_result_init(&command_result);
+        command_config.ssh_host = argv[1];
+        command_config.ssh_port = (uint16_t)strtoul(argv[2], NULL, 10);
+        command_config.username = argv[3];
+        command_config.auth_type = PI_SSH_AUTH_PRIVATE_KEY;
+        command_config.private_key = private_key;
+        command_config.expected_host_key_sha256 = fingerprint;
+        command_config.command = "cat; printf command-error >&2; exit 7";
+        command_config.stdin_data = command_input;
+        command_config.stdin_size = sizeof(command_input);
+        assert(pi_ssh_command_execute(&command_config,
+                                      &command_result,
+                                      &error) == 0);
+        assert(command_result.exit_status == 7);
+        assert(command_result.stdout_size == sizeof(command_input));
+        assert(memcmp(command_result.stdout_data,
+                      command_input,
+                      sizeof(command_input)) == 0);
+        assert(command_result.stderr_size == strlen("command-error"));
+        assert(memcmp(command_result.stderr_data,
+                      "command-error",
+                      strlen("command-error")) == 0);
+        pi_ssh_command_result_free(&command_result);
+    }
+
     tunnel = pi_ssh_tunnel_start(&config, &error);
     if (tunnel == NULL) {
         fprintf(stderr, "tunnel start failed: %s\n", error.message);

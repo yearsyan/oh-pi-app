@@ -6,6 +6,12 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 
 `GET /healthz` 不需要鉴权。其他 HTTP API 都推荐使用 Bearer 请求头，避免 token 出现在 URL 和访问日志中：
 
+健康检查成功时返回网关版本与安装模式兼容协议版本：
+
+```json
+{"status":"ok","service":"ohpi-gateway","version":"1.10.5","protocol":1}
+```
+
 ```http
 Authorization: Bearer <TOKEN>
 ```

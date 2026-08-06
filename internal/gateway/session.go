@@ -22,6 +22,7 @@ type piSession struct {
 	dir        string
 	command    string
 	args       []string
+	piPath     string
 	workDir    string
 	maxEvent   int64
 	idleAfter  time.Duration
@@ -80,6 +81,7 @@ type piSessionConfig struct {
 	Dir            string
 	Command        string
 	Args           []string
+	PiPath         string
 	WorkDir        string
 	MaxEventBytes  int64
 	InputQueueSize int
@@ -98,6 +100,7 @@ func newPiSession(cfg piSessionConfig) *piSession {
 		dir:             cfg.Dir,
 		command:         cfg.Command,
 		args:            append([]string(nil), cfg.Args...),
+		piPath:          cfg.PiPath,
 		workDir:         cfg.WorkDir,
 		maxEvent:        cfg.MaxEventBytes,
 		idleAfter:       cfg.SessionIdle,
@@ -127,9 +130,9 @@ func (s *piSession) start() error {
 		"--session-id", s.id,
 	)
 
-	s.cmd = exec.Command(s.command, args...)
+	s.cmd = newPiProcess(s.command, args...)
 	s.cmd.Dir = s.workDir
-	s.cmd.Env = childEnvironment()
+	s.cmd.Env = childEnvironment(s.piPath)
 
 	stdin, err := s.cmd.StdinPipe()
 	if err != nil {
@@ -245,7 +248,7 @@ func (s *piSession) stop(code int, reason string) {
 
 func (s *piSession) forceKill() {
 	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
+		killPiProcess(s.cmd)
 	}
 }
 
@@ -390,14 +393,20 @@ func splitLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-func childEnvironment() []string {
-	const secretName = "OHPI_TOKEN="
+func childEnvironment(piPath string) []string {
 	environment := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, secretName) {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, "OHPI_TOKEN") ||
+			strings.EqualFold(name, "OHPI_TOKEN_FILE") ||
+			strings.EqualFold(name, "OHPI_PI_ENV_PATH") ||
+			(piPath != "" && strings.EqualFold(name, "PATH")) {
 			continue
 		}
 		environment = append(environment, entry)
+	}
+	if piPath != "" {
+		environment = append(environment, "PATH="+piPath)
 	}
 	return environment
 }

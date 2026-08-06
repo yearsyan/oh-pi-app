@@ -157,9 +157,9 @@ func (service *providerService) start(ctx context.Context) (*providerProcess, er
 		"--mode", "rpc",
 		"--no-session",
 	)
-	command := exec.CommandContext(ctx, service.cfg.PiCommand, args...)
+	command := newPiProcessContext(ctx, service.cfg.PiCommand, args...)
 	command.Dir = service.cfg.WorkDir
-	command.Env = childEnvironment()
+	command.Env = childEnvironment(service.cfg.PiEnvironmentPath)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open provider helper stdin: %w", err)

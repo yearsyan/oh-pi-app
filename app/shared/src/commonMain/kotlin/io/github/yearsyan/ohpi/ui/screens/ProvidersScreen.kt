@@ -167,6 +167,7 @@ fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit) {
         ConfirmDialog(
             title = S.providerLogoutTitle,
             body = S.providerLogoutBody(provider.name),
+            confirmLabel = S.providerLogout,
             onDismiss = { logoutTarget = null },
             onConfirm = {
                 logoutTarget = null

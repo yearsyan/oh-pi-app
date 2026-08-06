@@ -143,7 +143,7 @@ fun SessionListPane(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (activeServer?.connectionMode == ServerConnectionMode.Ssh) {
+            if (activeServer?.connectionMode?.usesSsh == true) {
                 Spacer(Modifier.width(10.dp))
                 // port forwarding entry (SSH servers only)
                 Box(
@@ -258,6 +258,7 @@ fun SessionListPane(
         ConfirmDialog(
             title = S.deleteSessionTitle,
             body = S.deleteSessionBody,
+            confirmLabel = S.delete,
             onDismiss = { deleteCandidate = null },
             onConfirm = { onDeleteSession(session) },
         )

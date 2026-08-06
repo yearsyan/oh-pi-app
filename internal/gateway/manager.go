@@ -290,6 +290,7 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newS
 			Dir:            dir,
 			Command:        m.cfg.PiCommand,
 			Args:           args,
+			PiPath:         m.cfg.PiEnvironmentPath,
 			WorkDir:        workDir,
 			MaxEventBytes:  m.cfg.MaxMessageBytes,
 			InputQueueSize: m.cfg.InputQueueSize,

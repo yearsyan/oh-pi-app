@@ -221,6 +221,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onSelectServer = ::selectServer,
                     onSaveServer = vm::saveServer,
                     onDeleteServer = vm::deleteServer,
+                    onStopManagedGateway = vm::stopManagedGateway,
                     onThemeMode = vm::updateThemeMode,
                     onLanguage = vm::updateLanguage,
                     onOpenProviders = { navController.navigate(ProvidersRoute) },

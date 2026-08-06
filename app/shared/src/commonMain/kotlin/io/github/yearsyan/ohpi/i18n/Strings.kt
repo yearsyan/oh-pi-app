@@ -28,6 +28,8 @@ interface Strings {
     val connectionModeLabel: String
     val directConnection: String
     val sshConnection: String
+    val managedSshConnection: String
+    val managedSshHint: String
     val sshGatewayPlaintextHint: String
     val sshGatewayIosFixedHostHint: String
     val sshHostLabel: String
@@ -216,6 +218,11 @@ interface Strings {
     val editServer: String
     val deleteServerTitle: String
     val deleteServerBody: String
+    val stopManagedGateway: String
+    val stopManagedGatewayTitle: String
+    val stopManagedGatewayBody: String
+    val managedGatewayStopped: String
+    val managedGatewayStopFailed: (String) -> String
     val appearanceSection: String
     val themeSystem: String
     val themeLight: String
@@ -323,6 +330,8 @@ object EnStrings : Strings {
     override val connectionModeLabel = "Connection"
     override val directConnection = "Direct"
     override val sshConnection = "SSH tunnel"
+    override val managedSshConnection = "SSH install"
+    override val managedSshHint = "The app will install, configure, and start the gateway for this SSH user. No administrator password is required."
     override val sshGatewayPlaintextHint = "Use the gateway host and port as seen by the SSH server. TLS is disabled because SSH encrypts the connection."
     override val sshGatewayIosFixedHostHint = "The backend address is fixed to 127.0.0.1 on the SSH server; only the backend port is needed."
     override val sshHostLabel = "SSH host"
@@ -506,6 +515,11 @@ object EnStrings : Strings {
     override val editServer = "Edit server"
     override val deleteServerTitle = "Delete server?"
     override val deleteServerBody = "This only removes the server profile from this device. Sessions on the server are not deleted."
+    override val stopManagedGateway = "Stop managed gateway"
+    override val stopManagedGatewayTitle = "Stop the remote gateway?"
+    override val stopManagedGatewayBody = "Active chats will disconnect. The app will start the gateway again the next time you connect."
+    override val managedGatewayStopped = "Remote gateway stopped"
+    override val managedGatewayStopFailed = { error: String -> "Could not stop the remote gateway: $error" }
     override val appearanceSection = "Appearance"
     override val themeSystem = "System"
     override val themeLight = "Light"
@@ -625,6 +639,8 @@ object ZhStrings : Strings {
     override val connectionModeLabel = "连接方式"
     override val directConnection = "直接连接"
     override val sshConnection = "SSH 隧道"
+    override val managedSshConnection = "自动安装"
+    override val managedSshHint = "App 将为该 SSH 用户自动安装、配置并拉起网关，无需管理员密码。"
     override val sshGatewayPlaintextHint = "填写 SSH 服务器看到的网关主机和端口；连接已由 SSH 加密，因此不启用 TLS。"
     override val sshGatewayIosFixedHostHint = "后端地址固定为 SSH 服务器上的 127.0.0.1，只需填写后端端口。"
     override val sshHostLabel = "SSH 主机"
@@ -806,6 +822,11 @@ object ZhStrings : Strings {
     override val editServer = "编辑服务器"
     override val deleteServerTitle = "删除服务器？"
     override val deleteServerBody = "这只会从本设备移除服务器配置，不会删除服务器上的会话。"
+    override val stopManagedGateway = "关闭托管网关"
+    override val stopManagedGatewayTitle = "关闭远程网关？"
+    override val stopManagedGatewayBody = "当前会话会断开；下次连接时，App 会重新拉起网关。"
+    override val managedGatewayStopped = "远程网关已关闭"
+    override val managedGatewayStopFailed = { error: String -> "关闭远程网关失败：$error" }
     override val appearanceSection = "外观"
     override val themeSystem = "跟随系统"
     override val themeLight = "浅色"

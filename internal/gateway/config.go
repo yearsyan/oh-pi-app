@@ -21,10 +21,13 @@ const (
 // Config controls the HTTP gateway and the pi child processes it owns.
 type Config struct {
 	Token     string
+	Version   string
 	DataDir   string
 	WorkDir   string
 	PiCommand string
-	PiArgs    []string
+	// PiEnvironmentPath overrides PATH only for pi child processes.
+	PiEnvironmentPath string
+	PiArgs            []string
 	// ProviderPiArgs are prepended only to short-lived provider-management
 	// probes. Production leaves this empty; tests use it to launch the helper
 	// process through the Go test binary without leaking session extensions or
@@ -47,6 +50,9 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.DataDir == "" {
 		return Config{}, fmt.Errorf("data directory must not be empty")
+	}
+	if c.Version == "" {
+		c.Version = "dev"
 	}
 	if c.WorkDir == "" {
 		var err error

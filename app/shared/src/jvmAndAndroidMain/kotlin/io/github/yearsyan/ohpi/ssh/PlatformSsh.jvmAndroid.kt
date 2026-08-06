@@ -37,6 +37,40 @@ internal actual object PlatformSsh {
         )
     }
 
+    actual fun execute(config: SshCommandConfig): SshCommandResult {
+        NativeSshBridge.ensureLoaded()
+        val exitStatus = IntArray(1)
+        val errorCode = IntArray(1)
+        val errorStrings = arrayOfNulls<String>(2)
+        val output =
+            NativeSshBridge.nativeExecute(
+                sshHost = config.sshHost.encodeToByteArray(),
+                sshPort = config.sshPort,
+                username = config.username.encodeToByteArray(),
+                authType = config.authType.nativeValue,
+                password = config.password?.encodeToByteArray(),
+                privateKey = config.privateKey?.encodeToByteArray(),
+                privateKeyPassphrase = config.privateKeyPassphrase?.encodeToByteArray(),
+                expectedHostKeySha256 =
+                    config.expectedHostKeySha256
+                        ?.takeIf { it.isNotBlank() }
+                        ?.encodeToByteArray(),
+                command = config.command.encodeToByteArray(),
+                stdin = config.stdin,
+                connectTimeoutMillis = config.connectTimeoutMillis,
+                commandTimeoutMillis = config.commandTimeoutMillis,
+                maxOutputBytes = config.maxOutputBytes,
+                exitStatus = exitStatus,
+                errorCode = errorCode,
+                errorStrings = errorStrings,
+            ) ?: throw SshTunnelException(errorCode.toSshError(errorStrings))
+        return SshCommandResult(
+            exitStatus = exitStatus[0],
+            stdout = output.getOrNull(0) ?: byteArrayOf(),
+            stderr = output.getOrNull(1) ?: byteArrayOf(),
+        )
+    }
+
     actual fun libraryVersion(): String {
         NativeSshBridge.ensureLoaded()
         return NativeSshBridge.nativeVersion()
@@ -111,6 +145,26 @@ internal object NativeSshBridge {
         errorCode: IntArray,
         errorStrings: Array<String?>,
     ): Long
+
+    @JvmStatic
+    external fun nativeExecute(
+        sshHost: ByteArray,
+        sshPort: Int,
+        username: ByteArray,
+        authType: Int,
+        password: ByteArray?,
+        privateKey: ByteArray?,
+        privateKeyPassphrase: ByteArray?,
+        expectedHostKeySha256: ByteArray?,
+        command: ByteArray,
+        stdin: ByteArray,
+        connectTimeoutMillis: Int,
+        commandTimeoutMillis: Int,
+        maxOutputBytes: Int,
+        exitStatus: IntArray,
+        errorCode: IntArray,
+        errorStrings: Array<String?>,
+    ): Array<ByteArray?>?
 
     @JvmStatic
     external fun nativeLocalPort(handle: Long): Int

@@ -29,6 +29,10 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **内置 SSH 隧道**：可通过 SSH 密码或内存私钥连接远端服务器，再让 WebSocket 与
   `/fs/list` 共同复用一条本机回环隧道。Android、Desktop 与 iOS 都调用相同的
   `libssh` C 核心；首次连接以及主机密钥变化时必须人工确认 SHA-256 指纹。
+- **SSH 自动安装**：只填写普通用户 SSH 凭据，App 即可识别 macOS / Linux / Windows，
+  在缺少 Pi 时无 sudo 引导用户级 Node.js/Pi，校验并上传 Release 网关二进制，使用
+  launchd / systemd user / 当前用户计划任务托管，在连接前自动拉起，并可从设置页停止。完整平台限制见
+  [`../docs/managed-install.md`](../docs/managed-install.md)。
 - **扩展 UI 对话框**：支持 pi 扩展的 select / confirm / input / editor 请求。
 
 ## 架构（shared 模块）
@@ -51,7 +55,7 @@ Mbed TLS 3.6.6，一个 worker 线程复用多个 `direct-tcpip` channel。依�
 许可证、校验和与重链接说明见
 [`../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md`](../native/pi_ssh/licenses/THIRD_PARTY_NOTICES.md)。
 
-## SSH 连接
+## SSH 连接与自动安装
 
 在服务器编辑页选择「SSH 隧道」，然后填写：
 
@@ -66,6 +70,11 @@ SSH 模式下网关地址必须使用 `http://` 或 `ws://`。SSH 已加密整�
 `https://` / `wss://` 改写到随机回环端口，TLS 主机名校验会失效，因此 App 会拒绝
 这种配置。首次连接只读取服务器公钥并显示 `SHA256:...` 指纹，确认后才发送凭据；
 以后指纹不一致会显示高风险变更提示。
+
+选择「自动安装」时无需填写网关地址和 token；App 固定使用远端回环地址，自动生成
+token，并在每次建立连接前确认用户级服务正在运行。此模式不要求管理员密码。Windows
+使用密码 SSH 登录时可在无桌面会话下运行；私钥登录受 Task Scheduler 限制，需要当前
+用户已有桌面会话。Linux 是否在最后一个登录会话退出后继续运行取决于 linger 设置。
 
 ## 运行
 
@@ -91,7 +100,8 @@ $env:WIX_PATH = "C:\path\to\wix314"
 
 ## 备注
 
-- token 与 SSH 凭据仅保存在本机设置中，不会写入日志；设备设置存储本身应由系统
-  账户和磁盘加密保护。
+- SSH 私钥不会写入远端，SSH 凭据也不会写入日志；Windows 密码安装模式会把同一用户
+  密码交给 Task Scheduler 的系统凭据存储。自动安装模式生成的 token 同时以受限权限
+  文件保存在远端。设备设置存储本身应由系统账户和磁盘加密保护。
 - 会话列表、名称和删除操作都由网关管理；本地仅保留服务器配置、偏好设置，以及升级时使用的一次性旧会话名称迁移数据。
 - 删除会话会停止对应 pi 进程并永久删除服务端会话目录，无法从 App 内恢复。

@@ -69,6 +69,16 @@ uint64_t pi_ssh_platform_monotonic_seconds(void)
     return (uint64_t)value.tv_sec;
 }
 
+uint64_t pi_ssh_platform_monotonic_millis(void)
+{
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
+        return 0;
+    }
+    return (uint64_t)value.tv_sec * 1000u +
+           (uint64_t)value.tv_nsec / 1000000u;
+}
+
 int pi_ssh_mutex_initialize(pi_ssh_mutex *mutex)
 {
     return pthread_mutex_init(mutex, NULL);

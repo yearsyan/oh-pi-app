@@ -168,6 +168,7 @@ fun ChatScreen(
         ConfirmDialog(
             title = S.deleteSessionTitle,
             body = S.deleteSessionBody,
+            confirmLabel = S.delete,
             onDismiss = { deleteOpen = false },
             onConfirm = onDelete,
         )

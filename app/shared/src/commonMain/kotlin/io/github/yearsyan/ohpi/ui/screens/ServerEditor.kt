@@ -32,6 +32,7 @@ import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.data.SshServerProfile
 import io.github.yearsyan.ohpi.getPlatform
+import io.github.yearsyan.ohpi.secureRandomHex
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.buildGatewayUrl
@@ -74,23 +75,25 @@ internal class ServerEditorState(initial: ServerProfile?) {
         val parsedSshPort = sshPort.toIntOrNull()
         // On iOS the SSH backend address is fixed to the loopback address: the
         // tunnel reaches ohpi exactly where the SSH server sees it.
-        val fixedLoopback = getPlatform().isIos && connectionMode == ServerConnectionMode.Ssh
+        val managed = connectionMode.isManaged
+        val fixedLoopback = managed || (getPlatform().isIos && connectionMode.usesSsh)
         val effectiveGatewayHost = if (fixedLoopback) FixedLoopbackHost else gatewayHost.trim()
         val effectiveGatewayTls = if (fixedLoopback) false else gatewayTls
+        val effectiveGatewayPort = if (managed) DefaultGatewayPort else parsedGatewayPort
         error =
             when {
                 effectiveGatewayHost.isBlank() -> strings.serverHostRequired
-                parsedGatewayPort !in 1..65535 -> strings.serverPortInvalid
-                !fixedLoopback && connectionMode == ServerConnectionMode.Ssh && effectiveGatewayTls ->
+                effectiveGatewayPort !in 1..65535 -> strings.serverPortInvalid
+                !fixedLoopback && connectionMode.usesSsh && effectiveGatewayTls ->
                     strings.sshGatewayTlsInvalid
-                connectionMode == ServerConnectionMode.Ssh && sshHost.isBlank() -> strings.sshHostRequired
-                connectionMode == ServerConnectionMode.Ssh && parsedSshPort !in 1..65535 -> strings.sshPortInvalid
-                connectionMode == ServerConnectionMode.Ssh && sshUsername.isBlank() ->
+                connectionMode.usesSsh && sshHost.isBlank() -> strings.sshHostRequired
+                connectionMode.usesSsh && parsedSshPort !in 1..65535 -> strings.sshPortInvalid
+                connectionMode.usesSsh && sshUsername.isBlank() ->
                     strings.sshUsernameRequired
-                connectionMode == ServerConnectionMode.Ssh &&
+                connectionMode.usesSsh &&
                     sshAuthentication == SshAuthentication.Password &&
                     sshPassword.isEmpty() -> strings.sshPasswordRequired
-                connectionMode == ServerConnectionMode.Ssh &&
+                connectionMode.usesSsh &&
                     sshAuthentication == SshAuthentication.PrivateKey &&
                     sshPrivateKey.isBlank() -> strings.sshPrivateKeyRequired
                 else -> null
@@ -98,7 +101,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
         if (error != null) return null
 
         val ssh =
-            if (connectionMode == ServerConnectionMode.Ssh) {
+            if (connectionMode.usesSsh) {
                 SshServerProfile(
                     host = sshHost.trim(),
                     port = parsedSshPort ?: 22,
@@ -121,8 +124,8 @@ internal class ServerEditorState(initial: ServerProfile?) {
         return ServerProfile(
             id = id,
             name = name.trim(),
-            url = buildGatewayUrl(effectiveGatewayHost, parsedGatewayPort ?: DefaultGatewayPort, effectiveGatewayTls),
-            token = token.trim(),
+            url = buildGatewayUrl(effectiveGatewayHost, effectiveGatewayPort ?: DefaultGatewayPort, effectiveGatewayTls),
+            token = if (managed) token.ifBlank { secureRandomHex(32) } else token.trim(),
             connectionMode = connectionMode,
             ssh = ssh,
         )
@@ -156,84 +159,95 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
             listOf(
                 ServerConnectionMode.Direct to S.directConnection,
                 ServerConnectionMode.Ssh to S.sshConnection,
+                ServerConnectionMode.ManagedSsh to S.managedSshConnection,
             )
         options.forEachIndexed { index, (mode, label) ->
             SegmentedButton(
                 selected = editor.connectionMode == mode,
                 onClick = {
                     editor.connectionMode = mode
-                    if (mode == ServerConnectionMode.Ssh) editor.gatewayTls = false
+                    if (mode.usesSsh) editor.gatewayTls = false
                     editor.clearError()
                 },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                modifier = Modifier.weight(1f),
             ) { Text(label) }
         }
     }
     Spacer(Modifier.height(10.dp))
 
-    // On iOS the SSH backend address is fixed to 127.0.0.1, so the host field
-    // and the TLS switch are hidden; only the backend port stays editable.
+    val managed = editor.connectionMode.isManaged
+    // On iOS an ordinary SSH tunnel has a fixed remote loopback host. Managed
+    // SSH also owns the gateway address and token, so neither is user-editable.
     val fixedLoopback = getPlatform().isIos && editor.connectionMode == ServerConnectionMode.Ssh
-    Row(Modifier.fillMaxWidth()) {
-        if (!fixedLoopback) {
+    if (!managed) {
+        Row(Modifier.fillMaxWidth()) {
+            if (!fixedLoopback) {
+                OutlinedTextField(
+                    value = editor.gatewayHost,
+                    onValueChange = { editor.gatewayHost = it; editor.clearError() },
+                    label = { Text(S.serverHostLabel) },
+                    placeholder = { Text(S.serverHostPlaceholder) },
+                    singleLine = true,
+                    isError = editor.error == S.serverHostRequired,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             OutlinedTextField(
-                value = editor.gatewayHost,
-                onValueChange = { editor.gatewayHost = it; editor.clearError() },
-                label = { Text(S.serverHostLabel) },
-                placeholder = { Text(S.serverHostPlaceholder) },
+                value = editor.gatewayPort,
+                onValueChange = { editor.gatewayPort = it.filter(Char::isDigit); editor.clearError() },
+                label = { Text(if (fixedLoopback) S.backendPortLabel else S.serverPortLabel) },
                 singleLine = true,
-                isError = editor.error == S.serverHostRequired,
-                modifier = Modifier.weight(1f),
+                isError = editor.error == S.serverPortInvalid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(if (fixedLoopback) 1f else 0.38f),
             )
-            Spacer(Modifier.width(10.dp))
         }
-        OutlinedTextField(
-            value = editor.gatewayPort,
-            onValueChange = { editor.gatewayPort = it.filter(Char::isDigit); editor.clearError() },
-            label = { Text(if (fixedLoopback) S.backendPortLabel else S.serverPortLabel) },
-            singleLine = true,
-            isError = editor.error == S.serverPortInvalid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.weight(if (fixedLoopback) 1f else 0.38f),
-        )
-    }
-    if (!fixedLoopback) {
-        Spacer(Modifier.height(10.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        if (!fixedLoopback) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    S.serverTlsLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = editor.gatewayTls,
+                    onCheckedChange = { editor.gatewayTls = it; editor.clearError() },
+                    enabled = editor.connectionMode == ServerConnectionMode.Direct,
+                )
+            }
+        }
+        if (editor.connectionMode == ServerConnectionMode.Ssh) {
             Text(
-                S.serverTlsLabel,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(
-                checked = editor.gatewayTls,
-                onCheckedChange = { editor.gatewayTls = it; editor.clearError() },
-                enabled = editor.connectionMode == ServerConnectionMode.Direct,
+                if (fixedLoopback) S.sshGatewayIosFixedHostHint else S.sshGatewayPlaintextHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-    if (editor.connectionMode == ServerConnectionMode.Ssh) {
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = editor.token,
+            onValueChange = { editor.token = it; editor.clearError() },
+            label = { Text(S.serverTokenLabel) },
+            placeholder = { Text(S.serverTokenPlaceholder) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
         Text(
-            if (fixedLoopback) S.sshGatewayIosFixedHostHint else S.sshGatewayPlaintextHint,
+            S.managedSshHint,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    Spacer(Modifier.height(10.dp))
-    OutlinedTextField(
-        value = editor.token,
-        onValueChange = { editor.token = it; editor.clearError() },
-        label = { Text(S.serverTokenLabel) },
-        placeholder = { Text(S.serverTokenPlaceholder) },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        modifier = Modifier.fillMaxWidth(),
-    )
 
-    if (editor.connectionMode == ServerConnectionMode.Ssh) {
+    if (editor.connectionMode.usesSsh) {
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth()) {
             OutlinedTextField(

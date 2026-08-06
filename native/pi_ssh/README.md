@@ -5,6 +5,11 @@ apps. It exposes a small C ABI and keeps all SSH protocol, host-key checking,
 authentication, local listener, channel multiplexing, buffering, and shutdown
 behavior in one implementation.
 
+The same ABI can execute one non-interactive remote command with binary-safe
+stdin, separate bounded stdout/stderr buffers, a remote exit status, and a
+deadline. The managed installer uses this path for OS probing, service control,
+and direct binary upload without adding SFTP or shell download dependencies.
+
 The app packages this worker for Android, iOS, macOS (arm64/x86_64), Linux
 x86_64, and Windows x86_64. POSIX targets use file descriptors and a pipe for
 event wakeups. Windows uses WinSock sockets plus a loopback UDP socket pair so

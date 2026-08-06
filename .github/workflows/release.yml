@@ -39,16 +39,22 @@ jobs:
             "darwin/arm64"
             "linux/amd64"
             "linux/arm64"
+            "windows/amd64"
+            "windows/arm64"
           )
 
           for target in "${targets[@]}"; do
             GOOS="${target%/*}"
             GOARCH="${target#*/}"
-            output="release/ohpi-gateway-${VERSION}-${GOOS}-${GOARCH}"
+            suffix=""
+            if [[ "$GOOS" == "windows" ]]; then
+              suffix=".exe"
+            fi
+            output="release/ohpi-gateway-${VERSION}-${GOOS}-${GOARCH}${suffix}"
 
             echo "Building ${GOOS}/${GOARCH}"
             CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags="-s -w" -o "$output" ./cmd/ohpi-gateway
+              go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "$output" ./cmd/ohpi-gateway
             go version -m "$output"
           done
 

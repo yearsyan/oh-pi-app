@@ -39,6 +39,7 @@ bool pi_ssh_platform_error_is_not_connected(int error_code);
 
 char *pi_ssh_platform_duplicate_string(const char *value);
 uint64_t pi_ssh_platform_monotonic_seconds(void);
+uint64_t pi_ssh_platform_monotonic_millis(void);
 
 int pi_ssh_mutex_initialize(pi_ssh_mutex *mutex);
 void pi_ssh_mutex_lock(pi_ssh_mutex *mutex);

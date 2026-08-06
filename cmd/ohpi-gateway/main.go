@@ -17,6 +17,8 @@ import (
 	"github.com/yearsyan/oh-pi-app/internal/titleextension"
 )
 
+var version = "dev"
+
 type stringList []string
 
 func (values *stringList) String() string {
@@ -39,16 +41,23 @@ func run() int {
 	configFile := flag.String("config", envOr("OHPI_CONFIG_FILE", defaultConfigFile()), "configuration file (or OHPI_CONFIG_FILE)")
 	listen := flag.String("listen", "127.0.0.1:18080", "HTTP listen address")
 	token := flag.String("token", os.Getenv("OHPI_TOKEN"), "URL authentication token (or OHPI_TOKEN)")
+	tokenFile := flag.String("token-file", os.Getenv("OHPI_TOKEN_FILE"), "read authentication token from this file (or OHPI_TOKEN_FILE)")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	dataDir := flag.String("data-dir", defaultDataDir(), "persistent data directory")
 	workDir := flag.String("work-dir", mustWorkingDir(), "working directory for pi processes")
 	titleModel := flag.String("title-model", "auto", "session title model: auto, active, off, or provider/model-id")
 	piCommand := flag.String("pi", envOr("OHPI_PI_COMMAND", "pi"), "pi executable")
+	piEnvironmentPath := flag.String("pi-env-path", os.Getenv("OHPI_PI_ENV_PATH"), "PATH supplied to pi child processes")
 	maxMessage := flag.Int64("max-message-bytes", 128<<20, "maximum WebSocket command and pi event size")
 	sessionIdle := flag.Duration("session-idle-timeout", 5*time.Minute, "stop a settled pi session after this idle period")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Var(&piArgs, "pi-arg", "extra pi argument; repeat for multiple arguments")
 	flag.Var(&allowedOrigins, "allow-origin", `allowed WebSocket Origin; repeat or use "*"`)
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("ohpi-gateway %s\n", version)
+		return 0
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
 	explicitFlags := make(map[string]bool)
@@ -65,9 +74,16 @@ func run() int {
 	*dataDir = resolveRuntimeConfigValue(*dataDir, explicitFlags["data-dir"], "OHPI_DATA_DIR", fileConfig)
 	*workDir = resolveRuntimeConfigValue(*workDir, explicitFlags["work-dir"], "OHPI_WORK_DIR", fileConfig)
 	*titleModel = resolveRuntimeConfigValue(*titleModel, explicitFlags["title-model"], "OHPI_TITLE_MODEL", fileConfig)
+	*piCommand = resolveRuntimeConfigValue(*piCommand, explicitFlags["pi"], "OHPI_PI_COMMAND", fileConfig)
+	*piEnvironmentPath = resolveRuntimeConfigValue(*piEnvironmentPath, explicitFlags["pi-env-path"], "OHPI_PI_ENV_PATH", fileConfig)
 	*titleModel, err = normalizeTitleModel(*titleModel)
 	if err != nil {
 		logger.Error("configure title model", "error", err)
+		return 2
+	}
+	*token, err = resolveAuthenticationToken(*token, *tokenFile)
+	if err != nil {
+		logger.Error("load authentication token", "error", err)
 		return 2
 	}
 
@@ -92,15 +108,17 @@ func run() int {
 	}
 
 	app, err := gateway.New(gateway.Config{
-		Token:           *token,
-		DataDir:         *dataDir,
-		WorkDir:         *workDir,
-		PiCommand:       *piCommand,
-		PiArgs:          piArgs,
-		AllowedOrigins:  allowedOrigins,
-		MaxMessageBytes: *maxMessage,
-		SessionIdle:     *sessionIdle,
-		Logger:          logger,
+		Token:             *token,
+		Version:           version,
+		DataDir:           *dataDir,
+		WorkDir:           *workDir,
+		PiCommand:         *piCommand,
+		PiEnvironmentPath: *piEnvironmentPath,
+		PiArgs:            piArgs,
+		AllowedOrigins:    allowedOrigins,
+		MaxMessageBytes:   *maxMessage,
+		SessionIdle:       *sessionIdle,
+		Logger:            logger,
 	})
 	if err != nil {
 		logger.Error("configure ohpi-gateway", "error", err)

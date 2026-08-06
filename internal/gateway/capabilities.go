@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -217,9 +216,9 @@ type capabilityRawModel struct {
 func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabilitiesResponse, error) {
 	args := append([]string(nil), cfg.PiArgs...)
 	args = append(args, "--mode", "rpc", "--no-session")
-	command := exec.CommandContext(ctx, cfg.PiCommand, args...)
+	command := newPiProcessContext(ctx, cfg.PiCommand, args...)
 	command.Dir = workDir
-	command.Env = childEnvironment()
+	command.Env = childEnvironment(cfg.PiEnvironmentPath)
 
 	stdin, err := command.StdinPipe()
 	if err != nil {

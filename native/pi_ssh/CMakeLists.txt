@@ -177,6 +177,10 @@ if(PI_SSH_BUILD_SHARED)
             PI_SSH_EXPORTED_SYMBOLS
             pi_ssh_tunnel_config_init
             pi_ssh_error_init
+            pi_ssh_command_config_init
+            pi_ssh_command_result_init
+            pi_ssh_command_result_free
+            pi_ssh_command_execute
             pi_ssh_tunnel_start
             pi_ssh_tunnel_local_port
             pi_ssh_tunnel_state
@@ -188,6 +192,7 @@ if(PI_SSH_BUILD_SHARED)
             list(
                 APPEND PI_SSH_EXPORTED_SYMBOLS
                 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeStart
+                Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute
                 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLocalPort
                 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeState
                 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeLastError

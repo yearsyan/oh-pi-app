@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Circle
 
 @Composable
@@ -66,6 +67,7 @@ fun SettingsScreen(
     onSelectServer: (String) -> Unit,
     onSaveServer: (ServerProfile) -> Unit,
     onDeleteServer: (String) -> Unit,
+    onStopManagedGateway: () -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onLanguage: (AppLanguage) -> Unit,
     onOpenProviders: () -> Unit,
@@ -74,6 +76,7 @@ fun SettingsScreen(
     var editing by remember { mutableStateOf<ServerProfile?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ServerProfile?>(null) }
+    var stopping by remember { mutableStateOf<ServerProfile?>(null) }
 
     Column(
         Modifier
@@ -117,6 +120,12 @@ fun SettingsScreen(
                     onSelect = { onSelectServer(server.id) },
                     onEdit = { editing = server },
                     onDelete = { deleting = server },
+                    onStopManaged =
+                        if (server.id == activeServerId && server.connectionMode.isManaged) {
+                            { stopping = server }
+                        } else {
+                            null
+                        },
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -275,8 +284,21 @@ fun SettingsScreen(
         ConfirmDialog(
             title = S.deleteServerTitle,
             body = S.deleteServerBody,
+            confirmLabel = S.delete,
             onDismiss = { deleting = null },
             onConfirm = { onDeleteServer(server.id) },
+        )
+    }
+    stopping?.let {
+        ConfirmDialog(
+            title = S.stopManagedGatewayTitle,
+            body = S.stopManagedGatewayBody,
+            confirmLabel = S.stopManagedGateway,
+            onDismiss = { stopping = null },
+            onConfirm = {
+                stopping = null
+                onStopManagedGateway()
+            },
         )
     }
 }
@@ -299,6 +321,7 @@ private fun ServerRow(
     onSelect: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onStopManaged: (() -> Unit)?,
 ) {
     val gatewayLabel = gatewayAddressLabel(server.url)
     Surface(
@@ -330,8 +353,9 @@ private fun ServerRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    if (server.connectionMode == ServerConnectionMode.Ssh) {
-                        "SSH · ${server.ssh.username}@${server.ssh.host}:${server.ssh.port} → $gatewayLabel"
+                    if (server.connectionMode.usesSsh) {
+                        val mode = if (server.connectionMode.isManaged) S.managedSshConnection else "SSH"
+                        "$mode · ${server.ssh.username}@${server.ssh.host}:${server.ssh.port} → $gatewayLabel"
                     } else {
                         gatewayLabel
                     },
@@ -348,6 +372,16 @@ private fun ServerRow(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(end = 4.dp),
                 )
+            }
+            if (onStopManaged != null) {
+                IconButton(onClick = onStopManaged, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        Icons.Filled.PowerSettingsNew,
+                        contentDescription = S.stopManagedGateway,
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
             IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
                 Icon(

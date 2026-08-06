@@ -13,6 +13,8 @@
 #define PI_SSH_BUFFER_CAPACITY (64u * 1024u)
 #define PI_SSH_MAX_CONNECTIONS 32u
 #define PI_SSH_EVENT_TIMEOUT_MS 250
+#define PI_SSH_COMMAND_BUFFER_CAPACITY (32u * 1024u)
+#define PI_SSH_COMMAND_POLL_TIMEOUT_MS 50
 
 typedef struct pi_ssh_ring_buffer {
     unsigned char bytes[PI_SSH_BUFFER_CAPACITY];
@@ -61,6 +63,12 @@ struct pi_ssh_tunnel {
     short wake_revents;
 };
 
+typedef struct pi_ssh_command_output {
+    uint8_t *data;
+    size_t size;
+    size_t capacity;
+} pi_ssh_command_output;
+
 static void pi_ssh_secure_zero(void *value, size_t size)
 {
     volatile unsigned char *bytes = (volatile unsigned char *)value;
@@ -105,6 +113,46 @@ void pi_ssh_tunnel_config_init(pi_ssh_tunnel_config *config)
     config->connect_timeout_ms = PI_SSH_DEFAULT_CONNECT_TIMEOUT_MS;
     config->keepalive_interval_seconds =
         PI_SSH_DEFAULT_KEEPALIVE_INTERVAL_SECONDS;
+}
+
+void pi_ssh_command_config_init(pi_ssh_command_config *config)
+{
+    if (config == NULL) {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+    config->struct_size = (uint32_t)sizeof(*config);
+    config->abi_version = PI_SSH_ABI_VERSION;
+    config->ssh_port = PI_SSH_DEFAULT_PORT;
+    config->connect_timeout_ms = PI_SSH_DEFAULT_CONNECT_TIMEOUT_MS;
+    config->command_timeout_ms = PI_SSH_DEFAULT_COMMAND_TIMEOUT_MS;
+    config->max_output_bytes = PI_SSH_DEFAULT_MAX_OUTPUT_BYTES;
+}
+
+void pi_ssh_command_result_init(pi_ssh_command_result *result)
+{
+    if (result == NULL) {
+        return;
+    }
+    memset(result, 0, sizeof(*result));
+    result->struct_size = (uint32_t)sizeof(*result);
+    result->exit_status = -1;
+}
+
+void pi_ssh_command_result_free(pi_ssh_command_result *result)
+{
+    if (result == NULL) {
+        return;
+    }
+    if (result->stdout_data != NULL) {
+        pi_ssh_secure_zero(result->stdout_data, result->stdout_size);
+        free(result->stdout_data);
+    }
+    if (result->stderr_data != NULL) {
+        pi_ssh_secure_zero(result->stderr_data, result->stderr_size);
+        free(result->stderr_data);
+    }
+    pi_ssh_command_result_init(result);
 }
 
 static void pi_ssh_set_error_value(pi_ssh_error *error,
@@ -860,6 +908,454 @@ static int pi_ssh_authenticate(ssh_session session,
         }
     }
     return SSH_OK;
+}
+
+static bool pi_ssh_validate_command_config(
+    const pi_ssh_command_config *config,
+    pi_ssh_error *error)
+{
+    if (config == NULL || config->struct_size < sizeof(*config) ||
+        config->abi_version != PI_SSH_ABI_VERSION) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "Unsupported or incomplete SSH command config");
+        return false;
+    }
+    if (!pi_ssh_string_present(config->ssh_host) ||
+        !pi_ssh_string_present(config->username) ||
+        !pi_ssh_string_present(config->command)) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "SSH host, username, and command are required");
+        return false;
+    }
+    if (config->stdin_size > 0 && config->stdin_data == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "SSH command stdin data is missing");
+        return false;
+    }
+    if (config->auth_type == PI_SSH_AUTH_PASSWORD &&
+        !pi_ssh_string_present(config->password)) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "SSH password is required");
+        return false;
+    }
+    if (config->auth_type == PI_SSH_AUTH_PRIVATE_KEY &&
+        !pi_ssh_string_present(config->private_key)) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "SSH private key is required");
+        return false;
+    }
+    if (config->auth_type != PI_SSH_AUTH_PASSWORD &&
+        config->auth_type != PI_SSH_AUTH_PRIVATE_KEY) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "Unsupported SSH authentication type");
+        return false;
+    }
+    return true;
+}
+
+static int pi_ssh_command_output_append(pi_ssh_command_output *output,
+                                        const uint8_t *bytes,
+                                        size_t count,
+                                        size_t max_output_bytes,
+                                        size_t *total_output_bytes)
+{
+    size_t required;
+    size_t next_capacity;
+    uint8_t *next_data;
+
+    if (count > max_output_bytes - *total_output_bytes) {
+        return 1;
+    }
+    required = output->size + count;
+    if (required > output->capacity) {
+        next_capacity = output->capacity == 0
+                            ? PI_SSH_COMMAND_BUFFER_CAPACITY
+                            : output->capacity;
+        if (next_capacity > max_output_bytes) {
+            next_capacity = max_output_bytes;
+        }
+        while (next_capacity < required) {
+            size_t doubled = next_capacity > max_output_bytes / 2u
+                                 ? max_output_bytes
+                                 : next_capacity * 2u;
+            if (doubled <= next_capacity) {
+                return -1;
+            }
+            next_capacity = doubled;
+        }
+        next_data = (uint8_t *)realloc(output->data, next_capacity);
+        if (next_data == NULL) {
+            return -1;
+        }
+        output->data = next_data;
+        output->capacity = next_capacity;
+    }
+    if (count > 0) {
+        memcpy(output->data + output->size, bytes, count);
+        output->size += count;
+        *total_output_bytes += count;
+    }
+    return 0;
+}
+
+static void pi_ssh_command_output_free(pi_ssh_command_output *output)
+{
+    if (output->data != NULL) {
+        pi_ssh_secure_zero(output->data, output->size);
+        free(output->data);
+    }
+    memset(output, 0, sizeof(*output));
+}
+
+static int pi_ssh_command_read_stream(ssh_channel channel,
+                                      int is_stderr,
+                                      pi_ssh_command_output *output,
+                                      size_t max_output_bytes,
+                                      size_t *total_output_bytes,
+                                      bool *made_progress,
+                                      pi_ssh_error *error)
+{
+    uint8_t bytes[PI_SSH_COMMAND_BUFFER_CAPACITY];
+
+    for (;;) {
+        int read_count = ssh_channel_read_nonblocking(
+            channel,
+            bytes,
+            (uint32_t)sizeof(bytes),
+            is_stderr);
+        if (read_count > 0) {
+            int append_result = pi_ssh_command_output_append(
+                output,
+                bytes,
+                (size_t)read_count,
+                max_output_bytes,
+                total_output_bytes);
+            if (append_result > 0) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_OUTPUT_LIMIT,
+                                       0,
+                                       NULL,
+                                       "SSH command output exceeded %zu bytes",
+                                       max_output_bytes);
+                return -1;
+            }
+            if (append_result < 0) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_OUT_OF_MEMORY,
+                                       0,
+                                       NULL,
+                                       "Could not store SSH command output");
+                return -1;
+            }
+            *made_progress = true;
+            continue;
+        }
+        if (read_count == SSH_ERROR) {
+            pi_ssh_set_error_value(error,
+                                   PI_SSH_ERROR_REMOTE_COMMAND,
+                                   0,
+                                   NULL,
+                                   "Could not read SSH command output: %s",
+                                   ssh_get_error(ssh_channel_get_session(channel)));
+            return -1;
+        }
+        return 0;
+    }
+}
+
+int pi_ssh_command_execute(const pi_ssh_command_config *config,
+                           pi_ssh_command_result *result,
+                           pi_ssh_error *error)
+{
+    pi_ssh_tunnel_config connection_config;
+    pi_ssh_command_output standard_output = {0};
+    pi_ssh_command_output standard_error = {0};
+    ssh_session session = NULL;
+    ssh_channel channel = NULL;
+    char *fingerprint = NULL;
+    size_t input_offset = 0;
+    size_t total_output_bytes = 0;
+    size_t max_output_bytes;
+    uint32_t command_timeout_ms;
+    uint64_t start_time;
+    bool eof_sent = false;
+    int return_value = -1;
+    int platform_result;
+
+    pi_ssh_error_init(error);
+    if (result == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "SSH command result is required");
+        return -1;
+    }
+    pi_ssh_command_result_init(result);
+    if (!pi_ssh_validate_command_config(config, error)) {
+        return -1;
+    }
+
+    platform_result = pi_ssh_platform_initialize();
+    if (platform_result != 0) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INTERNAL,
+                               platform_result,
+                               NULL,
+                               "Could not initialize the SSH socket runtime");
+        return -1;
+    }
+
+    pi_ssh_tunnel_config_init(&connection_config);
+    connection_config.ssh_host = config->ssh_host;
+    connection_config.ssh_port = config->ssh_port;
+    connection_config.username = config->username;
+    connection_config.auth_type = config->auth_type;
+    connection_config.password = config->password;
+    connection_config.private_key = config->private_key;
+    connection_config.private_key_passphrase = config->private_key_passphrase;
+    connection_config.expected_host_key_sha256 =
+        config->expected_host_key_sha256;
+    connection_config.connect_timeout_ms = config->connect_timeout_ms;
+
+    session = ssh_new();
+    if (session == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_OUT_OF_MEMORY,
+                               0,
+                               NULL,
+                               "Could not allocate SSH session");
+        goto cleanup;
+    }
+    if (pi_ssh_configure_session(session, &connection_config) != SSH_OK ||
+        ssh_connect(session) != SSH_OK) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_SSH_CONNECT,
+                               pi_ssh_platform_last_error(),
+                               NULL,
+                               "Could not connect to SSH server: %s",
+                               ssh_get_error(session));
+        goto cleanup;
+    }
+
+    fingerprint = pi_ssh_server_fingerprint(session);
+    if (fingerprint == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_HOST_KEY_UNAVAILABLE,
+                               0,
+                               NULL,
+                               "Could not read SSH server host key: %s",
+                               ssh_get_error(session));
+        goto cleanup;
+    }
+    if (!pi_ssh_string_present(config->expected_host_key_sha256)) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_HOST_KEY_UNKNOWN,
+                               0,
+                               fingerprint,
+                               "SSH server host key must be trusted explicitly");
+        goto cleanup;
+    }
+    if (strcmp(config->expected_host_key_sha256, fingerprint) != 0) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_HOST_KEY_MISMATCH,
+                               0,
+                               fingerprint,
+                               "SSH server host key changed");
+        goto cleanup;
+    }
+    ssh_string_free_char(fingerprint);
+    fingerprint = NULL;
+
+    if (pi_ssh_authenticate(session, &connection_config, error) != SSH_OK) {
+        goto cleanup;
+    }
+    channel = ssh_channel_new(session);
+    if (channel == NULL || ssh_channel_open_session(channel) != SSH_OK ||
+        ssh_channel_request_exec(channel, config->command) != SSH_OK) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_REMOTE_COMMAND,
+                               0,
+                               NULL,
+                               "Could not start SSH command: %s",
+                               ssh_get_error(session));
+        goto cleanup;
+    }
+
+    command_timeout_ms = config->command_timeout_ms == 0
+                             ? PI_SSH_DEFAULT_COMMAND_TIMEOUT_MS
+                             : config->command_timeout_ms;
+    max_output_bytes = config->max_output_bytes == 0
+                           ? PI_SSH_DEFAULT_MAX_OUTPUT_BYTES
+                           : config->max_output_bytes;
+    start_time = pi_ssh_platform_monotonic_millis();
+    ssh_set_blocking(session, 0);
+
+    for (;;) {
+        bool made_progress = false;
+        uint64_t now;
+        uint64_t elapsed;
+
+        if (input_offset < config->stdin_size) {
+            size_t remaining = config->stdin_size - input_offset;
+            uint32_t write_size =
+                remaining > PI_SSH_COMMAND_BUFFER_CAPACITY
+                    ? PI_SSH_COMMAND_BUFFER_CAPACITY
+                    : (uint32_t)remaining;
+            int written = ssh_channel_write(channel,
+                                            config->stdin_data + input_offset,
+                                            write_size);
+            if (written == SSH_ERROR) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_REMOTE_COMMAND,
+                                       0,
+                                       NULL,
+                                       "Could not write SSH command input: %s",
+                                       ssh_get_error(session));
+                goto cleanup;
+            }
+            if (written > 0) {
+                input_offset += (size_t)written;
+                made_progress = true;
+            }
+        } else if (!eof_sent) {
+            int eof_result = ssh_channel_send_eof(channel);
+            if (eof_result == SSH_OK || eof_result == SSH_EOF) {
+                eof_sent = true;
+                made_progress = true;
+            } else if (eof_result != SSH_AGAIN) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_REMOTE_COMMAND,
+                                       0,
+                                       NULL,
+                                       "Could not finish SSH command input: %s",
+                                       ssh_get_error(session));
+                goto cleanup;
+            }
+        }
+
+        if (pi_ssh_command_read_stream(channel,
+                                       0,
+                                       &standard_output,
+                                       max_output_bytes,
+                                       &total_output_bytes,
+                                       &made_progress,
+                                       error) < 0 ||
+            pi_ssh_command_read_stream(channel,
+                                       1,
+                                       &standard_error,
+                                       max_output_bytes,
+                                       &total_output_bytes,
+                                       &made_progress,
+                                       error) < 0) {
+            goto cleanup;
+        }
+
+        if (ssh_channel_is_eof(channel)) {
+            uint32_t exit_status = 0;
+            int exit_result =
+                ssh_channel_get_exit_state(channel, &exit_status, NULL, NULL);
+            if (exit_result == SSH_OK) {
+                result->exit_status = (int32_t)exit_status;
+                break;
+            }
+            if (exit_result == SSH_ERROR) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_REMOTE_COMMAND,
+                                       0,
+                                       NULL,
+                                       "Could not read SSH command exit status: %s",
+                                       ssh_get_error(session));
+                goto cleanup;
+            }
+        }
+
+        if (!ssh_is_connected(session)) {
+            pi_ssh_set_error_value(error,
+                                   PI_SSH_ERROR_SSH_DISCONNECTED,
+                                   0,
+                                   NULL,
+                                   "SSH connection closed while running command: %s",
+                                   ssh_get_error(session));
+            goto cleanup;
+        }
+
+        now = pi_ssh_platform_monotonic_millis();
+        elapsed = now >= start_time ? now - start_time : UINT64_MAX;
+        if (elapsed >= command_timeout_ms) {
+            pi_ssh_set_error_value(error,
+                                   PI_SSH_ERROR_COMMAND_TIMEOUT,
+                                   0,
+                                   NULL,
+                                   "SSH command timed out after %u ms",
+                                   command_timeout_ms);
+            goto cleanup;
+        }
+
+        if (!made_progress) {
+            uint64_t remaining = (uint64_t)command_timeout_ms - elapsed;
+            int wait_ms = remaining < PI_SSH_COMMAND_POLL_TIMEOUT_MS
+                              ? (int)remaining
+                              : PI_SSH_COMMAND_POLL_TIMEOUT_MS;
+            int poll_result = ssh_channel_poll_timeout(channel, wait_ms, 0);
+            if (poll_result == SSH_ERROR) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_REMOTE_COMMAND,
+                                       0,
+                                       NULL,
+                                       "SSH command polling failed: %s",
+                                       ssh_get_error(session));
+                goto cleanup;
+            }
+        }
+    }
+
+    result->stdout_data = standard_output.data;
+    result->stdout_size = standard_output.size;
+    result->stderr_data = standard_error.data;
+    result->stderr_size = standard_error.size;
+    memset(&standard_output, 0, sizeof(standard_output));
+    memset(&standard_error, 0, sizeof(standard_error));
+    return_value = 0;
+
+cleanup:
+    if (fingerprint != NULL) {
+        ssh_string_free_char(fingerprint);
+    }
+    if (channel != NULL) {
+        ssh_channel_free(channel);
+    }
+    if (session != NULL) {
+        if (ssh_is_connected(session)) {
+            ssh_set_blocking(session, 1);
+            ssh_disconnect(session);
+        }
+        ssh_free(session);
+    }
+    pi_ssh_command_output_free(&standard_output);
+    pi_ssh_command_output_free(&standard_error);
+    if (return_value != 0) {
+        pi_ssh_command_result_free(result);
+    }
+    return return_value;
 }
 
 static void pi_ssh_tunnel_cleanup_unstarted(pi_ssh_tunnel *tunnel)

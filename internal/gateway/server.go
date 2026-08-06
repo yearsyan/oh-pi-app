@@ -32,6 +32,8 @@ var sessionChangingCommands = map[string]struct{}{
 
 const maxSessionNameRunes = 200
 
+const gatewayProtocolVersion = 1
+
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
 	cfg          Config
@@ -105,9 +107,17 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
-	writer.Header().Set("Content-Type", "application/json")
-	writer.Header().Set("Cache-Control", "no-store")
-	_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
+	writeJSONResponse(writer, http.StatusOK, struct {
+		Status   string `json:"status"`
+		Service  string `json:"service"`
+		Version  string `json:"version"`
+		Protocol int    `json:"protocol"`
+	}{
+		Status:   "ok",
+		Service:  "ohpi-gateway",
+		Version:  g.cfg.Version,
+		Protocol: gatewayProtocolVersion,
+	})
 }
 
 type sessionResponse struct {

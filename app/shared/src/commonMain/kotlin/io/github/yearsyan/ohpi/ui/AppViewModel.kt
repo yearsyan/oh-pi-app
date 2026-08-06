@@ -217,6 +217,33 @@ class AppViewModel(
         syncPortForwards()
     }
 
+    fun stopManagedGateway() {
+        val server = activeServer?.takeIf { it.connectionMode.isManaged } ?: return
+        sessionRefreshGeneration++
+        viewModelScope.launch {
+            try {
+                transportFor(server).stopManagedGateway()
+                if (activeServerId != server.id) return@launch
+                resetActiveConnections()
+                activeChatId = null
+                sessions.clear()
+                sessionsLoading = false
+                toast(stringsProvider().managedGatewayStopped, Toast.Kind.Success)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    toast(
+                        stringsProvider().managedGatewayStopFailed(
+                            failure.message ?: "unknown error",
+                        ),
+                        Toast.Kind.Error,
+                    )
+                }
+            }
+        }
+    }
+
     private fun disconnectAll() {
         controllers.values.forEach { it.disconnect() }
     }
@@ -837,7 +864,7 @@ class AppViewModel(
     }
 
     private fun sshActiveServer(): ServerProfile? =
-        activeServer?.takeIf { it.connectionMode == ServerConnectionMode.Ssh }
+        activeServer?.takeIf { it.connectionMode.usesSsh }
 
     private fun syncPortForwards() {
         val server = sshActiveServer() ?: return
@@ -918,7 +945,9 @@ class AppViewModel(
         val target = loopbackUrlTarget(uri) ?: return false
         val server = activeServer ?: return false
         return when (server.connectionMode) {
-            ServerConnectionMode.Ssh -> {
+            ServerConnectionMode.Ssh,
+            ServerConnectionMode.ManagedSsh,
+            -> {
                 val localPort = forwardManagerFor(server).runningLocalPortFor(target.second)
                 if (localPort != null) {
                     openUrl(rewriteLoopbackUrl(uri, localPort))

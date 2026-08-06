@@ -1,6 +1,7 @@
 #include "pi_ssh.h"
 
 #include <jni.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -110,6 +111,79 @@ static void pi_ssh_jni_write_error(JNIEnv *environment,
     }
 }
 
+static jobjectArray pi_ssh_jni_command_output(
+    JNIEnv *environment,
+    const pi_ssh_command_result *result)
+{
+    jclass byte_array_class = NULL;
+    jobjectArray output = NULL;
+    jbyteArray standard_output = NULL;
+    jbyteArray standard_error = NULL;
+
+    if (result->stdout_size > INT_MAX || result->stderr_size > INT_MAX) {
+        return NULL;
+    }
+    byte_array_class = (*environment)->FindClass(environment, "[B");
+    if (byte_array_class == NULL) {
+        return NULL;
+    }
+    output = (*environment)->NewObjectArray(environment,
+                                            2,
+                                            byte_array_class,
+                                            NULL);
+    if (output == NULL) {
+        goto cleanup;
+    }
+    standard_output =
+        (*environment)->NewByteArray(environment, (jsize)result->stdout_size);
+    standard_error =
+        (*environment)->NewByteArray(environment, (jsize)result->stderr_size);
+    if (standard_output == NULL || standard_error == NULL) {
+        output = NULL;
+        goto cleanup;
+    }
+    if (result->stdout_size > 0) {
+        (*environment)->SetByteArrayRegion(
+            environment,
+            standard_output,
+            0,
+            (jsize)result->stdout_size,
+            (const jbyte *)result->stdout_data);
+    }
+    if (result->stderr_size > 0 &&
+        !(*environment)->ExceptionCheck(environment)) {
+        (*environment)->SetByteArrayRegion(
+            environment,
+            standard_error,
+            0,
+            (jsize)result->stderr_size,
+            (const jbyte *)result->stderr_data);
+    }
+    if (!(*environment)->ExceptionCheck(environment)) {
+        (*environment)->SetObjectArrayElement(environment,
+                                              output,
+                                              0,
+                                              standard_output);
+        (*environment)->SetObjectArrayElement(environment,
+                                              output,
+                                              1,
+                                              standard_error);
+    }
+    if ((*environment)->ExceptionCheck(environment)) {
+        output = NULL;
+    }
+
+cleanup:
+    if (standard_output != NULL) {
+        (*environment)->DeleteLocalRef(environment, standard_output);
+    }
+    if (standard_error != NULL) {
+        (*environment)->DeleteLocalRef(environment, standard_error);
+    }
+    (*environment)->DeleteLocalRef(environment, byte_array_class);
+    return output;
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeStart(
     JNIEnv *environment,
@@ -186,6 +260,109 @@ cleanup:
         pi_ssh_jni_free_bytes(&values[index]);
     }
     return (jlong)(intptr_t)tunnel;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute(
+    JNIEnv *environment,
+    jobject receiver,
+    jbyteArray ssh_host,
+    jint ssh_port,
+    jbyteArray username,
+    jint auth_type,
+    jbyteArray password,
+    jbyteArray private_key,
+    jbyteArray private_key_passphrase,
+    jbyteArray expected_host_key_sha256,
+    jbyteArray command,
+    jbyteArray standard_input,
+    jint connect_timeout_ms,
+    jint command_timeout_ms,
+    jint max_output_bytes,
+    jintArray exit_status,
+    jintArray error_code,
+    jobjectArray error_strings)
+{
+    pi_ssh_jni_bytes values[8];
+    pi_ssh_command_config config;
+    pi_ssh_command_result result;
+    pi_ssh_error error;
+    jobjectArray output = NULL;
+    bool copied;
+    size_t index;
+
+    (void)receiver;
+    memset(values, 0, sizeof(values));
+    pi_ssh_command_result_init(&result);
+    copied = pi_ssh_jni_copy_bytes(environment, ssh_host, true, &values[0]) &&
+             pi_ssh_jni_copy_bytes(environment, username, true, &values[1]) &&
+             pi_ssh_jni_copy_bytes(environment, password, false, &values[2]) &&
+             pi_ssh_jni_copy_bytes(environment, private_key, false, &values[3]) &&
+             pi_ssh_jni_copy_bytes(environment,
+                                   private_key_passphrase,
+                                   false,
+                                   &values[4]) &&
+             pi_ssh_jni_copy_bytes(environment,
+                                   expected_host_key_sha256,
+                                   false,
+                                   &values[5]) &&
+             pi_ssh_jni_copy_bytes(environment, command, true, &values[6]) &&
+             pi_ssh_jni_copy_bytes(environment,
+                                   standard_input,
+                                   false,
+                                   &values[7]);
+    if (!copied) {
+        goto cleanup;
+    }
+
+    pi_ssh_command_config_init(&config);
+    config.ssh_host = values[0].value;
+    config.ssh_port = (uint16_t)ssh_port;
+    config.username = values[1].value;
+    config.auth_type = (int32_t)auth_type;
+    config.password = values[2].value;
+    config.private_key = values[3].value;
+    config.private_key_passphrase = values[4].value;
+    config.expected_host_key_sha256 = values[5].value;
+    config.command = values[6].value;
+    config.stdin_data = (const uint8_t *)values[7].value;
+    config.stdin_size = values[7].length;
+    config.connect_timeout_ms = connect_timeout_ms > 0
+                                    ? (uint32_t)connect_timeout_ms
+                                    : PI_SSH_DEFAULT_CONNECT_TIMEOUT_MS;
+    config.command_timeout_ms = command_timeout_ms > 0
+                                    ? (uint32_t)command_timeout_ms
+                                    : PI_SSH_DEFAULT_COMMAND_TIMEOUT_MS;
+    config.max_output_bytes = max_output_bytes > 0
+                                  ? (size_t)max_output_bytes
+                                  : PI_SSH_DEFAULT_MAX_OUTPUT_BYTES;
+
+    if (pi_ssh_command_execute(&config, &result, &error) != 0) {
+        pi_ssh_jni_write_error(environment,
+                               &error,
+                               error_code,
+                               error_strings);
+        goto cleanup;
+    }
+    if (exit_status != NULL &&
+        (*environment)->GetArrayLength(environment, exit_status) > 0) {
+        jint status = (jint)result.exit_status;
+        (*environment)->SetIntArrayRegion(environment,
+                                          exit_status,
+                                          0,
+                                          1,
+                                          &status);
+    }
+    if (!(*environment)->ExceptionCheck(environment)) {
+        output = pi_ssh_jni_command_output(environment, &result);
+    }
+
+cleanup:
+    pi_ssh_command_result_free(&result);
+    for (index = 0; index < sizeof(values) / sizeof(values[0]); ++index) {
+        pi_ssh_jni_free_bytes(&values[index]);
+    }
+    return output;
 }
 
 JNIEXPORT jint JNICALL

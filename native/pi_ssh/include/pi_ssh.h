@@ -22,6 +22,8 @@ extern "C" {
 #define PI_SSH_DEFAULT_PORT 22u
 #define PI_SSH_DEFAULT_CONNECT_TIMEOUT_MS 15000u
 #define PI_SSH_DEFAULT_KEEPALIVE_INTERVAL_SECONDS 30u
+#define PI_SSH_DEFAULT_COMMAND_TIMEOUT_MS 120000u
+#define PI_SSH_DEFAULT_MAX_OUTPUT_BYTES (1024u * 1024u)
 
 typedef struct pi_ssh_tunnel pi_ssh_tunnel;
 
@@ -53,6 +55,9 @@ typedef enum pi_ssh_error_code {
     PI_SSH_ERROR_SSH_DISCONNECTED = 11,
     PI_SSH_ERROR_REMOTE_FORWARD = 12,
     PI_SSH_ERROR_INTERNAL = 13,
+    PI_SSH_ERROR_REMOTE_COMMAND = 14,
+    PI_SSH_ERROR_COMMAND_TIMEOUT = 15,
+    PI_SSH_ERROR_OUTPUT_LIMIT = 16,
 } pi_ssh_error_code;
 
 /*
@@ -93,11 +98,70 @@ typedef struct pi_ssh_error {
     char host_key_sha256[96];
 } pi_ssh_error;
 
+/*
+ * Configuration for a single non-interactive command. String pointers and
+ * stdin_data are borrowed only for the duration of pi_ssh_command_execute().
+ */
+typedef struct pi_ssh_command_config {
+    uint32_t struct_size;
+    uint32_t abi_version;
+
+    const char *ssh_host;
+    uint16_t ssh_port;
+    uint16_t reserved_port;
+    const char *username;
+
+    int32_t auth_type;
+    const char *password;
+    const char *private_key;
+    const char *private_key_passphrase;
+
+    /* Exact SHA-256 fingerprint in OpenSSH form, for example SHA256:abc... */
+    const char *expected_host_key_sha256;
+
+    const char *command;
+    const uint8_t *stdin_data;
+    size_t stdin_size;
+
+    uint32_t connect_timeout_ms;
+    uint32_t command_timeout_ms;
+    size_t max_output_bytes;
+} pi_ssh_command_config;
+
+/* Output buffers are owned by this value and released by result_free(). */
+typedef struct pi_ssh_command_result {
+    uint32_t struct_size;
+    int32_t exit_status;
+    uint8_t *stdout_data;
+    size_t stdout_size;
+    uint8_t *stderr_data;
+    size_t stderr_size;
+} pi_ssh_command_result;
+
 /* Initializes a config with ABI-safe defaults. */
 PI_SSH_API void pi_ssh_tunnel_config_init(pi_ssh_tunnel_config *config);
 
 /* Initializes an empty error value. */
 PI_SSH_API void pi_ssh_error_init(pi_ssh_error *error);
+
+/* Initializes a command config with ABI-safe defaults. */
+PI_SSH_API void pi_ssh_command_config_init(pi_ssh_command_config *config);
+
+/* Initializes an empty command result. */
+PI_SSH_API void pi_ssh_command_result_init(pi_ssh_command_result *result);
+
+/* Securely clears and releases buffers returned by command_execute(). */
+PI_SSH_API void pi_ssh_command_result_free(pi_ssh_command_result *result);
+
+/*
+ * Executes one command through an authenticated SSH session. A successfully
+ * executed remote command returns 0 even when its exit_status is non-zero.
+ * Transport/protocol failures return -1 and populate error.
+ */
+PI_SSH_API int pi_ssh_command_execute(
+    const pi_ssh_command_config *config,
+    pi_ssh_command_result *result,
+    pi_ssh_error *error);
 
 /*
  * Connects and authenticates synchronously, then starts the forwarding worker.

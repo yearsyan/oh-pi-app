@@ -13,7 +13,9 @@ func TestLoadRuntimeConfig(t *testing.T) {
   "OHPI_LISTEN": "0.0.0.0:18080",
   "OHPI_DATA_DIR": "/tmp/ohpi state",
   "OHPI_WORK_DIR": "/tmp/project folder",
-  "OHPI_TITLE_MODEL": "openai/gpt-5-nano"
+  "OHPI_TITLE_MODEL": "openai/gpt-5-nano",
+  "OHPI_PI_COMMAND": "/opt/pi/bin/pi",
+  "OHPI_PI_ENV_PATH": "/opt/pi/bin:/usr/bin:/bin"
 }`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -28,6 +30,8 @@ func TestLoadRuntimeConfig(t *testing.T) {
 		"OHPI_DATA_DIR":    "/tmp/ohpi state",
 		"OHPI_WORK_DIR":    "/tmp/project folder",
 		"OHPI_TITLE_MODEL": "openai/gpt-5-nano",
+		"OHPI_PI_COMMAND":  "/opt/pi/bin/pi",
+		"OHPI_PI_ENV_PATH": "/opt/pi/bin:/usr/bin:/bin",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("loaded %d values, want %d", len(got), len(want))
@@ -111,6 +115,36 @@ func TestResolveRuntimeConfigValuePrecedence(t *testing.T) {
 	}
 	if got := resolveRuntimeConfigValue("default-value", false, key, nil); got != "default-value" {
 		t.Fatalf("default value resolved to %q", got)
+	}
+}
+
+func TestResolveAuthenticationToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveAuthenticationToken("", path); err != nil || got != "file-token" {
+		t.Fatalf("file token = (%q, %v), want (file-token, nil)", got, err)
+	}
+	if got, err := resolveAuthenticationToken("explicit", path); err != nil || got != "explicit" {
+		t.Fatalf("explicit token = (%q, %v), want (explicit, nil)", got, err)
+	}
+}
+
+func TestResolveAuthenticationTokenRejectsInvalidFile(t *testing.T) {
+	for name, contents := range map[string]string{
+		"empty":      "",
+		"multi-line": "first\nsecond\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "token")
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := resolveAuthenticationToken("", path); err == nil {
+				t.Fatal("invalid token file unexpectedly succeeded")
+			}
+		})
 	}
 }
 
