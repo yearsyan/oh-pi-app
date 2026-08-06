@@ -20,6 +20,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 - 严格保持 WebSocket 文本帧与 pi RPC JSONL 记录之间的一对一映射。
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。
 - 支持工作区能力探测、目录浏览与创建，以及远程文件读取与下载。
+- App 可在独立设置页登录、重新登录和登出 pi 内置 Provider，并查看各 Provider 的模型。
 - 用户提交首条请求后立即并行调用可配置的轻量模型生成会话标题，并同步到所有客户端。
 - 提供 token 鉴权、Origin 校验、消息大小限制、慢客户端隔离和优雅退出。
 
@@ -29,7 +30,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 - Go 1.26.2 或兼容版本
 - `pi` 0.83.0 或更高版本在 `PATH` 中（标题链路使用 `before_agent_start` 与 `session_info_changed`）
-- pi 已配置好模型和认证
+- pi 可由 App 配置内置 Provider 认证；`models.json` 与扩展 Provider 仍按 pi 原有方式配置
 
 构建并启动：
 

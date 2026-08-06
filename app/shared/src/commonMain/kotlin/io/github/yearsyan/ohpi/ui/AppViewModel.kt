@@ -23,6 +23,10 @@ import io.github.yearsyan.ohpi.net.FileReadResponse
 import io.github.yearsyan.ohpi.net.FsListException
 import io.github.yearsyan.ohpi.net.FsListResponse
 import io.github.yearsyan.ohpi.net.GatewayTransport
+import io.github.yearsyan.ohpi.net.GatewayProvider
+import io.github.yearsyan.ohpi.net.GatewayProviderAuthMethod
+import io.github.yearsyan.ohpi.net.PiClient
+import io.github.yearsyan.ohpi.net.ProviderAuthEvent
 import io.github.yearsyan.ohpi.net.PortForwardManager
 import io.github.yearsyan.ohpi.net.PortForwardStatus
 import io.github.yearsyan.ohpi.net.SshHostKeyPrompt
@@ -35,12 +39,18 @@ import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
 import io.github.yearsyan.ohpi.net.downloadGatewayFile
 import io.github.yearsyan.ohpi.net.getGatewayCapabilities
+import io.github.yearsyan.ohpi.net.listGatewayProviders
 import io.github.yearsyan.ohpi.net.listGatewayDirs
 import io.github.yearsyan.ohpi.net.listGatewayFiles
 import io.github.yearsyan.ohpi.net.listGatewaySessions
+import io.github.yearsyan.ohpi.net.logoutGatewayProvider
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.readGatewayFile
 import io.github.yearsyan.ohpi.net.renameGatewaySession
+import io.github.yearsyan.ohpi.net.buildProviderAuthWsUrl
+import io.github.yearsyan.ohpi.net.parseProviderAuthEvent
+import io.github.yearsyan.ohpi.net.providerAuthCancelResponse
+import io.github.yearsyan.ohpi.net.providerAuthInputResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +66,28 @@ class LoopbackLinkPrompt(
     val openUrl: (String) -> Unit,
 )
 
+data class ProviderAuthPromptState(
+    val id: String,
+    val kind: String,
+    val message: String,
+    val placeholder: String,
+    val options: List<String>,
+    val descriptions: List<String>,
+)
+
+data class ProviderAuthFlowState(
+    val providerId: String,
+    val providerName: String,
+    val authType: String,
+    val status: String = "",
+    val prompt: ProviderAuthPromptState? = null,
+    val authorizationUrl: String = "",
+    val userCode: String = "",
+    val links: List<Pair<String, String>> = emptyList(),
+    val completed: Boolean = false,
+    val error: String = "",
+)
+
 class AppViewModel(
     private val store: SettingsStore = SettingsStore(),
 ) : ViewModel() {
@@ -66,10 +98,14 @@ class AppViewModel(
     var themeMode by mutableStateOf(ThemeMode.System); private set
     var language by mutableStateOf(AppLanguage.System); private set
     var sessions = mutableStateListOf<SavedSession>(); private set
+    var providers = mutableStateListOf<GatewayProvider>(); private set
 
     // ---- runtime state ----
     var activeChatId by mutableStateOf<String?>(null); private set
     var sessionsLoading by mutableStateOf(false); private set
+    var providersLoading by mutableStateOf(false); private set
+    var providerLogoutId by mutableStateOf<String?>(null); private set
+    var providerAuthFlow by mutableStateOf<ProviderAuthFlowState?>(null); private set
     var sshHostKeyPrompt by mutableStateOf<SshHostKeyPrompt?>(null); private set
     var loopbackLinkPrompt by mutableStateOf<LoopbackLinkPrompt?>(null); private set
     val toasts = mutableStateListOf<Toast>()
@@ -81,6 +117,9 @@ class AppViewModel(
     private var forwardManagerServerId = ""
     private var sshHostKeyDecision: CompletableDeferred<Boolean>? = null
     private var sessionRefreshGeneration = 0L
+    private var providerRefreshGeneration = 0L
+    private var providerAuthGeneration = 0L
+    private var providerAuthClient: PiClient? = null
     private var stringsProvider: () -> Strings = { io.github.yearsyan.ohpi.i18n.EnStrings }
 
     private companion object {
@@ -191,6 +230,13 @@ class AppViewModel(
         forwardManager?.close()
         forwardManager = null
         forwardManagerServerId = ""
+        providerAuthGeneration++
+        providerAuthClient?.disconnect()
+        providerAuthClient = null
+        providerAuthFlow = null
+        providers.clear()
+        providersLoading = false
+        providerLogoutId = null
         loopbackLinkPrompt = null
         rejectPendingHostKey()
     }
@@ -205,6 +251,222 @@ class AppViewModel(
     fun updateLanguage(lang: AppLanguage) {
         language = lang
         store.language = lang
+    }
+
+    // ---- built-in providers ----
+
+    fun refreshProviders() {
+        val server = activeServer ?: return
+        val generation = ++providerRefreshGeneration
+        providersLoading = true
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                val loaded = listGatewayProviders(gateway, server.token)
+                if (generation != providerRefreshGeneration || activeServerId != server.id) return@launch
+                providers.clear()
+                providers.addAll(
+                    loaded.sortedWith(
+                        compareByDescending<GatewayProvider> { it.configured }
+                            .thenBy { it.name.lowercase() }
+                            .thenBy { it.id },
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (generation == providerRefreshGeneration && activeServerId == server.id) {
+                    toast(
+                        stringsProvider().providerLoadFailed(failure.message ?: "unknown error"),
+                        Toast.Kind.Error,
+                    )
+                }
+            } finally {
+                if (generation == providerRefreshGeneration) providersLoading = false
+            }
+        }
+    }
+
+    fun startProviderLogin(provider: GatewayProvider, method: GatewayProviderAuthMethod) {
+        val server = activeServer ?: return
+        val generation = ++providerAuthGeneration
+        providerAuthClient?.disconnect()
+        providerAuthFlow =
+            ProviderAuthFlowState(
+                providerId = provider.id,
+                providerName = provider.name,
+                authType = method.type,
+                status = stringsProvider().providerConnecting,
+            )
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                if (generation != providerAuthGeneration || activeServerId != server.id) return@launch
+                val client = PiClient(viewModelScope)
+                providerAuthClient = client
+                client.connect(
+                    buildProviderAuthWsUrl(gateway, server.token, provider.id, method.type),
+                    object : PiClient.Listener {
+                        override fun onOpen() = Unit
+
+                        override fun onMessage(text: String) {
+                            if (generation != providerAuthGeneration) return
+                            val event = parseProviderAuthEvent(text) ?: return
+                            handleProviderAuthEvent(generation, event)
+                        }
+
+                        override fun onBinary(bytes: ByteArray) = Unit
+
+                        override fun onClose(code: Short, reason: String) {
+                            if (generation != providerAuthGeneration) return
+                            val current = providerAuthFlow ?: return
+                            if (!current.completed && current.error.isBlank()) {
+                                providerAuthFlow =
+                                    current.copy(
+                                        prompt = null,
+                                        error = reason.ifBlank { stringsProvider().providerConnectionClosed },
+                                    )
+                            }
+                        }
+
+                        override fun onFailure(message: String) {
+                            if (generation != providerAuthGeneration) return
+                            providerAuthFlow = providerAuthFlow?.copy(prompt = null, error = message)
+                        }
+                    },
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (generation == providerAuthGeneration) {
+                    providerAuthFlow =
+                        providerAuthFlow?.copy(
+                            prompt = null,
+                            error = failure.message ?: "unknown error",
+                        )
+                }
+            }
+        }
+    }
+
+    private fun handleProviderAuthEvent(generation: Long, event: ProviderAuthEvent) {
+        if (generation != providerAuthGeneration) return
+        val current = providerAuthFlow ?: return
+        when (event.event) {
+            "ready" -> providerAuthFlow = current.copy(status = stringsProvider().providerWaitingForLogin)
+            "prompt" -> {
+                providerAuthFlow =
+                    current.copy(
+                        status = event.message,
+                        prompt =
+                            ProviderAuthPromptState(
+                                id = event.id,
+                                kind = event.kind,
+                                message = event.message,
+                                placeholder = event.placeholder,
+                                options = event.options,
+                                descriptions = event.descriptions,
+                            ),
+                    )
+            }
+            "info" -> {
+                providerAuthFlow =
+                    current.copy(
+                        status = event.message,
+                        links = event.links.map { it.url to it.label },
+                    )
+            }
+            "auth_url" -> {
+                providerAuthFlow =
+                    current.copy(
+                        status = event.instructions.ifBlank { stringsProvider().providerOpenAuthorization },
+                        authorizationUrl = event.url,
+                    )
+            }
+            "device_code" -> {
+                providerAuthFlow =
+                    current.copy(
+                        status = stringsProvider().providerDeviceCodeHint,
+                        authorizationUrl = event.verificationUri,
+                        userCode = event.userCode,
+                    )
+            }
+            "progress" -> providerAuthFlow = current.copy(status = event.message, prompt = null)
+            "complete" -> {
+                providerAuthFlow =
+                    current.copy(
+                        status = stringsProvider().providerLoginSucceeded(current.providerName),
+                        prompt = null,
+                        completed = true,
+                        error = "",
+                    )
+                providerAuthClient?.disconnect()
+                providerAuthClient = null
+                refreshAfterProviderMutation()
+                toast(stringsProvider().providerLoginSucceeded(current.providerName), Toast.Kind.Success)
+            }
+            "error" -> {
+                providerAuthFlow = current.copy(prompt = null, error = event.message)
+                providerAuthClient?.disconnect()
+                providerAuthClient = null
+            }
+        }
+    }
+
+    fun respondProviderAuth(value: String) {
+        val flow = providerAuthFlow ?: return
+        val prompt = flow.prompt ?: return
+        if (providerAuthClient?.send(providerAuthInputResponse(prompt.id, value)) != true) return
+        providerAuthFlow = flow.copy(prompt = null, status = stringsProvider().providerAuthenticating)
+    }
+
+    fun cancelProviderAuth() {
+        val prompt = providerAuthFlow?.prompt
+        if (prompt != null) providerAuthClient?.send(providerAuthCancelResponse(prompt.id))
+        providerAuthGeneration++
+        providerAuthClient?.disconnect()
+        providerAuthClient = null
+        providerAuthFlow = null
+    }
+
+    fun dismissProviderAuth() {
+        val flow = providerAuthFlow ?: return
+        if (!flow.completed && flow.error.isBlank()) return
+        providerAuthGeneration++
+        providerAuthClient?.disconnect()
+        providerAuthClient = null
+        providerAuthFlow = null
+    }
+
+    fun logoutProvider(provider: GatewayProvider) {
+        if (providerLogoutId != null || provider.storedAuthType.isBlank()) return
+        val server = activeServer ?: return
+        providerLogoutId = provider.id
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                logoutGatewayProvider(gateway, server.token, provider.id)
+                if (activeServerId != server.id) return@launch
+                refreshAfterProviderMutation()
+                toast(stringsProvider().providerLogoutSucceeded(provider.name), Toast.Kind.Success)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    toast(
+                        stringsProvider().providerLogoutFailed(failure.message ?: "unknown error"),
+                        Toast.Kind.Error,
+                    )
+                }
+            } finally {
+                if (providerLogoutId == provider.id) providerLogoutId = null
+            }
+        }
+    }
+
+    private fun refreshAfterProviderMutation() {
+        refreshProviders()
+        controllers.values.filter { it.isDraft }.forEach { it.reloadCapabilities() }
     }
 
     // ---- sessions ----

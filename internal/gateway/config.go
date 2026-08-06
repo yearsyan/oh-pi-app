@@ -20,11 +20,16 @@ const (
 
 // Config controls the HTTP gateway and the pi child processes it owns.
 type Config struct {
-	Token           string
-	DataDir         string
-	WorkDir         string
-	PiCommand       string
-	PiArgs          []string
+	Token     string
+	DataDir   string
+	WorkDir   string
+	PiCommand string
+	PiArgs    []string
+	// ProviderPiArgs are prepended only to short-lived provider-management
+	// probes. Production leaves this empty; tests use it to launch the helper
+	// process through the Go test binary without leaking session extensions or
+	// their flags into the authentication runtime.
+	ProviderPiArgs  []string
 	AllowedOrigins  []string
 	MaxMessageBytes int64
 	InputQueueSize  int

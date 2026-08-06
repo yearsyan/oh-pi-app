@@ -18,6 +18,17 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 每个 WebSocket 文本帧对应一条 pi RPC JSON；pi stdout 的每条严格 LF JSONL 记录对应一个 WebSocket 文本帧。同一 session 的输出广播给所有已连接客户端，而不是只路由给命令发送者。
 
+Provider 列表和认证操作使用独立的短生命周期 pi RPC 辅助进程。它禁用工作区扩展、
+skill、prompt template、上下文和工具，只显式加载网关内嵌的认证桥接 extension；因此
+第三方 extension 不能介入凭据提示。桥接层调用 pi 自身的 Provider runtime，凭据仍由
+pi 通过带跨进程锁的 `auth.json` 存储实现读写，网关和 App 都不自行持久化 Provider 密钥。
+管理操作串行执行，登录连接断开时辅助进程立即退出。
+
+管理清单以 pi 的内置 Provider catalog 为边界，不包含 `models.json` 新增的自定义
+Provider 或 extension Provider。正式 session 和 `/api/capabilities` 仍按原方式加载完整
+工作区配置，所以这些自定义来源提供的模型不会从模型选择器中消失。认证变化后能力缓存
+会失效；已稳定的 session 进程会回收并在正常重连时载入新凭据，正在生成的调用不会被中断。
+
 ## Session 目录
 
 每个 session 使用独立目录：

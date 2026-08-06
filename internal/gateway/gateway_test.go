@@ -26,6 +26,7 @@ const testToken = "test-token-that-is-not-secret"
 func TestPiHelperProcess(t *testing.T) {
 	sessionID, ok := argumentValue(os.Args, "--session-id")
 	inMemory := hasArgument(os.Args, "--no-session")
+	providerHelper := hasArgumentContaining(os.Args, "ohpi-provider-auth.ts")
 	var sessionDir string
 	var sessionFile string
 	if !ok && !inMemory {
@@ -33,7 +34,7 @@ func TestPiHelperProcess(t *testing.T) {
 	}
 	if inMemory {
 		sessionID = "in-memory"
-		if probeLog := os.Getenv("OHPI_TEST_PROBE_LOG"); probeLog != "" {
+		if probeLog := os.Getenv("OHPI_TEST_PROBE_LOG"); probeLog != "" && !providerHelper {
 			logFile, err := os.OpenFile(probeLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 			if err != nil {
 				os.Exit(3)
@@ -112,12 +113,24 @@ func TestPiHelperProcess(t *testing.T) {
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
 	encoder := json.NewEncoder(os.Stdout)
 	var entries []any
+	providerLoginPending := false
 	for scanner.Scan() {
 		var command map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &command); err != nil {
 			os.Exit(5)
 		}
 		commandType, _ := command["type"].(string)
+		if providerHelper && commandType == "extension_ui_response" && providerLoginPending {
+			providerLoginPending = false
+			emitFakeProviderEvent(encoder, map[string]any{
+				"event":         "complete",
+				"action":        "login",
+				"provider_id":   "openai",
+				"provider_name": "OpenAI",
+				"auth_type":     "api_key",
+			})
+			continue
+		}
 		if commandType == "fake_exit" {
 			os.Exit(0)
 		}
@@ -135,6 +148,46 @@ func TestPiHelperProcess(t *testing.T) {
 				if err := encoder.Encode(event); err != nil {
 					os.Exit(6)
 				}
+			}
+		}
+		if providerHelper && commandType == "prompt" {
+			message, _ := command["message"].(string)
+			switch {
+			case message == "/ohpi-provider list":
+				emitFakeProviderEvent(encoder, map[string]any{
+					"event": "providers",
+					"providers": []map[string]any{
+						{
+							"id": "openai", "name": "OpenAI", "configured": false,
+							"auth_methods": []map[string]any{{"type": "api_key", "name": "OpenAI API key"}},
+							"models": []map[string]any{{
+								"id": "gpt-5", "name": "GPT-5", "reasoning": true, "input": []string{"text", "image"},
+							}},
+						},
+						{
+							"id": "openai-codex", "name": "OpenAI Codex", "configured": true,
+							"auth_source": "stored", "stored_auth_type": "oauth",
+							"auth_methods": []map[string]any{{"type": "oauth", "name": "OpenAI (ChatGPT Plus/Pro)"}},
+							"models": []map[string]any{{
+								"id": "gpt-5-codex", "name": "GPT-5 Codex", "reasoning": true, "input": []string{"text", "image"},
+							}},
+						},
+					},
+				})
+			case strings.HasPrefix(message, "/ohpi-provider logout "):
+				providerID := strings.TrimPrefix(message, "/ohpi-provider logout ")
+				emitFakeProviderEvent(encoder, map[string]any{
+					"event": "complete", "action": "logout", "provider_id": providerID, "provider_name": providerID,
+				})
+			case strings.HasPrefix(message, "/ohpi-provider login "):
+				providerLoginPending = true
+				metadata, _ := json.Marshal(map[string]any{
+					"kind": "secret", "message": "Enter OpenAI API key", "placeholder": "sk-...",
+				})
+				_ = encoder.Encode(map[string]any{
+					"type": "extension_ui_request", "id": "provider-prompt", "method": "input",
+					"title": providerPromptPrefix + string(metadata), "placeholder": "sk-...",
+				})
 			}
 		}
 		response := map[string]any{
@@ -179,6 +232,14 @@ func TestPiHelperProcess(t *testing.T) {
 			os.Exit(6)
 		}
 	}
+}
+
+func emitFakeProviderEvent(encoder *json.Encoder, payload any) {
+	data, _ := json.Marshal(payload)
+	_ = encoder.Encode(map[string]any{
+		"type": "extension_ui_request", "id": "provider-event", "method": "notify",
+		"message": providerEventPrefix + string(data), "notifyType": "info",
+	})
 }
 
 func writeFakeSessionFile(path, sessionID string, entries []any) error {
@@ -1447,6 +1508,7 @@ func startTestGatewayWithConfig(t *testing.T, dataDir string, configure func(*Co
 		WorkDir:         t.TempDir(),
 		PiCommand:       os.Args[0],
 		PiArgs:          []string{"-test.run=TestPiHelperProcess", "--"},
+		ProviderPiArgs:  []string{"-test.run=TestPiHelperProcess", "--"},
 		MaxMessageBytes: 1 << 20,
 		WriteTimeout:    250 * time.Millisecond,
 		PongTimeout:     2 * time.Second,
@@ -1762,6 +1824,15 @@ func argumentValue(arguments []string, name string) (string, bool) {
 func hasArgument(arguments []string, name string) bool {
 	for _, argument := range arguments {
 		if argument == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArgumentContaining(arguments []string, value string) bool {
+	for _, argument := range arguments {
+		if strings.Contains(argument, value) {
 			return true
 		}
 	}

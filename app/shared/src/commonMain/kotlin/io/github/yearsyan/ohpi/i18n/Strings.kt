@@ -225,6 +225,41 @@ interface Strings {
     val aboutSection: String
     val activeServerHint: String
 
+    // built-in pi providers
+    val providersTitle: String
+    val providersSection: String
+    val providerSettingsDescription: String
+    val providersBuiltInOnlyHint: String
+    val providerConfigured: String
+    val providerNotConfigured: String
+    val providerCredentialSource: (String) -> String
+    val providerModels: (Int) -> String
+    val providerNoModels: String
+    val providerReasoning: String
+    val providerImageInput: String
+    val providerLogin: String
+    val providerRelogin: String
+    val providerLogout: String
+    val providerLogoutTitle: String
+    val providerLogoutBody: (String) -> String
+    val providerLoading: String
+    val providerEmpty: String
+    val providerLoadFailed: (String) -> String
+    val providerConnecting: String
+    val providerConnectionClosed: String
+    val providerWaitingForLogin: String
+    val providerOpenAuthorization: String
+    val providerDeviceCodeHint: String
+    val providerOpenBrowser: String
+    val providerUserCode: String
+    val providerSubmit: String
+    val providerCancelLogin: String
+    val providerDone: String
+    val providerAuthenticating: String
+    val providerLoginSucceeded: (String) -> String
+    val providerLogoutSucceeded: (String) -> String
+    val providerLogoutFailed: (String) -> String
+
     // about / open-source licenses
     val openSourceLicenses: String
     val licensesIntro: String
@@ -480,6 +515,51 @@ object EnStrings : Strings {
     override val aboutSection = "About"
     override val activeServerHint = "Active"
 
+    override val providersTitle = "AI providers"
+    override val providersSection = "AI providers"
+    override val providerSettingsDescription = "Sign in to pi's built-in model providers"
+    override val providersBuiltInOnlyHint =
+        "This page manages only providers built into pi. Models from models.json and extensions remain available in the model picker."
+    override val providerConfigured = "Signed in"
+    override val providerNotConfigured = "Not signed in"
+    override val providerCredentialSource = { source: String ->
+        when (source) {
+            "stored" -> "Credential saved by pi"
+            "environment" -> "Environment credential"
+            "configured" -> "Configured credential"
+            "runtime" -> "Runtime credential"
+            else -> source
+        }
+    }
+    override val providerModels = { count: Int -> "$count ${if (count == 1) "model" else "models"}" }
+    override val providerNoModels = "No models reported"
+    override val providerReasoning = "Reasoning"
+    override val providerImageInput = "Image input"
+    override val providerLogin = "Sign in"
+    override val providerRelogin = "Sign in again"
+    override val providerLogout = "Sign out"
+    override val providerLogoutTitle = "Sign out of provider?"
+    override val providerLogoutBody = { name: String ->
+        "This removes the credential for $name from pi on the active server."
+    }
+    override val providerLoading = "Loading providers…"
+    override val providerEmpty = "This pi installation did not report any built-in providers."
+    override val providerLoadFailed = { error: String -> "Could not load providers: $error" }
+    override val providerConnecting = "Connecting to the provider login…"
+    override val providerConnectionClosed = "The provider login connection closed"
+    override val providerWaitingForLogin = "Waiting for login instructions…"
+    override val providerOpenAuthorization = "Continue authorization in your browser."
+    override val providerDeviceCodeHint = "Open the authorization page and enter this code."
+    override val providerOpenBrowser = "Open authorization page"
+    override val providerUserCode = "Code"
+    override val providerSubmit = "Continue"
+    override val providerCancelLogin = "Cancel login"
+    override val providerDone = "Done"
+    override val providerAuthenticating = "Authenticating…"
+    override val providerLoginSucceeded = { name: String -> "Signed in to $name" }
+    override val providerLogoutSucceeded = { name: String -> "Signed out of $name" }
+    override val providerLogoutFailed = { error: String -> "Could not sign out: $error" }
+
     override val openSourceLicenses = "Open-source licenses"
     override val licensesIntro =
         "This app is built on open-source software. We gratefully acknowledge the following projects and their contributors."
@@ -734,6 +814,51 @@ object ZhStrings : Strings {
     override val languageSystem = "跟随系统"
     override val aboutSection = "关于"
     override val activeServerHint = "当前"
+
+    override val providersTitle = "AI Provider"
+    override val providersSection = "AI Provider"
+    override val providerSettingsDescription = "登录 pi 内置的模型 Provider"
+    override val providersBuiltInOnlyHint =
+        "此页面只管理 pi 内置 Provider。models.json 和扩展提供的模型仍会显示在模型选择器中。"
+    override val providerConfigured = "已登录"
+    override val providerNotConfigured = "未登录"
+    override val providerCredentialSource = { source: String ->
+        when (source) {
+            "stored" -> "凭据已由 pi 保存"
+            "environment" -> "环境变量凭据"
+            "configured" -> "配置文件凭据"
+            "runtime" -> "当前进程凭据"
+            else -> source
+        }
+    }
+    override val providerModels = { count: Int -> "$count 个模型" }
+    override val providerNoModels = "未提供模型"
+    override val providerReasoning = "推理"
+    override val providerImageInput = "图片输入"
+    override val providerLogin = "登录"
+    override val providerRelogin = "重新登录"
+    override val providerLogout = "登出"
+    override val providerLogoutTitle = "登出 Provider？"
+    override val providerLogoutBody = { name: String ->
+        "这会从当前服务器上的 pi 中移除 $name 的凭据。"
+    }
+    override val providerLoading = "正在加载 Provider…"
+    override val providerEmpty = "当前 pi 安装没有返回任何内置 Provider。"
+    override val providerLoadFailed = { error: String -> "无法加载 Provider：$error" }
+    override val providerConnecting = "正在连接 Provider 登录…"
+    override val providerConnectionClosed = "Provider 登录连接已关闭"
+    override val providerWaitingForLogin = "正在等待登录说明…"
+    override val providerOpenAuthorization = "请在浏览器中继续授权。"
+    override val providerDeviceCodeHint = "打开授权页面并输入此代码。"
+    override val providerOpenBrowser = "打开授权页面"
+    override val providerUserCode = "验证码"
+    override val providerSubmit = "继续"
+    override val providerCancelLogin = "取消登录"
+    override val providerDone = "完成"
+    override val providerAuthenticating = "正在认证…"
+    override val providerLoginSucceeded = { name: String -> "$name 登录成功" }
+    override val providerLogoutSucceeded = { name: String -> "$name 已登出" }
+    override val providerLogoutFailed = { error: String -> "登出失败：$error" }
 
     override val openSourceLicenses = "开源许可证"
     override val licensesIntro =

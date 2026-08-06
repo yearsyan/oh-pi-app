@@ -334,6 +334,26 @@ func (m *sessionManager) sessionExited(session *piSession, _ error) {
 	m.wg.Done()
 }
 
+// recycleSettled restarts idle pi runtimes on their clients' normal reconnect
+// path so process-local model registries observe a provider credential change.
+// Active model calls are intentionally left alone and finish with the runtime
+// that started them.
+func (m *sessionManager) recycleSettled(reason string) {
+	m.mu.Lock()
+	sessions := make([]*piSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		if !session.isDone() && !session.stopping.Load() {
+			sessions = append(sessions, session)
+		}
+	}
+	m.mu.Unlock()
+	for _, session := range sessions {
+		if !session.isOutputting() {
+			session.stop(1001, reason)
+		}
+	}
+}
+
 func (m *sessionManager) shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	if !m.closing {

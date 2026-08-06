@@ -16,6 +16,9 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **模型与思考强度切换**：输入框下方的下拉选择；新会话先通过 `/api/capabilities`
   无 session 预取工作区选项，首条消息创建 session 时应用所选配置，已有会话继续使用
   `get_available_models` / `set_model` 和 `get_available_thinking_levels` / `set_thinking_level`。
+- **内置 Provider 配置**：设置中的独立页面列出 pi 内置 Provider 及其模型，支持原生
+  API key、多字段凭据、OAuth 浏览器授权和设备码登录，也可移除 pi 保存的凭据。
+  `models.json` 与扩展 Provider 不在此页面管理，但它们的模型仍会出现在会话模型选择器中。
 - **Slash 指令**：输入 `/` 即展示并筛选当前工作区的 extension、prompt template 和
   `skill:*` 指令；`/compact` 支持可选压缩要求，并映射为原生 compact RPC。
 - **自适应布局**：宽度 ≥ 840dp（平板/桌面）为「列表 + 详情」双栏；手机为单栏导航。

@@ -121,6 +121,88 @@ Authorization: Bearer <TOKEN>
 
 思考强度是模型级能力，客户端应在切换模型时改用该模型自己的 `thinking_levels`。`commands` 来自 pi 的 `get_commands`，包含当前工作区可用的 extension、prompt template 和 skill 指令；调用时在 `name` 前加 `/`。旧版 pi 不支持 `get_commands` 时返回空列表。
 
+## pi 内置 Provider 管理
+
+这些接口只管理 pi 自带 catalog 中的 Provider。`models.json` 新增的自定义 Provider 和
+extension Provider 不会出现在管理清单中，也不能通过这些接口登录或登出；它们仍由 pi
+照常加载，提供的模型也仍会出现在 `/api/capabilities` 和会话模型选择器中。
+
+### 列出 Provider 与模型
+
+```http
+GET /api/providers
+Authorization: Bearer <TOKEN>
+```
+
+响应只包含非敏感元数据，不返回 API key、access token 或 refresh token：
+
+```json
+{
+  "providers": [
+    {
+      "id": "openai-codex",
+      "name": "OpenAI Codex",
+      "configured": true,
+      "auth_source": "stored",
+      "auth_label": "OAuth",
+      "stored_auth_type": "oauth",
+      "auth_methods": [
+        { "type": "oauth", "name": "OpenAI", "label": "Sign in with ChatGPT" }
+      ],
+      "models": [
+        { "id": "gpt-5.5", "name": "GPT-5.5", "reasoning": true, "input": ["text", "image"] }
+      ]
+    }
+  ]
+}
+```
+
+`configured` 也可能由环境变量或配置文件提供；这种凭据没有可删除的
+`stored_auth_type`。`auth_methods` 来自 Provider 自身，可包含 `api_key`、`oauth` 或两者。
+
+### 登录或重新登录
+
+登录使用独立 WebSocket，以便透传每个内置 Provider 自己的动态输入、选项、OAuth 和
+设备码流程：
+
+```text
+wss://gateway.example/api/provider-auth?provider_id=openai-codex&auth_type=oauth&token=<TOKEN>
+```
+
+网关发送的消息统一使用 `{"type":"ohpi_provider"}`。主要事件为：
+
+```json
+{"type":"ohpi_provider","event":"ready","provider_id":"openai-codex","auth_type":"oauth"}
+{"type":"ohpi_provider","event":"prompt","id":"p1","kind":"secret","message":"API key"}
+{"type":"ohpi_provider","event":"auth_url","url":"https://…","instructions":"Continue in the browser"}
+{"type":"ohpi_provider","event":"device_code","user_code":"ABCD-EFGH","verification_uri":"https://…"}
+{"type":"ohpi_provider","event":"progress","message":"Waiting for authorization"}
+{"type":"ohpi_provider","event":"complete","action":"login","provider_id":"openai-codex"}
+```
+
+`prompt.kind` 可为 `select` 或文本/密钥类提示；选项提示还带 `options` 和可选的
+`descriptions`。客户端只需用以下受限消息回答当前提示，其他 pi RPC 不会被转发：
+
+```json
+{"type":"extension_ui_response","id":"p1","value":"<answer>"}
+```
+
+取消提示可发送 `{"type":"extension_ui_response","id":"p1","cancelled":true}`，随后关闭
+WebSocket。OAuth 流程还可能发送 `info`（含 `links`）和 `error`。登录成功后网关使工作区
+能力缓存失效，并让已稳定的 pi session 通过正常重连载入新凭据；进行中的模型调用不会
+被打断。
+
+### 登出
+
+```http
+DELETE /api/providers/<PROVIDER_ID>/credential
+Authorization: Bearer <TOKEN>
+```
+
+该操作调用 pi 自身的 logout，并从 pi 的凭据存储中删除该 Provider 的已保存凭据；成功
+返回 HTTP 204。环境变量提供的凭据不会因此从进程环境中消失。所有 Provider 辅助进程都
+不会接收 `OHPI_TOKEN`，App 也不会把 Provider 凭据写入本地设置。
+
 ## 文件与目录 HTTP API
 
 ### 目录浏览（工作区选择）

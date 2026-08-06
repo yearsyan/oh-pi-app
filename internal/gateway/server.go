@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/yearsyan/oh-pi-app/internal/filebrowser"
+	"github.com/yearsyan/oh-pi-app/internal/providerauth"
 )
 
 var sessionChangingCommands = map[string]struct{}{
@@ -36,6 +37,7 @@ type Gateway struct {
 	cfg          Config
 	manager      *sessionManager
 	capabilities *capabilitiesLoader
+	providers    *providerService
 	upgrader     websocket.Upgrader
 	handler      http.Handler
 }
@@ -50,11 +52,16 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	providerExtension, err := providerauth.Install(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("install provider authentication extension: %w", err)
+	}
 
 	gateway := &Gateway{
 		cfg:          cfg,
 		manager:      newSessionManager(cfg, store),
 		capabilities: newCapabilitiesLoader(cfg),
+		providers:    newProviderService(cfg, providerExtension),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -67,6 +74,9 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/fs/list", gateway.handleFsList)
 	mux.HandleFunc("/fs/mkdir", gateway.handleFsMkdir)
 	mux.HandleFunc("/api/capabilities", gateway.handleCapabilities)
+	mux.HandleFunc("/api/providers", gateway.handleProviders)
+	mux.HandleFunc("/api/providers/", gateway.handleProvider)
+	mux.HandleFunc("/api/provider-auth", gateway.handleProviderAuth)
 	mux.HandleFunc("/api/sessions", gateway.handleSessions)
 	mux.HandleFunc("/api/sessions/", gateway.handleSession)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)

@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.outlined.Circle
 
 @Composable
@@ -67,6 +68,7 @@ fun SettingsScreen(
     onDeleteServer: (String) -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onLanguage: (AppLanguage) -> Unit,
+    onOpenProviders: () -> Unit,
     onOpenLicenses: () -> Unit,
 ) {
     var editing by remember { mutableStateOf<ServerProfile?>(null) }
@@ -122,6 +124,49 @@ fun SettingsScreen(
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(S.addServer)
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ---- pi providers ----
+            SectionHeader(S.providersSection)
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable(onClick = onOpenProviders)
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Key,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            S.providersTitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            S.providerSettingsDescription,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = S.providersTitle,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
 
             Spacer(Modifier.height(24.dp))

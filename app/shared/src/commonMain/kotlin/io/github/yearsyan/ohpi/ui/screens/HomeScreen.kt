@@ -72,6 +72,9 @@ internal data class ChatRoute(val sessionId: String)
 internal data object SettingsRoute
 
 @Serializable
+internal data object ProvidersRoute
+
+@Serializable
 internal data object LicensesRoute
 
 @Serializable
@@ -220,8 +223,13 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteServer = vm::deleteServer,
                     onThemeMode = vm::updateThemeMode,
                     onLanguage = vm::updateLanguage,
+                    onOpenProviders = { navController.navigate(ProvidersRoute) },
                     onOpenLicenses = { navController.navigate(LicensesRoute) },
                 )
+            }
+
+            composable<ProvidersRoute> {
+                ProvidersScreen(vm = vm, onBack = { navController.popBackStack() })
             }
 
             composable<LicensesRoute> {

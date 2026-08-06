@@ -55,17 +55,19 @@ type cachedCapabilities struct {
 }
 
 type capabilitiesCall struct {
-	done     chan struct{}
-	response capabilitiesResponse
-	err      error
+	generation uint64
+	done       chan struct{}
+	response   capabilitiesResponse
+	err        error
 }
 
 type capabilitiesLoader struct {
 	cfg Config
 
-	mu       sync.Mutex
-	cache    map[string]cachedCapabilities
-	inflight map[string]*capabilitiesCall
+	mu         sync.Mutex
+	cache      map[string]cachedCapabilities
+	inflight   map[string]*capabilitiesCall
+	generation uint64
 }
 
 func newCapabilitiesLoader(cfg Config) *capabilitiesLoader {
@@ -77,39 +79,65 @@ func newCapabilitiesLoader(cfg Config) *capabilitiesLoader {
 }
 
 func (loader *capabilitiesLoader) get(ctx context.Context, workDir string) (capabilitiesResponse, error) {
-	now := time.Now()
-	loader.mu.Lock()
-	if cached, ok := loader.cache[workDir]; ok && now.Sub(cached.fetchedAt) < capabilitiesCacheTTL {
-		loader.mu.Unlock()
-		return cached.response, nil
-	}
-	if call := loader.inflight[workDir]; call != nil {
-		loader.mu.Unlock()
-		select {
-		case <-call.done:
-			return call.response, call.err
-		case <-ctx.Done():
-			return capabilitiesResponse{}, ctx.Err()
+	for {
+		now := time.Now()
+		loader.mu.Lock()
+		generation := loader.generation
+		if cached, ok := loader.cache[workDir]; ok && now.Sub(cached.fetchedAt) < capabilitiesCacheTTL {
+			loader.mu.Unlock()
+			return cached.response, nil
 		}
+		if call := loader.inflight[workDir]; call != nil {
+			loader.mu.Unlock()
+			select {
+			case <-call.done:
+				loader.mu.Lock()
+				stale := call.generation != loader.generation
+				loader.mu.Unlock()
+				if stale {
+					continue
+				}
+				return call.response, call.err
+			case <-ctx.Done():
+				return capabilitiesResponse{}, ctx.Err()
+			}
+		}
+		call := &capabilitiesCall{generation: generation, done: make(chan struct{})}
+		loader.inflight[workDir] = call
+		loader.mu.Unlock()
+
+		probeContext, cancel := context.WithTimeout(ctx, loader.cfg.HistoryTimeout)
+		response, err := probeCapabilities(probeContext, loader.cfg, workDir)
+		cancel()
+
+		loader.mu.Lock()
+		delete(loader.inflight, workDir)
+		call.response = response
+		call.err = err
+		stale := call.generation != loader.generation
+		if err == nil && !stale {
+			loader.insertLocked(workDir, cachedCapabilities{response: response, fetchedAt: time.Now()})
+		}
+		close(call.done)
+		loader.mu.Unlock()
+		if stale {
+			if err := ctx.Err(); err != nil {
+				return capabilitiesResponse{}, err
+			}
+			continue
+		}
+		return response, err
 	}
-	call := &capabilitiesCall{done: make(chan struct{})}
-	loader.inflight[workDir] = call
-	loader.mu.Unlock()
+}
 
-	probeContext, cancel := context.WithTimeout(ctx, loader.cfg.HistoryTimeout)
-	response, err := probeCapabilities(probeContext, loader.cfg, workDir)
-	cancel()
-
+// invalidate discards every workspace's view after provider credentials
+// change. A generation prevents an already-running probe from repopulating
+// the cache with its pre-mutation result.
+func (loader *capabilitiesLoader) invalidate() {
 	loader.mu.Lock()
-	delete(loader.inflight, workDir)
-	call.response = response
-	call.err = err
-	if err == nil {
-		loader.insertLocked(workDir, cachedCapabilities{response: response, fetchedAt: time.Now()})
-	}
-	close(call.done)
+	loader.generation++
+	loader.cache = make(map[string]cachedCapabilities)
 	loader.mu.Unlock()
-	return response, err
 }
 
 func (loader *capabilitiesLoader) insertLocked(workDir string, value cachedCapabilities) {
