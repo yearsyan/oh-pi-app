@@ -44,3 +44,16 @@ func TestEmbeddedExtensionStartsTitleBeforeAgent(t *testing.T) {
 		t.Fatal("embedded extension still waits for agent_settled")
 	}
 }
+
+func TestEmbeddedExtensionPreservesRequestLanguage(t *testing.T) {
+	for _, rule := range []string{
+		"same language as the user's actual request",
+		"Never translate it or switch languages",
+		"For a Chinese request, use 4-12 Chinese characters",
+		"For an English request, use 3-8 English words",
+	} {
+		if !bytes.Contains(extensionSource, []byte(rule)) {
+			t.Fatalf("embedded extension title prompt is missing language rule %q", rule)
+		}
+	}
+}
