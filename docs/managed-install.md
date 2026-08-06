@@ -54,9 +54,9 @@ Windows 不使用需要管理员权限的系统 Service，而是注册 `RunLevel
 
 ## macOS 签名
 
-当前路径是通过 SSH 直接写入命令行二进制，不会经过浏览器下载的隔离流程，因此 Developer ID 签名和 notarization 不是此安装模式启动网关的硬性前提。Go 的 Darwin/arm64 链接器也会生成系统加载所需的 ad-hoc 签名。
+Release workflow 在 macOS runner 上构建 Darwin 二进制，使用 Developer ID Application、Hardened Runtime 与可信时间戳签名，并将两个架构一起提交 Apple notarization。架构独立的已签名裸二进制继续供 SSH 自动安装下载，同时 Release 还提供已公证的 Darwin ZIP 供直接分发。完整凭据与轮换要求见[发布与签名](releasing.md)。
 
-如果未来把网关作为浏览器下载、`.pkg`、`.dmg` 或图形 `.app` 分发，则应使用 Developer ID 签名并提交 Apple notarization；受 MDM 或企业安全策略约束的机器也可能要求正式签名。Release workflow 目前没有 Apple 签名凭据，因此发布的是未做 Developer ID/notarization 的 CLI 产物。
+SSH 直接写入远端的路径通常不会附带浏览器下载产生的 quarantine 属性，但正式签名仍可满足 Gatekeeper、MDM 和企业安全策略的校验要求。命令行裸二进制不能附加 stapled ticket；Apple 公证服务会在线发布与代码签名对应的 ticket。
 
 ## 发布兼容性
 

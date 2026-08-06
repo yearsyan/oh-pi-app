@@ -59,6 +59,7 @@ curl http://127.0.0.1:18080/healthz
 - [架构与持久化](docs/architecture.md)：进程模型、session 生命周期、稳定历史、replay WAL 和关闭语义。
 - [部署与配置](docs/deployment.md)：macOS LaunchAgent、命令行参数、环境变量和安全建议。
 - [SSH 自动安装模式](docs/managed-install.md)：三平台用户级托管、自动拉起/停止、Windows 与 macOS 签名边界。
+- [发布与签名](docs/releasing.md)：Release 产物、Developer ID、Apple notarization 与 CI Secret 轮换。
 - [Kotlin Multiplatform 客户端](app/README.md)：Android、桌面和 iOS 客户端的构建说明。
 
 ## 开发与测试

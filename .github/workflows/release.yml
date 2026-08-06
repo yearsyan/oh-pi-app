@@ -6,11 +6,11 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
-  build:
+  build-portable:
+    name: Build Android, Linux, and Windows
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,7 +26,7 @@ jobs:
       - name: Test gateway
         run: go test ./...
 
-      - name: Build gateway binaries
+      - name: Build Linux and Windows gateway binaries
         shell: bash
         run: |
           set -euo pipefail
@@ -35,8 +35,6 @@ jobs:
           mkdir -p release
 
           targets=(
-            "darwin/amd64"
-            "darwin/arm64"
             "linux/amd64"
             "linux/arm64"
             "windows/amd64"
@@ -71,19 +69,21 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install NDK and CMake
-        run: |
-          sdkmanager "ndk;28.2.13676358" "cmake;3.22.1"
+        run: sdkmanager "ndk;28.2.13676358" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-home-cache-cleanup: true
 
-      - name: Restore signing keystore
+      - name: Restore Android signing keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PROPERTIES_BASE64: ${{ secrets.KEYSTORE_PROPERTIES_BASE64 }}
         run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PROPERTIES_BASE64"
           mkdir -p app/androidApp
           echo "$KEYSTORE_BASE64" | base64 -d > app/androidApp/pi-release.keystore
           echo "$KEYSTORE_PROPERTIES_BASE64" | base64 -d > app/keystore.properties
@@ -99,6 +99,79 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           cp app/androidApp/build/outputs/apk/release/androidApp-release.apk \
             "release/oh-pi-app-${VERSION}.apk"
+
+      - name: Upload portable release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 1
+
+  build-macos:
+    name: Build, sign, and notarize macOS
+    needs: build-portable
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build macOS gateway binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+
+          for arch in amd64 arm64; do
+            output="release/ohpi-gateway-${VERSION}-darwin-${arch}"
+            echo "Building darwin/${arch}"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+              go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "$output" ./cmd/ohpi-gateway
+            go version -m "$output"
+          done
+
+      - name: Sign and notarize macOS artifacts
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/ci/sign-notarize-macos.sh release "$VERSION"
+
+      - name: Upload signed macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - build-portable
+      - build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
 
       - name: Generate checksums
         working-directory: release
