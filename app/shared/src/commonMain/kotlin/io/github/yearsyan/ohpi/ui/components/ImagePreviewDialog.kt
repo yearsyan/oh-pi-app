@@ -82,7 +82,7 @@ internal fun ImagePreviewDialog(
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = immersiveDialogProperties(),
     ) {
         ImmersiveDialogWindowEffect()
         val scope = rememberCoroutineScope()
@@ -265,3 +265,11 @@ internal fun ImagePreviewDialog(
  * bars. No-op on platforms whose dialogs already span the full screen.
  */
 @Composable internal expect fun ImmersiveDialogWindowEffect()
+
+/**
+ * [DialogProperties] for the full-screen image viewer. On platforms whose
+ * dialog windows can draw edge-to-edge behind the system bars, the properties
+ * must opt into that (e.g. `decorFitsSystemWindows = false` on Android) so
+ * Compose does not re-apply window decor insets on recomposition.
+ */
+internal expect fun immersiveDialogProperties(): DialogProperties

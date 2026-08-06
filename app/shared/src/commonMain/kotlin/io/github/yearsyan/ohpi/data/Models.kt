@@ -23,6 +23,16 @@ data class SshServerProfile(
     val hostKeySha256: String = "",
 )
 
+/** A remote TCP port exposed on the device's loopback through the SSH connection. */
+@Serializable
+data class PortForward(
+    val id: String,
+    /** Host resolved by the SSH server for the forward target; usually 127.0.0.1. */
+    val remoteHost: String = "127.0.0.1",
+    val remotePort: Int,
+    val enabled: Boolean = true,
+)
+
 /** A configured ohpi gateway the app can connect to. */
 @Serializable
 data class ServerProfile(
@@ -32,6 +42,7 @@ data class ServerProfile(
     val token: String,
     val connectionMode: ServerConnectionMode = ServerConnectionMode.Direct,
     val ssh: SshServerProfile = SshServerProfile(),
+    val portForwards: List<PortForward> = emptyList(),
 ) {
     val displayName: String get() = name.ifBlank { url.substringAfter("://").substringBefore("/") }
 }

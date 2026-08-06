@@ -14,6 +14,7 @@ class ServerProfileSerializationTest {
 
         assertEquals(ServerConnectionMode.Direct, profile.connectionMode)
         assertEquals(SshServerProfile(), profile.ssh)
+        assertEquals(emptyList(), profile.portForwards)
     }
 
     @Test
@@ -38,5 +39,31 @@ class ServerProfileSerializationTest {
         val decoded = PiJson.decodeFromString<ServerProfile>(PiJson.encodeToString(original))
 
         assertEquals(original, decoded)
+    }
+
+    @Test
+    fun portForwardsRoundTrip() {
+        val original =
+            ServerProfile(
+                id = "ssh",
+                name = "Remote",
+                url = "http://127.0.0.1:8080",
+                token = "token",
+                connectionMode = ServerConnectionMode.Ssh,
+                portForwards =
+                    listOf(
+                        PortForward(id = "pf-1", remotePort = 3000),
+                        PortForward(
+                            id = "pf-2",
+                            remoteHost = "10.0.0.2",
+                            remotePort = 5432,
+                            enabled = false,
+                        ),
+                    ),
+            )
+
+        val decoded = PiJson.decodeFromString<ServerProfile>(PiJson.encodeToString(original))
+
+        assertEquals(original.portForwards, decoded.portForwards)
     }
 }

@@ -6,9 +6,21 @@ import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+
+/**
+ * Keep the dialog window edge-to-edge. Setting this via [ImmersiveDialogWindowEffect]
+ * loses to Compose re-applying [DialogProperties] on recomposition, so it must
+ * be declared on the properties themselves.
+ */
+internal actual fun immersiveDialogProperties(): DialogProperties =
+    DialogProperties(
+        usePlatformDefaultWidth = false,
+        decorFitsSystemWindows = false,
+    )
 
 /**
  * Lets the dialog window draw behind the status and navigation bars and keeps
@@ -22,6 +34,12 @@ internal actual fun ImmersiveDialogWindowEffect() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = AndroidColor.TRANSPARENT
         window.navigationBarColor = AndroidColor.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // With transparent bars the system draws a translucent scrim behind
+            // them by default; disable it so the viewer backdrop shows through.
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
         WindowInsetsControllerCompat(window, view).isAppearanceLightStatusBars = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val params = window.attributes

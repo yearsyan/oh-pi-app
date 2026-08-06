@@ -30,6 +30,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -165,7 +167,10 @@ private fun parseBlocks(markdown: String): List<MdBlock> {
     return blocks
 }
 
-/** Renders inline markdown (`code`, **bold**, *italic*, ~~strike~~, [text](url)). */
+/**
+ * Renders inline markdown (`code`, **bold**, *italic*, ~~strike~~, [text](url)).
+ * Markdown links and bare http/https URLs are clickable via [LinkAnnotation.Url].
+ */
 @Composable
 fun inlineMarkdown(text: String, base: SpanStyle = SpanStyle()): AnnotatedString {
     val codeColor = MaterialTheme.colorScheme.primary
@@ -216,18 +221,59 @@ fun inlineMarkdown(text: String, base: SpanStyle = SpanStyle()): AnnotatedString
                         val endUrl = text.indexOf(')', close)
                         if (endUrl > close) {
                             flush()
-                            withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
-                                append(text.substring(i + 1, close))
+                            val url = text.substring(close + 2, endUrl).trim()
+                            withLink(LinkAnnotation.Url(url)) {
+                                withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
+                                    append(text.substring(i + 1, close))
+                                }
                             }
                             i = endUrl + 1
                         } else { buf.append(text[i]); i++ }
                     } else { buf.append(text[i]); i++ }
+                }
+                text.startsWith("http://", i) || text.startsWith("https://", i) -> {
+                    val end = scanBareUrlEnd(text, i)
+                    if (end == i) {
+                        buf.append(text[i]); i++
+                    } else {
+                        flush()
+                        val url = text.substring(i, end)
+                        withLink(LinkAnnotation.Url(url)) {
+                            withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
+                                append(url)
+                            }
+                        }
+                        i = end
+                    }
                 }
                 else -> { buf.append(text[i]); i++ }
             }
         }
         flush()
     }
+}
+
+/**
+ * End offset (exclusive) of a bare URL starting at [from]. Stops at whitespace
+ * or quoting characters, then trims trailing punctuation that almost always
+ * belongs to the surrounding prose (`https://a.b/c).`, `（https://a.b）`).
+ */
+private fun scanBareUrlEnd(text: String, from: Int): Int {
+    var end = from
+    while (end < text.length && !text[end].isWhitespace() && text[end] !in "<>\"'`") end++
+    while (end > from) {
+        val candidate = text.substring(from, end)
+        val drop = when (text[end - 1]) {
+            '.', ',', ';', ':', '!', '?', '。', '，', '；', '：', '！', '？' -> true
+            ')' -> candidate.count { it == '(' } < candidate.count { it == ')' }
+            ']' -> candidate.count { it == '[' } < candidate.count { it == ']' }
+            '}' -> candidate.count { it == '{' } < candidate.count { it == '}' }
+            else -> false
+        }
+        if (!drop) break
+        end--
+    }
+    return end
 }
 
 @Composable

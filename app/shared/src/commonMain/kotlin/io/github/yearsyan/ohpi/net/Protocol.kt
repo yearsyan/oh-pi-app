@@ -174,12 +174,19 @@ fun buildWsUrl(
     return b.toString()
 }
 
+private val urlUnreservedChars: Set<Char> =
+    ('A'..'Z').toSet() + ('a'..'z') + ('0'..'9') + setOf('-', '_', '.', '~')
+
 fun urlEncode(value: String): String = buildString {
-    for (c in value) {
-        when {
-            c.isLetterOrDigit() || c in "-_.~" -> append(c)
-            else -> append('%')
-                .append(c.code.toByte().toInt().and(0xFF).toString(16).uppercase().padStart(2, '0'))
+    // Percent-encode the UTF-8 bytes; chars above U+007F must not be
+    // truncated to their low byte (e.g. '，' U+FF0C became %0C).
+    for (byte in value.encodeToByteArray()) {
+        val b = byte.toInt() and 0xFF
+        val c = b.toChar()
+        if (c in urlUnreservedChars) {
+            append(c)
+        } else {
+            append('%').append(b.toString(16).uppercase().padStart(2, '0'))
         }
     }
 }

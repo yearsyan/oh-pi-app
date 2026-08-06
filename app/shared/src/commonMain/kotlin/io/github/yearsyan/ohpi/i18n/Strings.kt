@@ -238,6 +238,25 @@ interface Strings {
 
     // misc
     val back: String
+    val close: String
+
+    // port forwarding
+    val portForwardsTitle: String
+    val portForwardAdd: String
+    val portForwardEdit: String
+    val portForwardRemoteHost: String
+    val portForwardRemotePort: String
+    val portForwardEmpty: String
+    val portForwardSshOnly: String
+    val portForwardStarting: String
+    val portForwardStopped: String
+    val portForwardFailed: String
+    val portForwardRetry: String
+    val portForwardRunning: (Int) -> String
+    val loopbackPromptTitle: String
+    val loopbackPromptBody: (Int) -> String
+    val loopbackMapAndOpen: String
+    val loopbackOpenLocal: String
     val justNow: String
     val minutesAgo: (Int) -> String
     val hoursAgo: (Int) -> String
@@ -470,6 +489,27 @@ object EnStrings : Strings {
     override val licenseCopyright = "Copyright"
 
     override val back = "Back"
+    override val close = "Close"
+
+    override val portForwardsTitle = "Port forwarding"
+    override val portForwardAdd = "Add mapping"
+    override val portForwardEdit = "Edit mapping"
+    override val portForwardRemoteHost = "Remote host"
+    override val portForwardRemotePort = "Remote port"
+    override val portForwardEmpty =
+        "No port mappings yet. Mapped remote ports become reachable at 127.0.0.1 on this device."
+    override val portForwardSshOnly = "Port mapping requires an SSH connection."
+    override val portForwardStarting = "Starting…"
+    override val portForwardStopped = "Stopped"
+    override val portForwardFailed = "Port forward failed"
+    override val portForwardRetry = "Retry"
+    override val portForwardRunning = { p: Int -> "Running · local 127.0.0.1:$p" }
+    override val loopbackPromptTitle = "Unmapped remote port"
+    override val loopbackPromptBody = { p: Int ->
+        "This link points to port $p on the remote host. Map it to this device to open the page."
+    }
+    override val loopbackMapAndOpen = "Map and open"
+    override val loopbackOpenLocal = "Open on device"
     override val justNow = "just now"
     override val minutesAgo = { m: Int -> "${m}m ago" }
     override val hoursAgo = { h: Int -> "${h}h ago" }
@@ -700,6 +740,26 @@ object ZhStrings : Strings {
     override val licenseCopyright = "版权"
 
     override val back = "返回"
+    override val close = "关闭"
+
+    override val portForwardsTitle = "端口映射"
+    override val portForwardAdd = "添加映射"
+    override val portForwardEdit = "编辑映射"
+    override val portForwardRemoteHost = "远程地址"
+    override val portForwardRemotePort = "远程端口"
+    override val portForwardEmpty = "暂无端口映射。映射后可通过本机 127.0.0.1 访问远程端口。"
+    override val portForwardSshOnly = "端口映射仅适用于 SSH 连接的服务器。"
+    override val portForwardStarting = "启动中…"
+    override val portForwardStopped = "已停止"
+    override val portForwardFailed = "端口映射失败"
+    override val portForwardRetry = "重试"
+    override val portForwardRunning = { p: Int -> "运行中 · 本机 127.0.0.1:$p" }
+    override val loopbackPromptTitle = "远程端口未映射"
+    override val loopbackPromptBody = { p: Int ->
+        "该链接指向远程主机的端口 $p，建立端口映射后才能在本机访问。"
+    }
+    override val loopbackMapAndOpen = "映射并打开"
+    override val loopbackOpenLocal = "本机直接打开"
     override val justNow = "刚刚"
     override val minutesAgo = { m: Int -> "${m} 分钟前" }
     override val hoursAgo = { h: Int -> "${h} 小时前" }

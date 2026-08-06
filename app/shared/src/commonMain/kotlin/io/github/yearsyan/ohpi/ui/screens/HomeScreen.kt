@@ -75,6 +75,9 @@ internal data object SettingsRoute
 internal data object LicensesRoute
 
 @Serializable
+internal data object PortForwardsRoute
+
+@Serializable
 internal data class FilesRoute(val path: String)
 
 /** Adaptive home: single-pane navigation on phones, list+detail on tablets/desktop. */
@@ -158,6 +161,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
+                    onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
                 )
             }
 
@@ -178,6 +182,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
+                    onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
                 )
             }
 
@@ -222,6 +227,10 @@ fun HomeScreen(vm: AppViewModel) {
             composable<LicensesRoute> {
                 LicensesScreen(onBack = { navController.popBackStack() })
             }
+
+            composable<PortForwardsRoute> {
+                PortForwardsScreen(vm = vm, onBack = { navController.popBackStack() })
+            }
         }
     }
 
@@ -261,6 +270,7 @@ private fun MainDestination(
     onRenameSession: (SavedSession) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
     onBrowseFiles: (String) -> Unit,
+    onOpenPortForwards: () -> Unit,
 ) {
     when {
         wide -> WideHome(
@@ -271,6 +281,7 @@ private fun MainDestination(
             onOpenSettings = onOpenSettings,
             onDeleteSession = onDeleteSession,
             onBrowseFiles = onBrowseFiles,
+            onOpenPortForwards = onOpenPortForwards,
         )
 
         compactChatId != null -> ChatScreen(
@@ -297,6 +308,7 @@ private fun MainDestination(
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
             onBrowseFiles = { onBrowseFiles("") },
+            onOpenPortForwards = onOpenPortForwards,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -311,6 +323,7 @@ private fun WideHome(
     onOpenSettings: () -> Unit,
     onDeleteSession: (String) -> Unit,
     onBrowseFiles: (String) -> Unit,
+    onOpenPortForwards: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
         SessionListPane(
@@ -328,6 +341,7 @@ private fun WideHome(
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
             onBrowseFiles = { onBrowseFiles("") },
+            onOpenPortForwards = onOpenPortForwards,
             modifier = Modifier.width(ListPaneWidth),
         )
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)

@@ -181,6 +181,14 @@ internal class GatewayTransport(
 }
 
 private fun ServerProfile.toNativeConfig(target: GatewayTarget, hostKey: String): SshTunnelConfig =
+    toSshTunnelConfig(target.remoteHost, target.remotePort, hostKey)
+
+/** Native tunnel config from this profile's SSH credentials to one remote endpoint. */
+internal fun ServerProfile.toSshTunnelConfig(
+    remoteHost: String,
+    remotePort: Int,
+    hostKey: String,
+): SshTunnelConfig =
     SshTunnelConfig(
         sshHost = ssh.host.trim(),
         sshPort = ssh.port,
@@ -196,8 +204,8 @@ private fun ServerProfile.toNativeConfig(target: GatewayTarget, hostKey: String)
             ssh.privateKeyPassphrase
                 .takeIf { ssh.authentication == SshAuthentication.PrivateKey && it.isNotEmpty() },
         expectedHostKeySha256 = hostKey.takeIf { it.isNotBlank() },
-        remoteHost = target.remoteHost,
-        remotePort = target.remotePort,
+        remoteHost = remoteHost,
+        remotePort = remotePort,
     )
 
 private fun SshTunnelException.toGatewayFailure(): GatewayConnectionException {

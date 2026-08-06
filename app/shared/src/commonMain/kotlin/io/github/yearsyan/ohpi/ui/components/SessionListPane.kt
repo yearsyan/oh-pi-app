@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.data.SavedSession
+import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
@@ -71,6 +72,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapHoriz
 
 private const val WorkspacePreviewCount = 10
 
@@ -90,6 +92,7 @@ fun SessionListPane(
     onRenameSession: (SavedSession) -> Unit,
     onDeleteSession: (SavedSession) -> Unit,
     onBrowseFiles: () -> Unit,
+    onOpenPortForwards: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
@@ -139,6 +142,25 @@ fun SessionListPane(
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            if (activeServer?.connectionMode == ServerConnectionMode.Ssh) {
+                Spacer(Modifier.width(10.dp))
+                // port forwarding entry (SSH servers only)
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable(onClick = onOpenPortForwards),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.SwapHoriz,
+                        contentDescription = S.portForwardsTitle,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.width(10.dp))
             // new chat

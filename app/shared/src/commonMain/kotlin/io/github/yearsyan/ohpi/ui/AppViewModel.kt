@@ -10,7 +10,9 @@ import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.Toast
 import io.github.yearsyan.ohpi.chat.clearEntryCache
 import io.github.yearsyan.ohpi.data.AppLanguage
+import io.github.yearsyan.ohpi.data.PortForward
 import io.github.yearsyan.ohpi.data.SavedSession
+import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SettingsStore
 import io.github.yearsyan.ohpi.data.ThemeMode
@@ -21,8 +23,15 @@ import io.github.yearsyan.ohpi.net.FileReadResponse
 import io.github.yearsyan.ohpi.net.FsListException
 import io.github.yearsyan.ohpi.net.FsListResponse
 import io.github.yearsyan.ohpi.net.GatewayTransport
+import io.github.yearsyan.ohpi.net.PortForwardManager
+import io.github.yearsyan.ohpi.net.PortForwardStatus
 import io.github.yearsyan.ohpi.net.SshHostKeyPrompt
+import io.github.yearsyan.ohpi.net.loopbackUrlTarget
+import io.github.yearsyan.ohpi.net.rewriteLoopbackUrl
+import io.github.yearsyan.ohpi.net.rewriteLoopbackUrlToGatewayHost
 import io.github.yearsyan.ohpi.net.createGatewayDir
+import io.github.yearsyan.ohpi.net.gatewayTarget
+import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
 import io.github.yearsyan.ohpi.net.downloadGatewayFile
 import io.github.yearsyan.ohpi.net.getGatewayCapabilities
@@ -40,6 +49,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
+/** A loopback link tapped on an SSH-connected server with no covering port forward. */
+class LoopbackLinkPrompt(
+    val originalUrl: String,
+    val remotePort: Int,
+    val openUrl: (String) -> Unit,
+)
+
 class AppViewModel(
     private val store: SettingsStore = SettingsStore(),
 ) : ViewModel() {
@@ -55,11 +71,14 @@ class AppViewModel(
     var activeChatId by mutableStateOf<String?>(null); private set
     var sessionsLoading by mutableStateOf(false); private set
     var sshHostKeyPrompt by mutableStateOf<SshHostKeyPrompt?>(null); private set
+    var loopbackLinkPrompt by mutableStateOf<LoopbackLinkPrompt?>(null); private set
     val toasts = mutableStateListOf<Toast>()
 
     private val controllers = HashMap<String, ChatController>()
     private var gatewayTransport: GatewayTransport? = null
     private var gatewayTransportServerId = ""
+    private var forwardManager: PortForwardManager? = null
+    private var forwardManagerServerId = ""
     private var sshHostKeyDecision: CompletableDeferred<Boolean>? = null
     private var sessionRefreshGeneration = 0L
     private var stringsProvider: () -> Strings = { io.github.yearsyan.ohpi.i18n.EnStrings }
@@ -74,6 +93,7 @@ class AppViewModel(
         themeMode = store.themeMode
         language = store.language
         loadSessionsForActive()
+        syncPortForwards()
     }
 
     fun setStringsProvider(provider: () -> Strings) {
@@ -119,14 +139,18 @@ class AppViewModel(
     fun saveServer(profile: ServerProfile) {
         val idx = servers.indexOfFirst { it.id == profile.id }
         val previous = servers.getOrNull(idx)
-        if (idx >= 0) servers[idx] = profile else servers.add(profile)
+        // The server editor never manages port forwards; keep them across edits.
+        val merged =
+            if (previous != null) profile.copy(portForwards = previous.portForwards) else profile
+        if (idx >= 0) servers[idx] = merged else servers.add(merged)
         store.saveServers(servers.toList())
         if (activeServerId.isBlank()) {
             selectServer(profile.id)
-        } else if (profile.id == activeServerId && previous != profile) {
+        } else if (profile.id == activeServerId && previous != merged) {
             resetActiveConnections()
             activeChatId = null
             loadSessionsForActive()
+            syncPortForwards()
         }
     }
 
@@ -139,6 +163,7 @@ class AppViewModel(
             activeServerId = servers.firstOrNull()?.id ?: ""
             store.activeServerId = activeServerId
             loadSessionsForActive()
+            syncPortForwards()
             activeChatId = null
         }
     }
@@ -150,6 +175,7 @@ class AppViewModel(
         store.activeServerId = id
         activeChatId = null
         loadSessionsForActive()
+        syncPortForwards()
     }
 
     private fun disconnectAll() {
@@ -162,6 +188,10 @@ class AppViewModel(
         gatewayTransport?.close()
         gatewayTransport = null
         gatewayTransportServerId = ""
+        forwardManager?.close()
+        forwardManager = null
+        forwardManagerServerId = ""
+        loopbackLinkPrompt = null
         rejectPendingHostKey()
     }
 
@@ -521,6 +551,182 @@ class AppViewModel(
         if (server.ssh.hostKeySha256 == fingerprint) return
         servers[index] = server.copy(ssh = server.ssh.copy(hostKeySha256 = fingerprint))
         store.saveServers(servers.toList())
+    }
+
+    // ---- port forwards ----
+
+    val portForwardStatuses: Map<String, PortForwardStatus>
+        get() = forwardManager?.statuses ?: emptyMap()
+
+    private fun forwardManagerFor(server: ServerProfile): PortForwardManager {
+        forwardManager?.takeIf { forwardManagerServerId == server.id }?.let { return it }
+        forwardManager?.close()
+        return PortForwardManager(
+            profile = server,
+            forwardsProvider = {
+                servers.firstOrNull { it.id == server.id }?.portForwards.orEmpty()
+            },
+            confirmHostKey = ::confirmSshHostKey,
+            onHostKeyTrusted = { fingerprint -> rememberTrustedHostKey(server.id, fingerprint) },
+        ).also {
+            forwardManager = it
+            forwardManagerServerId = server.id
+        }
+    }
+
+    private fun sshActiveServer(): ServerProfile? =
+        activeServer?.takeIf { it.connectionMode == ServerConnectionMode.Ssh }
+
+    private fun syncPortForwards() {
+        val server = sshActiveServer() ?: return
+        viewModelScope.launch { forwardManagerFor(server).sync() }
+    }
+
+    private fun updatePortForwards(server: ServerProfile, forwards: List<PortForward>) {
+        val idx = servers.indexOfFirst { it.id == server.id }
+        if (idx < 0) return
+        servers[idx] = servers[idx].copy(portForwards = forwards)
+        store.saveServers(servers.toList())
+    }
+
+    fun addPortForward(remoteHost: String, remotePort: Int) {
+        val server = sshActiveServer() ?: return
+        if (remotePort !in 1..65535) return
+        val forward =
+            PortForward(
+                id = "pf-" + Random.nextLong().toString(16),
+                remoteHost = remoteHost.trim().ifBlank { "127.0.0.1" },
+                remotePort = remotePort,
+            )
+        updatePortForwards(server, server.portForwards + forward)
+        viewModelScope.launch { forwardManagerFor(server).sync() }
+    }
+
+    fun updatePortForward(id: String, remoteHost: String, remotePort: Int) {
+        val server = sshActiveServer() ?: return
+        if (remotePort !in 1..65535) return
+        updatePortForwards(
+            server,
+            server.portForwards.map {
+                if (it.id == id) {
+                    it.copy(
+                        remoteHost = remoteHost.trim().ifBlank { "127.0.0.1" },
+                        remotePort = remotePort,
+                    )
+                } else {
+                    it
+                }
+            },
+        )
+        viewModelScope.launch { forwardManagerFor(server).sync() }
+    }
+
+    fun setPortForwardEnabled(id: String, enabled: Boolean) {
+        val server = sshActiveServer() ?: return
+        updatePortForwards(
+            server,
+            server.portForwards.map { if (it.id == id) it.copy(enabled = enabled) else it },
+        )
+        viewModelScope.launch { forwardManagerFor(server).sync() }
+    }
+
+    fun removePortForward(id: String) {
+        val server = sshActiveServer() ?: return
+        updatePortForwards(server, server.portForwards.filterNot { it.id == id })
+        viewModelScope.launch { forwardManagerFor(server).sync() }
+    }
+
+    fun restartPortForward(id: String) {
+        val server = sshActiveServer() ?: return
+        viewModelScope.launch { forwardManagerFor(server).restart(id) }
+    }
+
+    /** Moves dead tunnels from running to failed; polled by the forwards screen. */
+    fun refreshPortForwardStates() {
+        forwardManager?.refreshStates()
+    }
+
+    /**
+     * Intercepts loopback http(s) links from chat content. SSH servers reuse a
+     * running forward or prompt to create one; direct servers open the link
+     * against the gateway host instead of the device itself.
+     * Returns true when the link was consumed.
+     */
+    fun handleLoopbackLink(uri: String, openUrl: (String) -> Unit): Boolean {
+        val target = loopbackUrlTarget(uri) ?: return false
+        val server = activeServer ?: return false
+        return when (server.connectionMode) {
+            ServerConnectionMode.Ssh -> {
+                val localPort = forwardManagerFor(server).runningLocalPortFor(target.second)
+                if (localPort != null) {
+                    openUrl(rewriteLoopbackUrl(uri, localPort))
+                } else {
+                    loopbackLinkPrompt = LoopbackLinkPrompt(uri, target.second, openUrl)
+                }
+                true
+            }
+            ServerConnectionMode.Direct -> {
+                val gatewayHost =
+                    runCatching { gatewayTarget(server.url, requirePlaintext = false).remoteHost }
+                        .getOrNull()
+                        ?: return false
+                openUrl(rewriteLoopbackUrlToGatewayHost(uri, gatewayHost))
+                true
+            }
+        }
+    }
+
+    fun answerLoopbackLinkPrompt(mapAndOpen: Boolean) {
+        val prompt = loopbackLinkPrompt ?: return
+        loopbackLinkPrompt = null
+        if (!mapAndOpen) {
+            prompt.openUrl(prompt.originalUrl)
+            return
+        }
+        val server = sshActiveServer() ?: return
+        viewModelScope.launch {
+            val forward = ensureLoopbackForward(server, prompt.remotePort)
+            val manager = forwardManagerFor(server)
+            val localPort = manager.ensureRunning(forward.id)
+            if (localPort != null) {
+                prompt.openUrl(rewriteLoopbackUrl(prompt.originalUrl, localPort))
+            } else {
+                toast(
+                    manager.statuses[forward.id]?.error
+                        ?: stringsProvider().portForwardFailed,
+                    Toast.Kind.Error,
+                )
+            }
+        }
+    }
+
+    fun dismissLoopbackLinkPrompt() {
+        loopbackLinkPrompt = null
+    }
+
+    private fun ensureLoopbackForward(server: ServerProfile, remotePort: Int): PortForward {
+        val existing = server.portForwards.firstOrNull {
+            it.remotePort == remotePort && isLoopbackHostName(it.remoteHost)
+        }
+        if (existing != null) {
+            if (!existing.enabled) {
+                updatePortForwards(
+                    server,
+                    server.portForwards.map {
+                        if (it.id == existing.id) it.copy(enabled = true) else it
+                    },
+                )
+            }
+            return existing.copy(enabled = true)
+        }
+        val forward =
+            PortForward(
+                id = "pf-" + Random.nextLong().toString(16),
+                remoteHost = "127.0.0.1",
+                remotePort = remotePort,
+            )
+        updatePortForwards(server, server.portForwards + forward)
+        return forward
     }
 
     // ---- toasts ----

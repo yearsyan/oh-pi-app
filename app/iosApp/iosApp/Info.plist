@@ -8,5 +8,10 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pi connects to your configured ohpi or SSH server on the local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
