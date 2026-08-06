@@ -2,7 +2,7 @@
 
 推送 `v<major.minor.patch>` tag 会触发 `.github/workflows/release.yml`。发布流程构建 Android APK、Linux / Windows 的 amd64 与 arm64 网关，以及经过 Developer ID 签名和 Apple notarization 的 macOS 网关。
 
-同一个 tag 还会触发 `.github/workflows/testflight.yml`，在 GitHub macOS runner 上归档 iOS App，并通过 Xcode cloud-managed signing 上传到 TestFlight。也可以手工运行 TestFlight workflow 并填写 `major.minor.patch` 版本号，在正式打 tag 前验证上传链路。
+同一个 tag 还会触发 `.github/workflows/testflight.yml`，在 GitHub macOS runner 上归档 iOS App，并使用专用 Apple Distribution 证书与 App Store provisioning profile 签名后上传到 TestFlight。也可以手工运行 TestFlight workflow 并填写 `major.minor.patch` 版本号，在正式打 tag 前验证上传链路。
 
 ## macOS 产物
 
@@ -28,8 +28,11 @@ Release 同时包含：
 | `APPLE_NOTARY_KEY_P8_BASE64` | App Store Connect Team API Key `.p8` 文件，单行 Base64 |
 | `APPLE_NOTARY_KEY_ID` | API Key 的 Key ID |
 | `APPLE_NOTARY_ISSUER_ID` | App Store Connect Team API 的 Issuer ID |
+| `IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64` | 含专用 Apple Distribution 私钥、证书和 WWDR 中间证书的 `.p12` 文件，单行 Base64 |
+| `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | 导出 iOS `.p12` 时设置的强密码 |
+| `IOS_APP_STORE_PROFILE_BASE64` | 绑定 OhPiApp Bundle ID 与专用证书的 App Store provisioning profile，单行 Base64 |
 
-证书必须是 `Developer ID Application`，不能使用 Apple Development、Mac Distribution 或 ad-hoc identity。公证 Key 建议使用独立的 Team API Key，并限制为完成发布所需的最低角色。
+macOS certificate Secret 必须包含 `Developer ID Application` identity，不能使用 Apple Development、Mac Distribution 或 ad-hoc identity；iOS certificate Secret 必须包含与 profile 匹配的 `Apple Distribution` identity。公证与上传 Key 建议使用独立的 Team API Key，并限制为完成发布所需的最低角色。
 
 ## iOS 与 TestFlight
 
@@ -41,7 +44,7 @@ iOS App Store Connect 记录使用以下固定身份：
 
 TestFlight workflow 使用 tag 作为 `MARKETING_VERSION`，使用 `<workflow run number>.<run attempt>` 作为唯一的 `CURRENT_PROJECT_VERSION`。手工触发时必须显式填写版本号。
 
-归档阶段关闭本地代码签名；上传阶段由 Xcode 使用 App Store Connect API Key、自动 provisioning 和 Apple 的 cloud-managed Distribution 证书完成签名。这样 CI 不需要保存 Apple Distribution 私钥或 provisioning profile。API Key 至少需要 Developer 角色；缺少任一 API Key Secret 时 workflow 会直接失败。
+归档阶段关闭代码签名；上传阶段在临时 keychain 中导入专用 Apple Distribution `.p12`，安装仅绑定 OhPiApp 的 App Store provisioning profile，再由 Xcode 手工签名并使用 App Store Connect API Key 上传。API Key 保持 Developer 角色即可，不需要给 CI Admin 权限。临时 keychain、证书、profile 和 API Key 在成功或失败后都会删除；缺少任一 Secret 时 workflow 会直接失败。
 
 `app/iosApp/iosApp/Info.plist` 已声明 `ITSAppUsesNonExemptEncryption=false`，`app/iosApp/iosApp/PrivacyInfo.xcprivacy` 包含当前 required-reason API 声明。上传成功只代表 Apple 接受交付；构建仍需经过 App Store Connect 后台处理才会出现在 TestFlight。
 
@@ -53,13 +56,17 @@ gh secret set MACOS_CERTIFICATE_PASSWORD
 base64 < AuthKey_XXXXXXXXXX.p8 | tr -d '\n' | gh secret set APPLE_NOTARY_KEY_P8_BASE64
 gh secret set APPLE_NOTARY_KEY_ID
 gh secret set APPLE_NOTARY_ISSUER_ID
+base64 < AppleDistribution.p12 | tr -d '\n' | gh secret set IOS_DISTRIBUTION_CERTIFICATE_P12_BASE64
+gh secret set IOS_DISTRIBUTION_CERTIFICATE_PASSWORD
+base64 < OhPiApp.mobileprovision | tr -d '\n' | gh secret set IOS_APP_STORE_PROFILE_BASE64
 ```
 
-`.p12`、`.p8`、密码和临时 keychain 不得提交到 Git。`scripts/ci/sign-notarize-macos.sh` 只在单个 CI step 内解码这些文件，结束或失败时都会删除临时证书、API Key 和 keychain。
+`.p12`、`.p8`、`.mobileprovision`、密码和临时 keychain 不得提交到 Git。CI 脚本只在单个 step 内解码这些文件，结束或失败时都会删除临时证书、profile、API Key 和 keychain。
 
 ## 轮换与恢复
 
 - `.p8` 只能在 App Store Connect 创建后下载一次。安全保存离线备份；如果丢失，应撤销旧 Key 并创建新 Key。
 - Developer ID 私钥无法从 Apple 重新下载。安全保存 `.p12` 和密码；证书到期时创建新证书并更新两个 certificate Secrets。
+- Apple Distribution 私钥同样无法从 Apple 重新下载。轮换证书时必须重新生成绑定新证书的 App Store provisioning profile，并同时更新三个 iOS signing Secrets。
 - 不要为日常调试撤销仍在发布使用的 Developer ID 证书。证书被撤销后，已经用它签名的软件也可能无法通过 Gatekeeper。
 - Secret 轮换后先用一个新的预发布 tag 验证签名、公证、校验和与 Release 附件，再发布正式版本。
