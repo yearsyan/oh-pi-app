@@ -63,6 +63,7 @@ import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.SessionStats
 import io.github.yearsyan.ohpi.data.ConnState
 import io.github.yearsyan.ohpi.i18n.S
+import io.github.yearsyan.ohpi.net.GatewaySessionMetrics
 import io.github.yearsyan.ohpi.theme.piExtras
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -171,7 +172,7 @@ private fun SessionUsageButton(controller: ChatController) {
             modifier = Modifier.size(32.dp).semantics { contentDescription = description },
             contentAlignment = Alignment.Center,
         ) {
-            if (controller.sessionStatsLoading && stats == null) {
+            if (controller.sessionUsageLoading && stats == null) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(27.dp),
                     strokeWidth = 3.dp,
@@ -185,7 +186,8 @@ private fun SessionUsageButton(controller: ChatController) {
     if (dialogOpen) {
         SessionUsageDialog(
             stats = stats,
-            refreshing = controller.sessionStatsLoading,
+            metrics = controller.sessionMetrics,
+            refreshing = controller.sessionUsageLoading,
             onDismiss = { dialogOpen = false },
         )
     }
@@ -194,6 +196,7 @@ private fun SessionUsageButton(controller: ChatController) {
 @Composable
 private fun SessionUsageDialog(
     stats: SessionStats?,
+    metrics: GatewaySessionMetrics?,
     refreshing: Boolean,
     onDismiss: () -> Unit,
 ) {
@@ -213,7 +216,7 @@ private fun SessionUsageDialog(
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (stats == null) {
                     Text(
@@ -233,6 +236,11 @@ private fun SessionUsageDialog(
                     StatRow(S.inputTokens, formatCount(stats.tokens.input))
                     StatRow(S.outputTokens, formatCount(stats.tokens.output))
                     StatRow(S.totalTokens, formatCount(stats.tokens.total))
+                    HorizontalDivider()
+                    UsageSectionTitle(S.generationPerformance)
+                    StatRow(S.averageTps, metrics?.averageTps?.let(::formatTps) ?: "—")
+                    StatRow(S.averageTtft, metrics?.averageTtftMs?.let(::formatLatency) ?: "—")
+                    StatRow(S.measuredCalls, metrics?.sampleCount?.let(::formatCount) ?: "—")
                 }
             }
         },
@@ -248,13 +256,13 @@ private fun ContextUsageSection(stats: SessionStats) {
     val percent = context?.percent
     UsageSectionTitle(S.contextUsage)
     Row(
-        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ContextUsageRing(percent = percent, ringSize = 76.dp, compact = false)
+        ContextUsageRing(percent = percent, ringSize = 68.dp, compact = false)
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             StatRow(
                 S.contextWindow,
@@ -280,7 +288,7 @@ private fun ContextUsageSection(stats: SessionStats) {
 private fun UsageSectionTitle(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
+        style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.SemiBold,
     )
 }
@@ -294,13 +302,17 @@ private fun StatRow(label: String, value: String) {
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             value,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
+            maxLines = 1,
         )
     }
 }
@@ -369,6 +381,18 @@ private fun formatCount(value: Long): String =
 private fun formatPercent(value: Double): String {
     val tenths = (value.coerceAtLeast(0.0) * 10.0).roundToInt()
     return "${tenths / 10}.${tenths % 10}%"
+}
+
+private fun formatTps(value: Double): String {
+    val tenths = (value.coerceAtLeast(0.0) * 10.0).roundToInt()
+    return "${tenths / 10}.${tenths % 10} tok/s"
+}
+
+private fun formatLatency(valueMillis: Double): String {
+    val millis = valueMillis.coerceAtLeast(0.0)
+    if (millis < 1000.0) return "${millis.roundToInt()} ms"
+    val hundredths = (millis / 10.0).roundToInt()
+    return "${hundredths / 100}.${(hundredths % 100).toString().padStart(2, '0')} s"
 }
 
 @Composable

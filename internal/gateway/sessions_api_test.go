@@ -107,6 +107,76 @@ func TestSessionManagementAPI(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestSessionMetricsAPIReadsPersistedSummary(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer client.Close()
+	sessionID := readEvent(t, client).string("session_id")
+	writeJSON(t, client, map[string]any{
+		"id": "emit-metric", "type": "fake_emit",
+		"events": []any{
+			map[string]any{"type": "turn_start", "turnIndex": 2},
+			map[string]any{
+				"type":                  "message_update",
+				"assistantMessageEvent": map[string]any{"type": "text_start"},
+			},
+			map[string]any{
+				"type": "message_end",
+				"message": map[string]any{
+					"role": "assistant", "provider": "fake", "model": "reasoning-model",
+					"stopReason": "stop", "usage": map[string]any{"output": 50},
+				},
+			},
+		},
+	})
+	for _, wantType := range []string{"turn_start", "message_update", "message_end"} {
+		if event := readEvent(t, client); event.string("type") != wantType {
+			t.Fatalf("metric source event = %#v, want %q", event, wantType)
+		}
+	}
+	if response := readEvent(t, client); response.string("id") != "emit-metric" {
+		t.Fatalf("fake_emit response = %#v", response)
+	}
+
+	unauthorized := sessionAPIRequest(
+		t, server, http.MethodGet, "/api/sessions/"+sessionID+"/metrics", nil, "",
+	)
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		unauthorized.Body.Close()
+		t.Fatalf("unauthorized metrics status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
+	}
+	unauthorized.Body.Close()
+
+	response := sessionAPIRequest(
+		t, server, http.MethodGet, "/api/sessions/"+sessionID+"/metrics", nil, testToken,
+	)
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		t.Fatalf("metrics status = %d, body = %s", response.StatusCode, body)
+	}
+	var metrics sessionMetricsResponse
+	decodeHTTPJSON(t, response, &metrics)
+	if metrics.SessionID != sessionID || metrics.SampleCount != 1 || metrics.AverageTPS == nil ||
+		*metrics.AverageTPS <= 0 || metrics.AverageTTFTMillis == nil {
+		t.Fatalf("metrics response = %#v", metrics)
+	}
+
+	methodRejected := sessionAPIRequest(
+		t, server, http.MethodPatch, "/api/sessions/"+sessionID+"/metrics", []byte(`{}`), testToken,
+	)
+	if methodRejected.StatusCode != http.StatusMethodNotAllowed || methodRejected.Header.Get("Allow") != http.MethodGet {
+		methodRejected.Body.Close()
+		t.Fatalf("metrics PATCH = (%d, Allow %q), want (405, GET)",
+			methodRejected.StatusCode, methodRejected.Header.Get("Allow"))
+	}
+	methodRejected.Body.Close()
+}
+
 func TestSessionManagementAPIRejectsInvalidUpdates(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 	client := dialWebSocket(t, server, url.Values{

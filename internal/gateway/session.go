@@ -29,6 +29,7 @@ type piSession struct {
 	onExit     func(*piSession, error)
 	onActivity func() error
 	onName     func(string) (bool, error)
+	onMetric   func(sessionMetricSample) error
 	input      chan []byte
 	inputMu    sync.Mutex
 	processEnd chan struct{}
@@ -64,6 +65,7 @@ type piSession struct {
 	internalSequence atomic.Uint64
 	internalWaiters  map[string]chan []byte
 	userSources      userSourceTracker
+	metricTracker    sessionMetricTracker
 
 	idleMu          sync.Mutex
 	idleTimer       *time.Timer
@@ -87,6 +89,7 @@ type piSessionConfig struct {
 	OnExit         func(*piSession, error)
 	OnActivity     func() error
 	OnName         func(string) (bool, error)
+	OnMetric       func(sessionMetricSample) error
 }
 
 func newPiSession(cfg piSessionConfig) *piSession {
@@ -102,6 +105,7 @@ func newPiSession(cfg piSessionConfig) *piSession {
 		onExit:          cfg.OnExit,
 		onActivity:      cfg.OnActivity,
 		onName:          cfg.OnName,
+		onMetric:        cfg.OnMetric,
 		input:           make(chan []byte, cfg.InputQueueSize),
 		processEnd:      make(chan struct{}),
 		done:            make(chan struct{}),

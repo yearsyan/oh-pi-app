@@ -80,6 +80,14 @@ data class GatewayCapabilities(
     val commands: List<GatewayCommandCapability> = emptyList(),
 )
 
+/** Gateway-observed generation performance aggregated across one session. */
+@Serializable
+data class GatewaySessionMetrics(
+    @SerialName("sample_count") val sampleCount: Long = 0L,
+    @SerialName("average_tps") val averageTps: Double? = null,
+    @SerialName("average_ttft_ms") val averageTtftMs: Double? = null,
+)
+
 /** Returns the server-owned sessions for one ohpi gateway. */
 suspend fun listGatewaySessions(gateway: String, token: String): List<SavedSession> {
     val response = gatewayHttp.get("${gatewayHttpBase(gateway)}/api/sessions") {
@@ -101,6 +109,22 @@ suspend fun getGatewayCapabilities(gateway: String, token: String, workDir: Stri
     val body = response.requireSuccess()
     return runCatching { PiJson.decodeFromString(GatewayCapabilities.serializer(), body) }
         .getOrElse { throw SessionApiException("invalid capabilities response from gateway") }
+}
+
+/** Loads persisted, gateway-observed TPS and TTFT averages for one session. */
+suspend fun getGatewaySessionMetrics(
+    gateway: String,
+    token: String,
+    sessionId: String,
+): GatewaySessionMetrics {
+    val response = gatewayHttp.get(
+        "${gatewayHttpBase(gateway)}/api/sessions/${urlEncode(sessionId)}/metrics",
+    ) {
+        authenticate(token)
+    }
+    val body = response.requireSuccess()
+    return runCatching { PiJson.decodeFromString(GatewaySessionMetrics.serializer(), body) }
+        .getOrElse { throw SessionApiException("invalid session metrics response from gateway") }
 }
 
 /** Changes a server-owned session name and returns the updated summary. */

@@ -164,6 +164,16 @@ func (m *sessionManager) get(id string) (managedSession, error) {
 	return managedSession{}, errSessionNotFound
 }
 
+func (m *sessionManager) metrics(id string) (sessionMetricsResponse, error) {
+	m.mu.Lock()
+	_, deleting := m.deleting[id]
+	m.mu.Unlock()
+	if deleting {
+		return sessionMetricsResponse{}, errSessionNotFound
+	}
+	return m.store.metrics(id)
+}
+
 func (m *sessionManager) rename(id, name string, forward bool) (managedSession, error) {
 	m.mu.Lock()
 	if _, deleting := m.deleting[id]; deleting {
@@ -292,6 +302,9 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newS
 			},
 			OnName: func(name string) (bool, error) {
 				return m.store.adoptName(id, name)
+			},
+			OnMetric: func(sample sessionMetricSample) error {
+				return m.store.appendMetric(id, sample)
 			},
 		})
 		if err := session.openReplayStore(newSession); err != nil {

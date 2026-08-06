@@ -60,6 +60,30 @@ DELETE /api/sessions/<SESSION_ID>
 
 `DELETE` 是永久操作：活动中的 pi 子进程和 WebSocket 会先被正常关闭，随后整个 `<data-dir>/sessions/<session-id>` 目录（包括 pi JSONL、历史快照和 replay WAL）都会被删除。成功返回 HTTP 204。
 
+### 查询 session 生成性能
+
+```http
+GET /api/sessions/<SESSION_ID>/metrics
+Authorization: Bearer <TOKEN>
+```
+
+该接口返回网关从 pi 实时 RPC 事件观测并独立持久化的生成性能汇总；查询不要求 session 的 pi 子进程正在运行：
+
+```json
+{
+  "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
+  "sample_count": 4,
+  "total_output_tokens": 580,
+  "total_generation_ms": 22400,
+  "average_tps": 25.892857142857142,
+  "average_ttft_ms": 812.5
+}
+```
+
+每次可测量的 assistant 模型调用形成一条样本。TTFT 是网关收到 `turn_start` 到首个有效 text、thinking 或 tool-call 流式输出的时间；生成时长从该首个输出计算到 assistant `message_end`。平均 TPS 使用 `总 output token / 总生成秒数`，而不是对单次 TPS 做算术平均。失败、中止、缺少首个流式输出或没有权威 output usage 的调用不进入汇总。
+
+尚无有效样本时，`sample_count` 和两个总数为 `0`，`average_tps`、`average_ttft_ms` 为 `null`。这些指标是网关观测值，样本不会写入对话 replay。
+
 ### 查询新会话能力
 
 ```http

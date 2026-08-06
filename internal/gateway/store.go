@@ -224,6 +224,7 @@ func (s *sessionStore) discard(id string) error {
 	for _, name := range []string{
 		historyCacheFileName,
 		replayLogFileName,
+		sessionMetricsFileName,
 	} {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("remove session gateway state %q: %w", name, err)

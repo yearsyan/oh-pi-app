@@ -182,6 +182,10 @@ interface Strings {
     val inputTokens: String
     val outputTokens: String
     val totalTokens: String
+    val generationPerformance: String
+    val averageTps: String
+    val averageTtft: String
+    val measuredCalls: String
     val usageUnavailable: String
     val emptyChatTitle: String
     val emptyChatBody: String
@@ -435,6 +439,10 @@ object EnStrings : Strings {
     override val inputTokens = "Input"
     override val outputTokens = "Output"
     override val totalTokens = "Total"
+    override val generationPerformance = "Generation performance"
+    override val averageTps = "Average TPS"
+    override val averageTtft = "Average TTFT"
+    override val measuredCalls = "Measured calls"
     override val usageUnavailable = "Usage data is not available yet"
     override val emptyChatTitle = "How can I help?"
     override val emptyChatBody = "Ask anything, or let the agent inspect your project."
@@ -686,6 +694,10 @@ object ZhStrings : Strings {
     override val inputTokens = "输入"
     override val outputTokens = "输出"
     override val totalTokens = "总计"
+    override val generationPerformance = "生成性能"
+    override val averageTps = "平均 TPS"
+    override val averageTtft = "平均 TTFT"
+    override val measuredCalls = "统计调用数"
     override val usageUnavailable = "暂时没有可用的用量数据"
     override val emptyChatTitle = "有什么可以帮你？"
     override val emptyChatBody = "随便问点什么，或让智能体检查当前项目。"

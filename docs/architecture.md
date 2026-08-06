@@ -27,6 +27,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 ├── ohpi-session.json
 ├── ohpi-history.json
 ├── ohpi-replay.log
+├── ohpi-metrics.jsonl
 └── <pi 创建的 session JSONL 文件>
 ```
 
@@ -42,6 +43,13 @@ pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
 - `ohpi-replay.log` 是当前活动 turn 的紧凑事件 WAL。ohpi 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
 - `ohpi-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
+- `ohpi-metrics.jsonl` 每次追加一条可测量 assistant 模型调用的 TTFT、生成时长和 output token。它独立于对话历史与 replay，可在 pi 子进程停止后继续查询。
+
+## 生成性能统计
+
+网关在同一 pi RPC stdout 流中关联 `turn_start`、首个有效 assistant 流式输出与最终 `message_end`。每次成功调用结束后同步追加一个小型 JSONL 样本；写入失败只记录警告，不中断模型会话。TTFT 是网关观测的端到端等待时间，TPS 则在最终 provider usage 可用后结算。HTTP 查询按总 output token 和总生成时长计算加权平均，并对 TTFT 求调用平均值。
+
+性能样本不作为 WebSocket 事件广播，也不进入 `ohpi-replay.log`。App 在刷新 pi 原生 `get_session_stats` 时并行查询 session metrics，因此重连无需依赖性能事件回放。
 
 ## 会话标题
 

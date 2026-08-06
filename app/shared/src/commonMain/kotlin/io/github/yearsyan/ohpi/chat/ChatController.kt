@@ -8,6 +8,7 @@ import io.github.yearsyan.ohpi.data.ConnState
 import io.github.yearsyan.ohpi.data.SessionSyncPhase
 import io.github.yearsyan.ohpi.net.GatewayCapabilities
 import io.github.yearsyan.ohpi.net.GatewayConnectionException
+import io.github.yearsyan.ohpi.net.GatewaySessionMetrics
 import io.github.yearsyan.ohpi.net.PiClient
 import io.github.yearsyan.ohpi.net.PiJson
 import io.github.yearsyan.ohpi.net.argsToString
@@ -16,6 +17,7 @@ import io.github.yearsyan.ohpi.net.bool
 import io.github.yearsyan.ohpi.net.buildWsUrl
 import io.github.yearsyan.ohpi.net.contentText
 import io.github.yearsyan.ohpi.net.friendlyHttpError
+import io.github.yearsyan.ohpi.net.getGatewaySessionMetrics
 import io.github.yearsyan.ohpi.net.long
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.obj
@@ -206,6 +208,9 @@ class ChatController(
     var isStreaming by mutableStateOf(false); private set
     var sessionStats by mutableStateOf<SessionStats?>(null); private set
     var sessionStatsLoading by mutableStateOf(false); private set
+    var sessionMetrics by mutableStateOf<GatewaySessionMetrics?>(null); private set
+    var sessionMetricsLoading by mutableStateOf(false); private set
+    val sessionUsageLoading: Boolean get() = sessionStatsLoading || sessionMetricsLoading
     var charRate by mutableStateOf(0f); private set
     var runningToolCount by mutableStateOf(0); private set
     private var rateWindowStart = 0L
@@ -275,6 +280,8 @@ class ChatController(
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
     private var sessionStatsRefreshQueued = false
+    private var sessionMetricsJob: Job? = null
+    private var sessionMetricsGeneration = 0L
     private var activeEntryCacheKey = ""
     private var requestedEntryCursor = ""
     private var historyTargetCursor = ""
@@ -307,6 +314,7 @@ class ChatController(
     fun prepareCreate(workDir: String = "") {
         disconnect()
         sessionStats = null
+        sessionMetrics = null
         sessionId = ""
         this.workDir = workDir
         draftWorkDir = workDir
@@ -408,6 +416,7 @@ class ChatController(
         sessionStats = null
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
+        cancelSessionMetricsRefresh(clear = true)
         beginConnection(action, sessionId, workDir, clearTimeline = true)
     }
 
@@ -594,6 +603,7 @@ class ChatController(
         syncProgress = null
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
+        cancelSessionMetricsRefresh()
         isStreaming = false
         runningToolCount = 0
         charRate = 0f
@@ -617,6 +627,7 @@ class ChatController(
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
+        cancelSessionMetricsRefresh()
         runningToolCount = 0
         val retryable = when (code.toInt()) {
             1000, 1002, 1003, 1007, 1008, 1009 -> false
@@ -643,6 +654,7 @@ class ChatController(
         isStreaming = false
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
+        cancelSessionMetricsRefresh()
         runningToolCount = 0
         if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Error
@@ -688,8 +700,46 @@ class ChatController(
         }
         sessionStatsLoading = true
         val sent = sendCommand { put("type", "get_session_stats") }
-        if (!sent) sessionStatsLoading = false
+        if (sent) {
+            refreshSessionMetrics()
+        } else {
+            sessionStatsLoading = false
+        }
         return sent
+    }
+
+    private fun refreshSessionMetrics() {
+        val targetSessionId = sessionId.takeIf { it.isNotBlank() } ?: return
+        sessionMetricsJob?.cancel()
+        val generation = ++sessionMetricsGeneration
+        sessionMetricsLoading = true
+        sessionMetricsJob = scope.launch {
+            try {
+                val resolvedGateway = resolveGateway()
+                val loaded = getGatewaySessionMetrics(resolvedGateway, token, targetSessionId)
+                if (generation == sessionMetricsGeneration && sessionId == targetSessionId) {
+                    sessionMetrics = loaded
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Session stats remain useful when connected to an older gateway
+                // or when this optional metrics request fails independently.
+            } finally {
+                if (generation == sessionMetricsGeneration) {
+                    sessionMetricsLoading = false
+                    sessionMetricsJob = null
+                }
+            }
+        }
+    }
+
+    private fun cancelSessionMetricsRefresh(clear: Boolean = false) {
+        sessionMetricsJob?.cancel()
+        sessionMetricsJob = null
+        sessionMetricsGeneration++
+        sessionMetricsLoading = false
+        if (clear) sessionMetrics = null
     }
 
     private fun finishSessionStatsRefresh(runQueuedRefresh: Boolean) {

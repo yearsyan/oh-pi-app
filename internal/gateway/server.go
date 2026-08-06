@@ -143,6 +143,11 @@ func (g *Gateway) handleSessions(writer http.ResponseWriter, request *http.Reque
 }
 
 func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Request) {
+	tail := strings.TrimPrefix(request.URL.Path, "/api/sessions/")
+	if id, ok := strings.CutSuffix(tail, "/metrics"); ok && !strings.Contains(id, "/") {
+		g.handleSessionMetrics(writer, request, id)
+		return
+	}
 	if request.Method != http.MethodGet && request.Method != http.MethodPatch && request.Method != http.MethodDelete {
 		writer.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))
 		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET, PATCH, and DELETE are allowed")
@@ -153,7 +158,7 @@ func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	id := strings.TrimPrefix(request.URL.Path, "/api/sessions/")
+	id := tail
 	if !validSessionID(id) {
 		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
 		return
@@ -203,6 +208,33 @@ func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Reques
 		writer.Header().Set("Cache-Control", "no-store")
 		writer.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (g *Gateway) handleSessionMetrics(writer http.ResponseWriter, request *http.Request, id string) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
+		return
+	}
+	if !g.authenticated(request) {
+		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
+		return
+	}
+	if !validSessionID(id) {
+		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
+		return
+	}
+	metrics, err := g.manager.metrics(id)
+	if errors.Is(err, errSessionNotFound) {
+		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
+		return
+	}
+	if err != nil {
+		g.cfg.Logger.Error("get session metrics", "session_id", id, "error", err)
+		writeHTTPError(writer, http.StatusInternalServerError, "session_metrics_failed", "could not load session metrics")
+		return
+	}
+	writeJSONResponse(writer, http.StatusOK, metrics)
 }
 
 func (g *Gateway) writeSessionManagerError(writer http.ResponseWriter, operation, id string, err error) bool {

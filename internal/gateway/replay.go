@@ -161,6 +161,7 @@ func replayableOutput(outputType string) bool {
 }
 
 func (s *piSession) handleOutput(message []byte) {
+	receivedAt := time.Now()
 	var envelope piOutputEnvelope
 	validJSON := json.Unmarshal(message, &envelope) == nil
 	if validJSON {
@@ -181,6 +182,13 @@ func (s *piSession) handleOutput(message []byte) {
 	}
 	if validJSON && envelope.Type == "response" && envelope.Command == "get_state" && envelope.Success {
 		s.adoptObservedSessionName(message)
+	}
+	if validJSON {
+		if sample := s.metricTracker.observe(message, receivedAt); sample != nil && s.onMetric != nil {
+			if err := s.onMetric(*sample); err != nil {
+				s.logger.Warn("persist session metric", "error", err)
+			}
+		}
 	}
 
 	s.replayMu.Lock()
