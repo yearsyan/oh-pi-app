@@ -22,6 +22,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -37,12 +38,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.random.Random
 import io.github.yearsyan.ohpi.appVersion
 import io.github.yearsyan.ohpi.data.AppLanguage
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
+import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
@@ -60,13 +64,16 @@ import androidx.compose.material.icons.outlined.Circle
 @Composable
 fun SettingsScreen(
     servers: List<ServerProfile>,
+    sshKeys: List<SshPrivateKey>,
     activeServerId: String,
     themeMode: ThemeMode,
     language: AppLanguage,
     onBack: (() -> Unit)?,
     onSelectServer: (String) -> Unit,
-    onSaveServer: (ServerProfile) -> Unit,
+    onSaveServer: (ServerProfile, SshPrivateKey?) -> Unit,
     onDeleteServer: (String) -> Unit,
+    onSaveSshKey: (SshPrivateKey) -> Unit,
+    onDeleteSshKey: (SshPrivateKey) -> Unit,
     onStopManagedGateway: () -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onLanguage: (AppLanguage) -> Unit,
@@ -77,6 +84,9 @@ fun SettingsScreen(
     var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ServerProfile?>(null) }
     var stopping by remember { mutableStateOf<ServerProfile?>(null) }
+    var editingKey by remember { mutableStateOf<SshPrivateKey?>(null) }
+    var addingKey by remember { mutableStateOf(false) }
+    var deletingKey by remember { mutableStateOf<SshPrivateKey?>(null) }
 
     Column(
         Modifier
@@ -133,6 +143,33 @@ fun SettingsScreen(
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(S.addServer)
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ---- managed SSH keys ----
+            SectionHeader(S.sshKeysSection)
+            if (sshKeys.isEmpty()) {
+                Text(
+                    S.sshKeysEmpty,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+            sshKeys.forEach { key ->
+                SshKeyRow(
+                    key = key,
+                    usageCount = servers.count { it.ssh.privateKeyId == key.id },
+                    onEdit = { editingKey = key },
+                    onDelete = { deletingKey = key },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            TextButton(onClick = { addingKey = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(S.sshKeyAdd)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -269,6 +306,7 @@ fun SettingsScreen(
     if (adding) {
         ServerEditDialog(
             initial = null,
+            keys = sshKeys,
             onDismiss = { adding = false },
             onSave = onSaveServer,
         )
@@ -276,6 +314,7 @@ fun SettingsScreen(
     editing?.let { server ->
         ServerEditDialog(
             initial = server,
+            keys = sshKeys,
             onDismiss = { editing = null },
             onSave = onSaveServer,
         )
@@ -299,6 +338,35 @@ fun SettingsScreen(
                 stopping = null
                 onStopManagedGateway()
             },
+        )
+    }
+    if (addingKey) {
+        SshKeyEditDialog(
+            initial = null,
+            onDismiss = { addingKey = false },
+            onSave = {
+                addingKey = false
+                onSaveSshKey(it)
+            },
+        )
+    }
+    editingKey?.let { key ->
+        SshKeyEditDialog(
+            initial = key,
+            onDismiss = { editingKey = null },
+            onSave = {
+                editingKey = null
+                onSaveSshKey(it)
+            },
+        )
+    }
+    deletingKey?.let { key ->
+        ConfirmDialog(
+            title = S.sshKeyDeleteTitle,
+            body = S.sshKeyDeleteBody(key.name),
+            confirmLabel = S.delete,
+            onDismiss = { deletingKey = null },
+            onConfirm = { onDeleteSshKey(key) },
         )
     }
 }
@@ -406,8 +474,9 @@ private fun ServerRow(
 @Composable
 fun ServerEditDialog(
     initial: ServerProfile?,
+    keys: List<SshPrivateKey> = emptyList(),
     onDismiss: () -> Unit,
-    onSave: (ServerProfile) -> Unit,
+    onSave: (ServerProfile, SshPrivateKey?) -> Unit,
 ) {
     val editor = rememberServerEditor(initial)
     val strings = S
@@ -417,15 +486,149 @@ fun ServerEditDialog(
         title = { Text(if (initial == null) S.addServer else S.editServer) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                ServerEditorFields(editor)
+                ServerEditorFields(editor, keys)
             }
         },
         confirmButton = {
             Button(onClick = {
-                editor.build(strings)?.let { profile ->
-                    onSave(profile)
+                editor.build(strings, keys)?.let { result ->
+                    onSave(result.profile, result.newKey)
                     onDismiss()
                 }
+            }) { Text(S.confirm) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(S.cancel) }
+        },
+    )
+}
+
+@Composable
+private fun SshKeyRow(
+    key: SshPrivateKey,
+    usageCount: Int,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            Icon(
+                Icons.Filled.Key,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    key.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    S.sshKeyUsage(usageCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onEdit, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = S.sshKeyEdit,
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = S.delete,
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SshKeyEditDialog(
+    initial: SshPrivateKey?,
+    onDismiss: () -> Unit,
+    onSave: (SshPrivateKey) -> Unit,
+) {
+    val strings = S
+    var name by remember { mutableStateOf(initial?.name.orEmpty()) }
+    var contents by remember { mutableStateOf(initial?.privateKey.orEmpty()) }
+    var passphrase by remember { mutableStateOf(initial?.passphrase.orEmpty()) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) S.sshKeyAdd else S.sshKeyEdit) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; error = null },
+                    label = { Text(S.sshKeyNameLabel) },
+                    placeholder = { Text(S.sshKeyNamePlaceholder) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = contents,
+                    onValueChange = { contents = it; error = null },
+                    label = { Text(S.sshPrivateKeyLabel) },
+                    minLines = 4,
+                    maxLines = 8,
+                    isError = error != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text(S.sshPrivateKeyPassphraseLabel) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (contents.isBlank()) {
+                    error = strings.sshPrivateKeyRequired
+                    return@Button
+                }
+                onSave(
+                    SshPrivateKey(
+                        id = initial?.id ?: ("key-" + Random.nextLong().toString(16)),
+                        name = name.trim().ifBlank { strings.sshKeyDefaultName },
+                        privateKey = contents.trim(),
+                        passphrase = passphrase,
+                    ),
+                )
             }) { Text(S.confirm) }
         },
         dismissButton = {

@@ -92,6 +92,7 @@ internal class GatewayTransport(
     private val profile: ServerProfile,
     private val confirmHostKey: suspend (SshHostKeyPrompt) -> Boolean,
     private val onHostKeyTrusted: (String) -> Unit,
+    installProgress: ((ManagedInstallStep) -> Unit)? = null,
 ) {
     private val mutex = Mutex()
 
@@ -107,6 +108,7 @@ internal class GatewayTransport(
         ManagedGatewayProvisioner(
             profile = profile,
             execute = ::executeCommand,
+            onProgress = installProgress ?: {},
         )
     }
 

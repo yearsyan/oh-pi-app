@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,28 +20,29 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -64,11 +67,12 @@ import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.ProviderAuthFlowState
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 
-/** First-party management UI for providers shipped with pi. */
+/** Signed-in providers, shown as a plain list; details open in a bottom sheet. */
 @Composable
-fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit) {
-    var expandedProviderId by remember { mutableStateOf<String?>(null) }
+fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit, onAddProvider: () -> Unit) {
+    var detailProviderId by remember { mutableStateOf<String?>(null) }
     var logoutTarget by remember { mutableStateOf<GatewayProvider?>(null) }
+    val configured = vm.providers.filter { it.configured }
 
     LaunchedEffect(vm.activeServerId) {
         vm.refreshProviders()
@@ -80,86 +84,39 @@ fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .safeDrawingPadding(),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        ProviderTopBar(
+            title = S.providersTitle,
+            loading = vm.providersLoading,
+            onBack = onBack,
+            onRefresh = vm::refreshProviders,
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
-            }
-            Text(
-                S.providersTitle,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            if (vm.providersLoading) {
-                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
-            }
-            IconButton(onClick = vm::refreshProviders, enabled = !vm.providersLoading) {
-                Icon(Icons.Filled.Refresh, contentDescription = S.retry)
+            IconButton(onClick = onAddProvider) {
+                Icon(Icons.Filled.Add, contentDescription = S.providerAdd)
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         when {
-            vm.providersLoading && vm.providers.isEmpty() -> {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(Modifier.size(32.dp))
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            S.providerLoading,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+            vm.providersLoading && vm.providers.isEmpty() -> ProviderLoadingBody()
+            vm.providers.isEmpty() -> ProviderEmptyBody(S.providerEmpty)
+            configured.isEmpty() -> ProviderEmptyBody(S.providerEmptyConfigured)
+            else -> ProviderList(
+                providers = configured,
+                hint = S.providersBuiltInOnlyHint,
+                onOpen = { detailProviderId = it.id },
+            )
+        }
+    }
 
-            vm.providers.isEmpty() -> {
-                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text(
-                        S.providerEmpty,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            else -> {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier =
-                        Modifier
-                            .weight(1f)
-                            .widthIn(max = 720.dp)
-                            .fillMaxWidth()
-                            .align(Alignment.CenterHorizontally)
-                            .padding(horizontal = 16.dp),
-                ) {
-                    item(key = "provider-hint") {
-                        Text(
-                            S.providersBuiltInOnlyHint,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                        )
-                    }
-                    items(vm.providers, key = { it.id }) { provider ->
-                        ProviderCard(
-                            provider = provider,
-                            expanded = expandedProviderId == provider.id,
-                            logoutRunning = vm.providerLogoutId == provider.id,
-                            onToggleModels = {
-                                expandedProviderId = if (expandedProviderId == provider.id) null else provider.id
-                            },
-                            onLogin = { method -> vm.startProviderLogin(provider, method) },
-                            onLogout = { logoutTarget = provider },
-                        )
-                    }
-                    item(key = "provider-bottom-space") { Spacer(Modifier.height(36.dp)) }
-                }
-            }
+    detailProviderId?.let { id ->
+        vm.providers.firstOrNull { it.id == id }?.let { provider ->
+            ProviderDetailSheet(
+                provider = provider,
+                logoutRunning = vm.providerLogoutId == provider.id,
+                onLogin = { method -> vm.startProviderLogin(provider, method) },
+                onLogout = { logoutTarget = provider },
+                onDismiss = { detailProviderId = null },
+            )
         }
     }
 
@@ -176,132 +133,310 @@ fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit) {
         )
     }
 
-    vm.providerAuthFlow?.let { flow ->
-        ProviderAuthDialog(
-            flow = flow,
-            onRespond = vm::respondProviderAuth,
-            onCancel = vm::cancelProviderAuth,
-            onDismiss = vm::dismissProviderAuth,
+    ProviderAuthFlowHost(vm)
+}
+
+/** Providers that are not signed in yet; the user can pick one to sign in to. */
+@Composable
+fun AddProviderScreen(vm: AppViewModel, onBack: () -> Unit) {
+    var detailProviderId by remember { mutableStateOf<String?>(null) }
+    val unconfigured = vm.providers.filter { !it.configured }
+
+    LaunchedEffect(vm.activeServerId) {
+        vm.refreshProviders()
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+    ) {
+        ProviderTopBar(
+            title = S.providerAdd,
+            loading = vm.providersLoading,
+            onBack = onBack,
+            onRefresh = vm::refreshProviders,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        when {
+            vm.providersLoading && vm.providers.isEmpty() -> ProviderLoadingBody()
+            vm.providers.isEmpty() -> ProviderEmptyBody(S.providerEmpty)
+            unconfigured.isEmpty() -> ProviderEmptyBody(S.providerEmptyUnconfigured)
+            else -> ProviderList(
+                providers = unconfigured,
+                hint = null,
+                onOpen = { detailProviderId = it.id },
+            )
+        }
+    }
+
+    detailProviderId?.let { id ->
+        vm.providers.firstOrNull { it.id == id }?.let { provider ->
+            ProviderDetailSheet(
+                provider = provider,
+                logoutRunning = false,
+                onLogin = { method -> vm.startProviderLogin(provider, method) },
+                onLogout = {},
+                onDismiss = { detailProviderId = null },
+            )
+        }
+    }
+
+    ProviderAuthFlowHost(vm)
+}
+
+@Composable
+private fun ProviderTopBar(
+    title: String,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    actions: @Composable () -> Unit = {},
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
+        }
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+        }
+        IconButton(onClick = onRefresh, enabled = !loading) {
+            Icon(Icons.Filled.Refresh, contentDescription = S.retry)
+        }
+        actions()
+    }
+}
+
+@Composable
+private fun ProviderLoadingBody() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(Modifier.size(32.dp))
+            Spacer(Modifier.height(12.dp))
+            Text(
+                S.providerLoading,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProviderEmptyBody(message: String) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Text(
+            message,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 @Composable
-private fun ProviderCard(
+private fun ColumnScope.ProviderList(
+    providers: List<GatewayProvider>,
+    hint: String?,
+    onOpen: (GatewayProvider) -> Unit,
+) {
+    LazyColumn(
+        modifier =
+            Modifier
+                .weight(1f)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
+                .align(Alignment.CenterHorizontally),
+    ) {
+        if (hint != null) {
+            item(key = "provider-hint") {
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 2.dp),
+                )
+            }
+        }
+        items(providers, key = { it.id }) { provider ->
+            ProviderRow(provider = provider, onClick = { onOpen(provider) })
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant,
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item(key = "provider-bottom-space") { Spacer(Modifier.height(36.dp)) }
+    }
+}
+
+@Composable
+private fun ProviderRow(provider: GatewayProvider, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Text(
+            provider.name,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            if (provider.models.isEmpty()) S.providerNoModels else S.providerModels(provider.models.size),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.outline,
+        )
+    }
+}
+
+/** Bottom sheet with the provider's models and sign-in / sign-out actions. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderDetailSheet(
     provider: GatewayProvider,
-    expanded: Boolean,
     logoutRunning: Boolean,
-    onToggleModels: () -> Unit,
     onLogin: (GatewayProviderAuthMethod) -> Unit,
     onLogout: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(Modifier.padding(vertical = 12.dp)) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                modifier = Modifier.padding(horizontal = 14.dp),
+        Column(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
             ) {
-                Icon(
-                    if (provider.configured) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                    contentDescription = null,
-                    tint =
-                        if (provider.configured) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.size(20.dp),
+                Text(
+                    provider.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
+                if (provider.authLabel.isNotBlank() || provider.authSource.isNotBlank()) {
                     Text(
-                        provider.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
+                        provider.authLabel.ifBlank { S.providerCredentialSource(provider.authSource) },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        if (provider.configured) S.providerConfigured else S.providerNotConfigured,
-                        style = MaterialTheme.typography.labelMedium,
-                        color =
-                            if (provider.configured) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (provider.authLabel.isNotBlank() || provider.authSource.isNotBlank()) {
-                        Text(
-                            provider.authLabel.ifBlank { S.providerCredentialSource(provider.authSource) },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier =
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+            Text(
+                if (provider.models.isEmpty()) S.providerNoModels else S.providerModels(provider.models.size),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            if (provider.models.isNotEmpty()) {
+                Column(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onToggleModels)
-                        .padding(horizontal = 14.dp, vertical = 7.dp),
-            ) {
-                Text(
-                    if (provider.models.isEmpty()) S.providerNoModels else S.providerModels(provider.models.size),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            if (expanded && provider.models.isNotEmpty()) {
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier.padding(horizontal = 14.dp),
-                )
-                provider.models.forEach { model ->
-                    ProviderModelRow(model)
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    provider.models.forEachIndexed { index, model ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                thickness = 0.5.dp,
+                                modifier = Modifier.padding(start = 20.dp),
+                            )
+                        }
+                        ProviderModelRow(model)
+                    }
                 }
             }
 
             if (provider.authMethods.isNotEmpty() || provider.storedAuthType.isNotBlank()) {
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                )
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                 provider.authMethods.forEach { method ->
                     val methodName = method.label.ifBlank { method.name }
-                    OutlinedButton(
+                    ProviderSheetAction(
+                        icon = Icons.AutoMirrored.Filled.Login,
+                        label = "${if (provider.configured) S.providerRelogin else S.providerLogin} · $methodName",
                         onClick = { onLogin(method) },
-                        enabled = !logoutRunning,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 3.dp),
-                    ) {
-                        Text(
-                            "${if (provider.configured) S.providerRelogin else S.providerLogin} · $methodName",
-                        )
-                    }
+                    )
                 }
                 if (provider.storedAuthType.isNotBlank()) {
-                    TextButton(
+                    ProviderSheetAction(
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        label = S.providerLogout,
+                        destructive = true,
+                        busy = logoutRunning,
                         onClick = onLogout,
-                        enabled = !logoutRunning,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                    ) {
-                        if (logoutRunning) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(S.providerLogout, color = MaterialTheme.colorScheme.error)
-                    }
+                    )
                 }
             }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProviderSheetAction(
+    icon: ImageVector,
+    label: String,
+    destructive: Boolean = false,
+    busy: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tint =
+        if (destructive) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.onSurface
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !busy, onClick = onClick)
+                .padding(horizontal = 20.dp, vertical = 13.dp),
+    ) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+            modifier = Modifier.weight(1f),
+        )
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
         }
     }
 }
@@ -310,7 +445,7 @@ private fun ProviderCard(
 private fun ProviderModelRow(model: GatewayProviderModel) {
     Row(
         verticalAlignment = Alignment.Top,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
     ) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -342,6 +477,18 @@ private fun ProviderModelRow(model: GatewayProviderModel) {
                 color = MaterialTheme.colorScheme.primary,
             )
         }
+    }
+}
+
+@Composable
+private fun ProviderAuthFlowHost(vm: AppViewModel) {
+    vm.providerAuthFlow?.let { flow ->
+        ProviderAuthDialog(
+            flow = flow,
+            onRespond = vm::respondProviderAuth,
+            onCancel = vm::cancelProviderAuth,
+            onDismiss = vm::dismissProviderAuth,
+        )
     }
 }
 

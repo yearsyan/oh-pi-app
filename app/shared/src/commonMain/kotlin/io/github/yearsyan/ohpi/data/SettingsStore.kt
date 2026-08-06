@@ -5,16 +5,46 @@ import kotlinx.serialization.json.Json
 
 expect fun createSettings(): Settings
 
+/** Storage backend for the managed SSH key list; iOS keeps it in the system Keychain. */
+internal interface SshKeyStorage {
+    fun read(): String
+
+    /** Persists the blob; implementations may throw on unrecoverable write failures. */
+    fun write(value: String)
+}
+
+internal expect fun createSshKeyStorage(settings: Settings): SshKeyStorage
+
+/** Plain settings-backed storage shared by platforms without a secure enclave store. */
+internal class SettingsSshKeyStorage(private val settings: Settings) : SshKeyStorage {
+    override fun read(): String = settings.getString(KEY_SSH_KEYS, "")
+
+    override fun write(value: String) {
+        settings.putString(KEY_SSH_KEYS, value)
+    }
+}
+
+private const val KEY_SSH_KEYS = "ssh_keys"
+
 private val storeJson = Json { ignoreUnknownKeys = true }
 
 /** Persists server profiles, UI preferences and legacy session-list migration data. */
 class SettingsStore(private val settings: Settings = createSettings()) {
+    private val sshKeyStorage: SshKeyStorage = createSshKeyStorage(settings)
 
     fun loadServers(): List<ServerProfile> =
         decodeList(settings.getString(KEY_SERVERS, ""))
 
     fun saveServers(servers: List<ServerProfile>) {
         settings.putString(KEY_SERVERS, encode(servers))
+    }
+
+    /** Centrally managed SSH private keys; one key can be referenced by many servers. */
+    fun loadSshKeys(): List<SshPrivateKey> =
+        decodeList(sshKeyStorage.read())
+
+    fun saveSshKeys(keys: List<SshPrivateKey>) {
+        sshKeyStorage.write(encode(keys))
     }
 
     var activeServerId: String

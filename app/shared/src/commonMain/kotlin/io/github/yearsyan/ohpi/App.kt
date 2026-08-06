@@ -77,7 +77,7 @@ fun App(
                                     .weight(1f),
                         ) {
                             if (!vm.hasServers) {
-                                OnboardingScreen(onSave = vm::saveServer)
+                                OnboardingScreen(keys = vm.sshKeys, onSave = vm::saveServer)
                             } else {
                                 HomeScreen(vm)
                             }

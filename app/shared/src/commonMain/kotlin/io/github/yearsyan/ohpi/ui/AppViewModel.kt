@@ -15,6 +15,8 @@ import io.github.yearsyan.ohpi.data.SavedSession
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SettingsStore
+import io.github.yearsyan.ohpi.data.SshAuthentication
+import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.FileApiException
@@ -94,6 +96,7 @@ class AppViewModel(
 
     // ---- persisted state ----
     var servers = mutableStateListOf<ServerProfile>(); private set
+    var sshKeys = mutableStateListOf<SshPrivateKey>(); private set
     var activeServerId by mutableStateOf(""); private set
     var themeMode by mutableStateOf(ThemeMode.System); private set
     var language by mutableStateOf(AppLanguage.System); private set
@@ -128,6 +131,7 @@ class AppViewModel(
 
     init {
         servers.addAll(store.loadServers())
+        sshKeys.addAll(store.loadSshKeys())
         activeServerId = store.activeServerId
         themeMode = store.themeMode
         language = store.language
@@ -175,22 +179,81 @@ class AppViewModel(
 
     // ---- servers ----
 
-    fun saveServer(profile: ServerProfile) {
-        val idx = servers.indexOfFirst { it.id == profile.id }
+    fun saveServer(profile: ServerProfile, newKey: SshPrivateKey? = null) {
+        // A profile referencing a key that failed to persist would be unusable.
+        if (newKey != null && !saveSshKey(newKey)) return
+        // Key material lives only in the managed key store; profiles keep the id.
+        val stripped =
+            profile.copy(
+                ssh = profile.ssh.copy(privateKey = "", privateKeyPassphrase = "")
+            )
+        val idx = servers.indexOfFirst { it.id == stripped.id }
         val previous = servers.getOrNull(idx)
         // The server editor never manages port forwards; keep them across edits.
         val merged =
-            if (previous != null) profile.copy(portForwards = previous.portForwards) else profile
+            if (previous != null) stripped.copy(portForwards = previous.portForwards) else stripped
         if (idx >= 0) servers[idx] = merged else servers.add(merged)
         store.saveServers(servers.toList())
         if (activeServerId.isBlank()) {
-            selectServer(profile.id)
-        } else if (profile.id == activeServerId && previous != merged) {
+            selectServer(stripped.id)
+        } else if (stripped.id == activeServerId && previous != merged) {
             resetActiveConnections()
             activeChatId = null
             loadSessionsForActive()
             syncPortForwards()
         }
+    }
+
+    // ---- managed SSH keys ----
+
+    /** Adds or replaces a managed key; returns false when secure storage rejects the write. */
+    fun saveSshKey(key: SshPrivateKey): Boolean {
+        val rollback = sshKeys.toList()
+        val idx = sshKeys.indexOfFirst { it.id == key.id }
+        if (idx >= 0) sshKeys[idx] = key else sshKeys.add(key)
+        return persistSshKeys(rollback)
+    }
+
+    /** Removes a key and clears it from every server that referenced it. */
+    fun deleteSshKey(id: String) {
+        val rollback = sshKeys.toList()
+        sshKeys.removeAll { it.id == id }
+        if (!persistSshKeys(rollback)) return
+        var changed = false
+        servers.forEachIndexed { index, server ->
+            if (server.ssh.privateKeyId == id) {
+                servers[index] = server.copy(ssh = server.ssh.copy(privateKeyId = ""))
+                changed = true
+            }
+        }
+        if (changed) store.saveServers(servers.toList())
+    }
+
+    /** Persists the key list, restoring [rollback] and reporting when storage fails. */
+    private fun persistSshKeys(rollback: List<SshPrivateKey>): Boolean {
+        return try {
+            store.saveSshKeys(sshKeys.toList())
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            sshKeys.clear()
+            sshKeys.addAll(rollback)
+            toast(stringsProvider().sshKeyStorageFailed, Toast.Kind.Error)
+            false
+        }
+    }
+
+    /** Injects the referenced managed key's material for connecting; never persisted. */
+    private fun ServerProfile.withResolvedSshKey(): ServerProfile {
+        if (!connectionMode.usesSsh || ssh.authentication != SshAuthentication.PrivateKey) {
+            return this
+        }
+        if (ssh.privateKey.isNotBlank()) return this
+        val key = sshKeys.firstOrNull { it.id == ssh.privateKeyId } ?: return this
+        return copy(
+            ssh = ssh.copy(privateKey = key.privateKey, privateKeyPassphrase = key.passphrase)
+        )
     }
 
     fun deleteServer(id: String) {
@@ -796,7 +859,7 @@ class AppViewModel(
         gatewayTransport?.takeIf { gatewayTransportServerId == server.id }?.let { return it }
         gatewayTransport?.close()
         return GatewayTransport(
-            profile = server,
+            profile = server.withResolvedSshKey(),
             confirmHostKey = ::confirmSshHostKey,
             onHostKeyTrusted = { fingerprint -> rememberTrustedHostKey(server.id, fingerprint) },
         ).also {
@@ -851,7 +914,7 @@ class AppViewModel(
         forwardManager?.takeIf { forwardManagerServerId == server.id }?.let { return it }
         forwardManager?.close()
         return PortForwardManager(
-            profile = server,
+            profile = server.withResolvedSshKey(),
             forwardsProvider = {
                 servers.firstOrNull { it.id == server.id }?.portForwards.orEmpty()
             },

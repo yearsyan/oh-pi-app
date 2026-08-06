@@ -51,6 +51,44 @@ interface Strings {
     val sshPrivateKeyRequired: String
     val sshGatewayTlsInvalid: String
 
+    // first-run onboarding wizard
+    val onboardingChooseTitle: String
+    val onboardingNewMachineTitle: String
+    val onboardingNewMachineBody: String
+    val onboardingNewMachineFormBody: String
+    val onboardingExistingTitle: String
+    val onboardingExistingBody: String
+    val onboardingExistingFormBody: String
+    val installAndConnect: String
+    val installTitle: (String) -> String
+    val installHint: String
+    val installStepConnect: String
+    val installStepDetect: String
+    val installStepPi: String
+    val installStepPiHint: String
+    val installStepDownload: String
+    val installStepService: String
+    val installStepStart: String
+    val installRetry: String
+    val installCancel: String
+    val installBackToForm: String
+
+    // managed SSH keys
+    val sshKeysSection: String
+    val sshKeysEmpty: String
+    val sshKeyAdd: String
+    val sshKeyEdit: String
+    val sshKeyDeleteTitle: String
+    val sshKeyDeleteBody: (String) -> String
+    val sshKeyUsage: (Int) -> String
+    val sshKeyCreateNew: String
+    val sshKeySelectPlaceholder: String
+    val sshKeyNameLabel: String
+    val sshKeyNamePlaceholder: String
+    val sshKeyDefaultName: String
+    val sshKeyRequired: String
+    val sshKeyStorageFailed: String
+
     // SSH host verification
     val sshHostKeyTitle: String
     val sshHostKeyChangedTitle: String
@@ -251,6 +289,9 @@ interface Strings {
     val providerLogoutBody: (String) -> String
     val providerLoading: String
     val providerEmpty: String
+    val providerAdd: String
+    val providerEmptyConfigured: String
+    val providerEmptyUnconfigured: String
     val providerLoadFailed: (String) -> String
     val providerConnecting: String
     val providerConnectionClosed: String
@@ -352,6 +393,52 @@ object EnStrings : Strings {
     override val sshPasswordRequired = "SSH password is required"
     override val sshPrivateKeyRequired = "Private key contents are required"
     override val sshGatewayTlsInvalid = "SSH mode requires ws:// or http://; the SSH tunnel already provides encryption"
+
+    override val onboardingChooseTitle = "Add your first machine"
+    override val onboardingNewMachineTitle = "Set up a new machine"
+    override val onboardingNewMachineBody =
+        "Recommended — you only need SSH access. The app installs and starts the gateway for you."
+    override val onboardingNewMachineFormBody =
+        "Enter the SSH login of the machine. The app will install pi and the gateway for this user, then start them automatically."
+    override val onboardingExistingTitle = "Connect to an installed gateway"
+    override val onboardingExistingBody = "The ohpi gateway is already running on the machine."
+    override val onboardingExistingFormBody =
+        "Connect directly over the network, or through an SSH tunnel when the gateway is not exposed."
+    override val installAndConnect = "Install & connect"
+    override val installTitle = { target: String -> "Setting up $target" }
+    override val installHint =
+        "Keep the app open. A first-time setup can take a few minutes while runtimes are downloaded."
+    override val installStepConnect = "Connecting over SSH"
+    override val installStepDetect = "Detecting remote system"
+    override val installStepPi = "Preparing pi runtime"
+    override val installStepPiHint = "Installs Node.js and pi when missing — this can take a few minutes"
+    override val installStepDownload = "Downloading gateway"
+    override val installStepService = "Installing gateway service"
+    override val installStepStart = "Starting & verifying"
+    override val installRetry = "Retry"
+    override val installCancel = "Cancel"
+    override val installBackToForm = "Back"
+
+    override val sshKeysSection = "SSH keys"
+    override val sshKeysEmpty =
+        "No keys yet. A stored key can be shared by any number of machines."
+    override val sshKeyAdd = "Add key"
+    override val sshKeyEdit = "Edit key"
+    override val sshKeyDeleteTitle = "Delete SSH key?"
+    override val sshKeyDeleteBody = { name: String ->
+        "This removes \"$name\" from this device. Servers using it will need another key or password."
+    }
+    override val sshKeyUsage = { count: Int ->
+        if (count == 0) "Not used by any server"
+        else "Used by $count ${if (count == 1) "server" else "servers"}"
+    }
+    override val sshKeyCreateNew = "New key…"
+    override val sshKeySelectPlaceholder = "Select a key"
+    override val sshKeyNameLabel = "Key name"
+    override val sshKeyNamePlaceholder = "My workstation key"
+    override val sshKeyDefaultName = "SSH key"
+    override val sshKeyRequired = "Select a key or create a new one"
+    override val sshKeyStorageFailed = "Could not save the key to secure storage"
 
     override val sshHostKeyTitle = "Trust this SSH server?"
     override val sshHostKeyChangedTitle = "SSH host key changed"
@@ -558,6 +645,9 @@ object EnStrings : Strings {
     }
     override val providerLoading = "Loading providers…"
     override val providerEmpty = "This pi installation did not report any built-in providers."
+    override val providerAdd = "Add provider"
+    override val providerEmptyConfigured = "No providers signed in yet. Tap + to sign in to one."
+    override val providerEmptyUnconfigured = "Every built-in provider is already signed in."
     override val providerLoadFailed = { error: String -> "Could not load providers: $error" }
     override val providerConnecting = "Connecting to the provider login…"
     override val providerConnectionClosed = "The provider login connection closed"
@@ -661,6 +751,49 @@ object ZhStrings : Strings {
     override val sshPasswordRequired = "SSH 密码不能为空"
     override val sshPrivateKeyRequired = "私钥内容不能为空"
     override val sshGatewayTlsInvalid = "SSH 模式需使用 ws:// 或 http://；SSH 隧道本身已提供加密"
+
+    override val onboardingChooseTitle = "添加你的第一台机器"
+    override val onboardingNewMachineTitle = "在新机器上安装"
+    override val onboardingNewMachineBody =
+        "推荐方式——只需 SSH 登录信息，App 会自动完成网关的安装与启动。"
+    override val onboardingNewMachineFormBody =
+        "填写机器的 SSH 登录信息。App 将为该用户安装 pi 与网关，并自动启动。"
+    override val onboardingExistingTitle = "连接已安装的网关"
+    override val onboardingExistingBody = "机器上已经运行着 ohpi 网关。"
+    override val onboardingExistingFormBody =
+        "可以直接通过网络连接，也可以在网关未暴露时通过 SSH 隧道连接。"
+    override val installAndConnect = "安装并连接"
+    override val installTitle = { target: String -> "正在配置 $target" }
+    override val installHint = "请保持 App 在前台。首次安装需要下载运行时，可能需要几分钟。"
+    override val installStepConnect = "通过 SSH 连接"
+    override val installStepDetect = "检测远程系统"
+    override val installStepPi = "准备 pi 运行时"
+    override val installStepPiHint = "缺少时会自动安装 Node.js 与 pi，可能需要几分钟"
+    override val installStepDownload = "下载网关"
+    override val installStepService = "安装网关服务"
+    override val installStepStart = "启动并验证"
+    override val installRetry = "重试"
+    override val installCancel = "取消"
+    override val installBackToForm = "返回"
+
+    override val sshKeysSection = "SSH 密钥"
+    override val sshKeysEmpty = "暂无密钥。一个已保存的密钥可以给多台机器使用。"
+    override val sshKeyAdd = "添加密钥"
+    override val sshKeyEdit = "编辑密钥"
+    override val sshKeyDeleteTitle = "删除 SSH 密钥？"
+    override val sshKeyDeleteBody = { name: String ->
+        "这只会从本设备移除「$name」。使用该密钥的服务器需要改用其他密钥或密码。"
+    }
+    override val sshKeyUsage = { count: Int ->
+        if (count == 0) "未被任何服务器使用" else "被 $count 台服务器使用"
+    }
+    override val sshKeyCreateNew = "新建密钥…"
+    override val sshKeySelectPlaceholder = "选择密钥"
+    override val sshKeyNameLabel = "密钥名称"
+    override val sshKeyNamePlaceholder = "我的工作机密钥"
+    override val sshKeyDefaultName = "SSH 密钥"
+    override val sshKeyRequired = "请选择或新建一个密钥"
+    override val sshKeyStorageFailed = "无法将密钥写入安全存储"
 
     override val sshHostKeyTitle = "信任这台 SSH 服务器？"
     override val sshHostKeyChangedTitle = "SSH 主机密钥已变化"
@@ -865,6 +998,9 @@ object ZhStrings : Strings {
     }
     override val providerLoading = "正在加载 Provider…"
     override val providerEmpty = "当前 pi 安装没有返回任何内置 Provider。"
+    override val providerAdd = "添加 Provider"
+    override val providerEmptyConfigured = "尚未登录任何 Provider。点击右上角 + 登录。"
+    override val providerEmptyUnconfigured = "所有内置 Provider 均已登录。"
     override val providerLoadFailed = { error: String -> "无法加载 Provider：$error" }
     override val providerConnecting = "正在连接 Provider 登录…"
     override val providerConnectionClosed = "Provider 登录连接已关闭"

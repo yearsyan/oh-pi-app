@@ -3,6 +3,7 @@ package io.github.yearsyan.ohpi.data
 import io.github.yearsyan.ohpi.net.PiJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ServerProfileSerializationTest {
     @Test
@@ -18,7 +19,7 @@ class ServerProfileSerializationTest {
     }
 
     @Test
-    fun sshProfileRoundTripsTrustedFingerprintAndInMemoryKey() {
+    fun sshProfilePersistsKeyReferenceButNotKeyMaterial() {
         val original =
             ServerProfile(
                 id = "ssh",
@@ -31,14 +32,24 @@ class ServerProfileSerializationTest {
                         host = "ssh.example",
                         username = "pi",
                         authentication = SshAuthentication.PrivateKey,
-                        privateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nkey\n-----END OPENSSH PRIVATE KEY-----",
+                        privateKeyId = "key-abc",
                         hostKeySha256 = "SHA256:trusted",
+                        privateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nkey\n-----END OPENSSH PRIVATE KEY-----",
+                        privateKeyPassphrase = "passphrase",
                     ),
             )
 
-        val decoded = PiJson.decodeFromString<ServerProfile>(PiJson.encodeToString(original))
+        val encoded = PiJson.encodeToString(original)
+        val decoded = PiJson.decodeFromString<ServerProfile>(encoded)
 
-        assertEquals(original, decoded)
+        // The managed-key id and trust survive; injected key material does not.
+        assertEquals(original.copy(ssh = original.ssh.copy(privateKey = "", privateKeyPassphrase = "")), decoded)
+        assertEquals("key-abc", decoded.ssh.privateKeyId)
+        assertEquals("SHA256:trusted", decoded.ssh.hostKeySha256)
+        assertEquals("", decoded.ssh.privateKey)
+        assertEquals("", decoded.ssh.privateKeyPassphrase)
+        assertTrue(!encoded.contains("OPENSSH PRIVATE KEY"))
+        assertTrue(!encoded.contains("passphrase"))
     }
 
     @Test

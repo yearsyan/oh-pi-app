@@ -1,15 +1,25 @@
 package io.github.yearsyan.ohpi.ui.screens
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -30,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshAuthentication
+import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.SshServerProfile
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.secureRandomHex
@@ -44,6 +55,48 @@ internal const val DefaultGatewayPort = 18080
 
 /** Fixed SSH-mode backend address on iOS: ohpi as seen by the SSH server itself. */
 private const val FixedLoopbackHost = "127.0.0.1"
+
+/** The outcome of a successfully validated server editor: a profile plus any new managed key. */
+internal data class ServerEditorResult(
+    val profile: ServerProfile,
+    val newKey: SshPrivateKey? = null,
+)
+
+/**
+ * Selection state for private-key authentication: either one of the centrally
+ * managed keys or a freshly pasted key that should be imported on save.
+ */
+internal class SshKeySelectionState(initialKeyId: String = "") {
+    var selectedKeyId by mutableStateOf(initialKeyId)
+    var creatingNew by mutableStateOf(false)
+    var newKeyName by mutableStateOf("")
+    var newKeyContents by mutableStateOf("")
+    var newKeyPassphrase by mutableStateOf("")
+
+    /** With no managed keys at all, importing a new key is the only option. */
+    fun effectiveCreatingNew(keys: List<SshPrivateKey>): Boolean =
+        creatingNew || keys.isEmpty()
+
+    fun validate(strings: Strings, keys: List<SshPrivateKey>): String? =
+        when {
+            effectiveCreatingNew(keys) && newKeyContents.isBlank() ->
+                strings.sshPrivateKeyRequired
+            !effectiveCreatingNew(keys) && keys.none { it.id == selectedKeyId } ->
+                strings.sshKeyRequired
+            else -> null
+        }
+
+    /** Builds the key to import, or null when an existing key is selected. */
+    fun buildNewKey(strings: Strings, keys: List<SshPrivateKey>): SshPrivateKey? {
+        if (!effectiveCreatingNew(keys)) return null
+        return SshPrivateKey(
+            id = "key-" + Random.nextLong().toString(16),
+            name = newKeyName.trim().ifBlank { strings.sshKeyDefaultName },
+            privateKey = newKeyContents.trim(),
+            passphrase = newKeyPassphrase,
+        )
+    }
+}
 
 internal class ServerEditorState(initial: ServerProfile?) {
     private val id = initial?.id ?: Random.nextLong().toString(16)
@@ -61,8 +114,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
     var sshAuthentication by
         mutableStateOf(initial?.ssh?.authentication ?: SshAuthentication.Password)
     var sshPassword by mutableStateOf(initial?.ssh?.password.orEmpty())
-    var sshPrivateKey by mutableStateOf(initial?.ssh?.privateKey.orEmpty())
-    var sshPrivateKeyPassphrase by mutableStateOf(initial?.ssh?.privateKeyPassphrase.orEmpty())
+    val keySelection = SshKeySelectionState(initial?.ssh?.privateKeyId.orEmpty())
     var sshHostKeySha256 by mutableStateOf(initial?.ssh?.hostKeySha256.orEmpty())
     var error by mutableStateOf<String?>(null)
 
@@ -70,7 +122,7 @@ internal class ServerEditorState(initial: ServerProfile?) {
         error = null
     }
 
-    fun build(strings: Strings): ServerProfile? {
+    fun build(strings: Strings, keys: List<SshPrivateKey> = emptyList()): ServerEditorResult? {
         val parsedGatewayPort = gatewayPort.toIntOrNull()
         val parsedSshPort = sshPort.toIntOrNull()
         // On iOS the SSH backend address is fixed to the loopback address: the
@@ -80,6 +132,8 @@ internal class ServerEditorState(initial: ServerProfile?) {
         val effectiveGatewayHost = if (fixedLoopback) FixedLoopbackHost else gatewayHost.trim()
         val effectiveGatewayTls = if (fixedLoopback) false else gatewayTls
         val effectiveGatewayPort = if (managed) DefaultGatewayPort else parsedGatewayPort
+        val usesPrivateKey =
+            connectionMode.usesSsh && sshAuthentication == SshAuthentication.PrivateKey
         error =
             when {
                 effectiveGatewayHost.isBlank() -> strings.serverHostRequired
@@ -93,13 +147,12 @@ internal class ServerEditorState(initial: ServerProfile?) {
                 connectionMode.usesSsh &&
                     sshAuthentication == SshAuthentication.Password &&
                     sshPassword.isEmpty() -> strings.sshPasswordRequired
-                connectionMode.usesSsh &&
-                    sshAuthentication == SshAuthentication.PrivateKey &&
-                    sshPrivateKey.isBlank() -> strings.sshPrivateKeyRequired
+                usesPrivateKey -> keySelection.validate(strings, keys)
                 else -> null
             }
         if (error != null) return null
 
+        val newKey = if (usesPrivateKey) keySelection.buildNewKey(strings, keys) else null
         val ssh =
             if (connectionMode.usesSsh) {
                 SshServerProfile(
@@ -108,27 +161,23 @@ internal class ServerEditorState(initial: ServerProfile?) {
                     username = sshUsername.trim(),
                     authentication = sshAuthentication,
                     password = sshPassword.takeIf { sshAuthentication == SshAuthentication.Password }.orEmpty(),
-                    privateKey =
-                        sshPrivateKey
-                            .takeIf { sshAuthentication == SshAuthentication.PrivateKey }
-                            .orEmpty(),
-                    privateKeyPassphrase =
-                        sshPrivateKeyPassphrase
-                            .takeIf { sshAuthentication == SshAuthentication.PrivateKey }
-                            .orEmpty(),
+                    privateKeyId =
+                        if (usesPrivateKey) (newKey?.id ?: keySelection.selectedKeyId) else "",
                     hostKeySha256 = sshHostKeySha256.trim(),
                 )
             } else {
                 SshServerProfile()
             }
-        return ServerProfile(
-            id = id,
-            name = name.trim(),
-            url = buildGatewayUrl(effectiveGatewayHost, effectiveGatewayPort ?: DefaultGatewayPort, effectiveGatewayTls),
-            token = if (managed) token.ifBlank { secureRandomHex(32) } else token.trim(),
-            connectionMode = connectionMode,
-            ssh = ssh,
-        )
+        val profile =
+            ServerProfile(
+                id = id,
+                name = name.trim().ifBlank { if (connectionMode.usesSsh) sshHost.trim() else "" },
+                url = buildGatewayUrl(effectiveGatewayHost, effectiveGatewayPort ?: DefaultGatewayPort, effectiveGatewayTls),
+                token = if (managed) token.ifBlank { secureRandomHex(32) } else token.trim(),
+                connectionMode = connectionMode,
+                ssh = ssh,
+            )
+        return ServerEditorResult(profile, newKey)
     }
 }
 
@@ -137,7 +186,11 @@ internal fun rememberServerEditor(initial: ServerProfile?): ServerEditorState =
     remember(initial) { ServerEditorState(initial) }
 
 @Composable
-internal fun ServerEditorFields(editor: ServerEditorState) {
+internal fun ServerEditorFields(
+    editor: ServerEditorState,
+    keys: List<SshPrivateKey> = emptyList(),
+    modes: List<ServerConnectionMode> = ServerConnectionMode.entries,
+) {
     OutlinedTextField(
         value = editor.name,
         onValueChange = { editor.name = it; editor.clearError() },
@@ -156,11 +209,14 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
     )
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
         val options =
-            listOf(
-                ServerConnectionMode.Direct to S.directConnection,
-                ServerConnectionMode.Ssh to S.sshConnection,
-                ServerConnectionMode.ManagedSsh to S.managedSshConnection,
-            )
+            modes.map { mode ->
+                mode to
+                    when (mode) {
+                        ServerConnectionMode.Direct -> S.directConnection
+                        ServerConnectionMode.Ssh -> S.sshConnection
+                        ServerConnectionMode.ManagedSsh -> S.managedSshConnection
+                    }
+            }
         options.forEachIndexed { index, (mode, label) ->
             SegmentedButton(
                 selected = editor.connectionMode == mode,
@@ -278,56 +334,15 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
         )
         Spacer(Modifier.height(10.dp))
 
-        Text(
-            S.sshAuthenticationLabel,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 6.dp),
+        SshAuthenticationFields(
+            authentication = editor.sshAuthentication,
+            onAuthenticationChange = { editor.sshAuthentication = it; editor.clearError() },
+            password = editor.sshPassword,
+            onPasswordChange = { editor.sshPassword = it; editor.clearError() },
+            keySelection = editor.keySelection,
+            keys = keys,
+            onFieldEdited = editor::clearError,
         )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            val options =
-                listOf(
-                    SshAuthentication.Password to S.sshPasswordAuthentication,
-                    SshAuthentication.PrivateKey to S.sshPrivateKeyAuthentication,
-                )
-            options.forEachIndexed { index, (authentication, label) ->
-                SegmentedButton(
-                    selected = editor.sshAuthentication == authentication,
-                    onClick = { editor.sshAuthentication = authentication; editor.clearError() },
-                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                ) { Text(label) }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-
-        if (editor.sshAuthentication == SshAuthentication.Password) {
-            OutlinedTextField(
-                value = editor.sshPassword,
-                onValueChange = { editor.sshPassword = it; editor.clearError() },
-                label = { Text(S.sshPasswordLabel) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            OutlinedTextField(
-                value = editor.sshPrivateKey,
-                onValueChange = { editor.sshPrivateKey = it; editor.clearError() },
-                label = { Text(S.sshPrivateKeyLabel) },
-                minLines = 4,
-                maxLines = 8,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = editor.sshPrivateKeyPassphrase,
-                onValueChange = { editor.sshPrivateKeyPassphrase = it; editor.clearError() },
-                label = { Text(S.sshPrivateKeyPassphraseLabel) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
 
         Spacer(Modifier.height(8.dp))
         if (editor.sshHostKeySha256.isBlank()) {
@@ -361,6 +376,153 @@ internal fun ServerEditorFields(editor: ServerEditorState) {
             it,
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+/**
+ * Password-or-key authentication controls shared by the server editor and the
+ * first-run onboarding wizard.
+ */
+@Composable
+internal fun SshAuthenticationFields(
+    authentication: SshAuthentication,
+    onAuthenticationChange: (SshAuthentication) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    keySelection: SshKeySelectionState,
+    keys: List<SshPrivateKey>,
+    onFieldEdited: () -> Unit = {},
+) {
+    Text(
+        S.sshAuthenticationLabel,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        val options =
+            listOf(
+                SshAuthentication.Password to S.sshPasswordAuthentication,
+                SshAuthentication.PrivateKey to S.sshPrivateKeyAuthentication,
+            )
+        options.forEachIndexed { index, (option, label) ->
+            SegmentedButton(
+                selected = authentication == option,
+                onClick = { onAuthenticationChange(option) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+            ) { Text(label) }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+
+    if (authentication == SshAuthentication.Password) {
+        OutlinedTextField(
+            value = password,
+            onValueChange = onPasswordChange,
+            label = { Text(S.sshPasswordLabel) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    } else {
+        SshKeyPickerFields(keySelection = keySelection, keys = keys, onFieldEdited = onFieldEdited)
+    }
+}
+
+/**
+ * Managed-key picker: choose one of the app's stored keys or import a new one.
+ * Key material lives in the key store so one key can serve many machines.
+ */
+@Composable
+internal fun SshKeyPickerFields(
+    keySelection: SshKeySelectionState,
+    keys: List<SshPrivateKey>,
+    onFieldEdited: () -> Unit = {},
+) {
+    val creatingNew = keySelection.effectiveCreatingNew(keys)
+    if (keys.isNotEmpty()) {
+        var expanded by remember { mutableStateOf(false) }
+        val selectedName =
+            if (creatingNew) S.sshKeyCreateNew
+            else keys.firstOrNull { it.id == keySelection.selectedKeyId }?.name
+                ?: S.sshKeySelectPlaceholder
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Filled.Key,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    selectedName,
+                    modifier = Modifier.weight(1f),
+                    color =
+                        if (creatingNew || keys.any { it.id == keySelection.selectedKeyId }) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                )
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                keys.forEach { key ->
+                    DropdownMenuItem(
+                        text = { Text(key.name) },
+                        onClick = {
+                            keySelection.selectedKeyId = key.id
+                            keySelection.creatingNew = false
+                            expanded = false
+                            onFieldEdited()
+                        },
+                    )
+                }
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(S.sshKeyCreateNew) },
+                    onClick = {
+                        keySelection.creatingNew = true
+                        keySelection.selectedKeyId = ""
+                        expanded = false
+                        onFieldEdited()
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+    }
+
+    if (creatingNew) {
+        OutlinedTextField(
+            value = keySelection.newKeyName,
+            onValueChange = { keySelection.newKeyName = it; onFieldEdited() },
+            label = { Text(S.sshKeyNameLabel) },
+            placeholder = { Text(S.sshKeyNamePlaceholder) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = keySelection.newKeyContents,
+            onValueChange = { keySelection.newKeyContents = it; onFieldEdited() },
+            label = { Text(S.sshPrivateKeyLabel) },
+            minLines = 4,
+            maxLines = 8,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = keySelection.newKeyPassphrase,
+            onValueChange = { keySelection.newKeyPassphrase = it; onFieldEdited() },
+            label = { Text(S.sshPrivateKeyPassphraseLabel) },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

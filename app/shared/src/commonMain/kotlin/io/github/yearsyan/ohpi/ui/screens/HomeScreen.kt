@@ -75,6 +75,9 @@ internal data object SettingsRoute
 internal data object ProvidersRoute
 
 @Serializable
+internal data object AddProviderRoute
+
+@Serializable
 internal data object LicensesRoute
 
 @Serializable
@@ -214,6 +217,7 @@ fun HomeScreen(vm: AppViewModel) {
             composable<SettingsRoute> {
                 SettingsScreen(
                     servers = vm.servers,
+                    sshKeys = vm.sshKeys,
                     activeServerId = vm.activeServerId,
                     themeMode = vm.themeMode,
                     language = vm.language,
@@ -221,6 +225,8 @@ fun HomeScreen(vm: AppViewModel) {
                     onSelectServer = ::selectServer,
                     onSaveServer = vm::saveServer,
                     onDeleteServer = vm::deleteServer,
+                    onSaveSshKey = vm::saveSshKey,
+                    onDeleteSshKey = { vm.deleteSshKey(it.id) },
                     onStopManagedGateway = vm::stopManagedGateway,
                     onThemeMode = vm::updateThemeMode,
                     onLanguage = vm::updateLanguage,
@@ -230,7 +236,15 @@ fun HomeScreen(vm: AppViewModel) {
             }
 
             composable<ProvidersRoute> {
-                ProvidersScreen(vm = vm, onBack = { navController.popBackStack() })
+                ProvidersScreen(
+                    vm = vm,
+                    onBack = { navController.popBackStack() },
+                    onAddProvider = { navController.navigate(AddProviderRoute) },
+                )
+            }
+
+            composable<AddProviderRoute> {
+                AddProviderScreen(vm = vm, onBack = { navController.popBackStack() })
             }
 
             composable<LicensesRoute> {

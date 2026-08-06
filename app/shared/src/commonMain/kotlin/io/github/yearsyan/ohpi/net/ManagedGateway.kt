@@ -50,6 +50,15 @@ internal data class ManagedHostEnvironment(
         get() = installedVersion.startsWith("ohpi-gateway ")
 }
 
+/** Stages of a managed (app-supervised) gateway installation, surfaced as setup progress. */
+enum class ManagedInstallStep {
+    DetectingSystem,
+    InstallingPi,
+    DownloadingGateway,
+    InstallingGateway,
+    StartingGateway,
+}
+
 internal data class ManagedGatewayArtifact(
     val version: String,
     val fileName: String,
@@ -187,17 +196,21 @@ internal class ManagedGatewayProvisioner(
     private val profile: ServerProfile,
     private val execute: suspend (command: String, stdin: ByteArray, timeoutMillis: Int) -> SshCommandResult,
     private val artifactSource: ManagedGatewayArtifactSource = GitHubManagedGatewayArtifactSource,
+    private val onProgress: (ManagedInstallStep) -> Unit = {},
 ) {
     suspend fun ensureRunning(forceRestart: Boolean = false) {
+        onProgress(ManagedInstallStep.DetectingSystem)
         var environment = probe()
         validateEnvironment(environment, requirePi = false)
         if (environment.piPath.isBlank() || environment.piEnvironmentPath.isBlank()) {
+            onProgress(ManagedInstallStep.InstallingPi)
             runChecked(
                 piInstallCommand(environment),
                 piInstallScript(environment),
                 "install pi",
                 timeoutMillis = 600_000,
             )
+            onProgress(ManagedInstallStep.DetectingSystem)
             environment = probe()
         }
         validateEnvironment(environment)
@@ -236,9 +249,14 @@ internal class ManagedGatewayProvisioner(
 
         val artifact =
             if (environment.installed) null
-            else artifactSource.download(environment.os, environment.architecture)
+            else {
+                onProgress(ManagedInstallStep.DownloadingGateway)
+                artifactSource.download(environment.os, environment.architecture)
+            }
+        onProgress(ManagedInstallStep.InstallingGateway)
         provision(environment, artifact)
 
+        onProgress(ManagedInstallStep.StartingGateway)
         repeat(5) { attempt ->
             if (attempt > 0) delay(500)
             environment = probe()

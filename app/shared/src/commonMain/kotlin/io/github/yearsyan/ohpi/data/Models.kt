@@ -1,6 +1,7 @@
 package io.github.yearsyan.ohpi.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 enum class ServerConnectionMode {
@@ -28,11 +29,23 @@ data class SshServerProfile(
     val username: String = "",
     val authentication: SshAuthentication = SshAuthentication.Password,
     val password: String = "",
-    /** Private key contents in OpenSSH or PEM form; no filesystem path is used. */
-    val privateKey: String = "",
-    val privateKeyPassphrase: String = "",
+    /** Id of a centrally managed private key; one key can serve many machines. */
+    val privateKeyId: String = "",
     /** Explicitly trusted OpenSSH SHA-256 fingerprint, for example SHA256:abc. */
     val hostKeySha256: String = "",
+    /** Key material resolved from the managed key store at connect time; never persisted here. */
+    @Transient val privateKey: String = "",
+    @Transient val privateKeyPassphrase: String = "",
+)
+
+/** A private key managed by the app and shareable across multiple servers. */
+@Serializable
+data class SshPrivateKey(
+    val id: String,
+    val name: String,
+    /** Private key contents in OpenSSH or PEM form; no filesystem path is used. */
+    val privateKey: String,
+    val passphrase: String = "",
 )
 
 /** A remote TCP port exposed on the device's loopback through the SSH connection. */
