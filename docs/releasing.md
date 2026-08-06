@@ -2,6 +2,8 @@
 
 推送 `v<major.minor.patch>` tag 会触发 `.github/workflows/release.yml`。发布流程构建 Android APK、Linux / Windows 的 amd64 与 arm64 网关，以及经过 Developer ID 签名和 Apple notarization 的 macOS 网关。
 
+同一个 tag 还会触发 `.github/workflows/testflight.yml`，在 GitHub macOS runner 上归档 iOS App，并通过 Xcode cloud-managed signing 上传到 TestFlight。也可以手工运行 TestFlight workflow 并填写 `major.minor.patch` 版本号，在正式打 tag 前验证上传链路。
+
 ## macOS 产物
 
 Darwin 二进制必须在 GitHub 的 macOS runner 上构建。CI 使用 `Developer ID Application` 证书为两个架构分别执行带 Hardened Runtime 和可信时间戳的签名，再将它们放入 ZIP 并通过 `xcrun notarytool` 提交 Apple 公证。
@@ -28,6 +30,20 @@ Release 同时包含：
 | `APPLE_NOTARY_ISSUER_ID` | App Store Connect Team API 的 Issuer ID |
 
 证书必须是 `Developer ID Application`，不能使用 Apple Development、Mac Distribution 或 ad-hoc identity。公证 Key 建议使用独立的 Team API Key，并限制为完成发布所需的最低角色。
+
+## iOS 与 TestFlight
+
+iOS App Store Connect 记录使用以下固定身份：
+
+- App 名称：`OhPiApp`
+- Bundle ID：`io.github.yearsyan.ohpi.OhPiApp`
+- Apple Team ID：`2XX5KZ6X3G`
+
+TestFlight workflow 使用 tag 作为 `MARKETING_VERSION`，使用 `<workflow run number>.<run attempt>` 作为唯一的 `CURRENT_PROJECT_VERSION`。手工触发时必须显式填写版本号。
+
+归档阶段关闭本地代码签名；上传阶段由 Xcode 使用 App Store Connect API Key、自动 provisioning 和 Apple 的 cloud-managed Distribution 证书完成签名。这样 CI 不需要保存 Apple Distribution 私钥或 provisioning profile。API Key 至少需要 Developer 角色；缺少任一 API Key Secret 时 workflow 会直接失败。
+
+`app/iosApp/iosApp/Info.plist` 已声明 `ITSAppUsesNonExemptEncryption=false`，`app/iosApp/iosApp/PrivacyInfo.xcprivacy` 包含当前 required-reason API 声明。上传成功只代表 Apple 接受交付；构建仍需经过 App Store Connect 后台处理才会出现在 TestFlight。
 
 在可信 Mac 上准备 Secrets 时，可使用：
 
