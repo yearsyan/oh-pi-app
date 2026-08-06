@@ -30,6 +30,7 @@ class SettingsStoreSshKeysTest {
                     name = "CI key",
                     privateKey = "material-2",
                     passphrase = "secret",
+                    publicKey = "ssh-ed25519 AAAATEST",
                 ),
             )
         store.saveSshKeys(keys)
@@ -43,6 +44,19 @@ class SettingsStoreSshKeysTest {
         store.saveSshKeys(emptyList())
 
         assertTrue(store.loadSshKeys().isEmpty())
+    }
+
+    @Test
+    fun keysSavedBeforePublicKeySupportStillLoad() {
+        node.put(
+            "ssh_keys",
+            """[{"id":"legacy","name":"Legacy","privateKey":"material","passphrase":""}]""",
+        )
+
+        val key = store.loadSshKeys().single()
+
+        assertEquals("legacy", key.id)
+        assertEquals("", key.publicKey)
     }
 
     @Test

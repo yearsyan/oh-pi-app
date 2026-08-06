@@ -1,7 +1,6 @@
 package io.github.yearsyan.ohpi.net
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.CloseReason
@@ -32,7 +31,7 @@ class PiClient(private val scope: CoroutineScope) {
         fun onFailure(message: String)
     }
 
-    private val http = HttpClient(CIO) {
+    private val http = HttpClient {
         install(WebSockets) {
             pingIntervalMillis = 20_000
         }

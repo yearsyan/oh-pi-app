@@ -72,13 +72,13 @@ internal data class ChatRoute(val sessionId: String)
 internal data object SettingsRoute
 
 @Serializable
-internal data object ProvidersRoute
+internal data class SettingsSectionRoute(val section: String)
+
+@Serializable
+internal data object AddServerRoute
 
 @Serializable
 internal data object AddProviderRoute
-
-@Serializable
-internal data object LicensesRoute
 
 @Serializable
 internal data object PortForwardsRoute
@@ -117,6 +117,10 @@ fun HomeScreen(vm: AppViewModel) {
 
     fun openFileBrowser(path: String) {
         navController.navigate(FilesRoute(path))
+    }
+
+    fun openProviders() {
+        navController.navigate(SettingsSectionRoute(SettingsSection.Providers.name))
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -167,6 +171,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
+                    onOpenProviders = ::openProviders,
                     onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
                 )
             }
@@ -188,6 +193,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onRenameSession = { renaming = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
+                    onOpenProviders = ::openProviders,
                     onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
                 )
             }
@@ -216,13 +222,17 @@ fun HomeScreen(vm: AppViewModel) {
 
             composable<SettingsRoute> {
                 SettingsScreen(
+                    vm = vm,
                     servers = vm.servers,
                     sshKeys = vm.sshKeys,
                     activeServerId = vm.activeServerId,
                     themeMode = vm.themeMode,
                     language = vm.language,
+                    wide = wide,
+                    section = null,
                     onBack = { navController.popBackStack() },
-                    onSelectServer = ::selectServer,
+                    onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
+                    onSelectServer = vm::selectServer,
                     onSaveServer = vm::saveServer,
                     onDeleteServer = vm::deleteServer,
                     onSaveSshKey = vm::saveSshKey,
@@ -230,25 +240,50 @@ fun HomeScreen(vm: AppViewModel) {
                     onStopManagedGateway = vm::stopManagedGateway,
                     onThemeMode = vm::updateThemeMode,
                     onLanguage = vm::updateLanguage,
-                    onOpenProviders = { navController.navigate(ProvidersRoute) },
-                    onOpenLicenses = { navController.navigate(LicensesRoute) },
+                    onAddServer = { navController.navigate(AddServerRoute) },
+                    onAddProvider = { navController.navigate(AddProviderRoute) },
                 )
             }
 
-            composable<ProvidersRoute> {
-                ProvidersScreen(
+            composable<SettingsSectionRoute> { backStackEntry ->
+                val route = backStackEntry.toRoute<SettingsSectionRoute>()
+                SettingsScreen(
                     vm = vm,
+                    servers = vm.servers,
+                    sshKeys = vm.sshKeys,
+                    activeServerId = vm.activeServerId,
+                    themeMode = vm.themeMode,
+                    language = vm.language,
+                    wide = wide,
+                    section = settingsSectionFor(route.section),
                     onBack = { navController.popBackStack() },
+                    onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
+                    onSelectServer = vm::selectServer,
+                    onSaveServer = vm::saveServer,
+                    onDeleteServer = vm::deleteServer,
+                    onSaveSshKey = vm::saveSshKey,
+                    onDeleteSshKey = { vm.deleteSshKey(it.id) },
+                    onStopManagedGateway = vm::stopManagedGateway,
+                    onThemeMode = vm::updateThemeMode,
+                    onLanguage = vm::updateLanguage,
+                    onAddServer = { navController.navigate(AddServerRoute) },
                     onAddProvider = { navController.navigate(AddProviderRoute) },
+                )
+            }
+
+            composable<AddServerRoute> {
+                AddServerScreen(
+                    keys = vm.sshKeys,
+                    onSave = { profile, newKey ->
+                        vm.saveServer(profile, newKey)
+                        navController.popBackStack()
+                    },
+                    onBack = { navController.popBackStack() },
                 )
             }
 
             composable<AddProviderRoute> {
                 AddProviderScreen(vm = vm, onBack = { navController.popBackStack() })
-            }
-
-            composable<LicensesRoute> {
-                LicensesScreen(onBack = { navController.popBackStack() })
             }
 
             composable<PortForwardsRoute> {
@@ -293,6 +328,7 @@ private fun MainDestination(
     onRenameSession: (SavedSession) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
     onBrowseFiles: (String) -> Unit,
+    onOpenProviders: () -> Unit,
     onOpenPortForwards: () -> Unit,
 ) {
     when {
@@ -304,6 +340,7 @@ private fun MainDestination(
             onOpenSettings = onOpenSettings,
             onDeleteSession = onDeleteSession,
             onBrowseFiles = onBrowseFiles,
+            onOpenProviders = onOpenProviders,
             onOpenPortForwards = onOpenPortForwards,
         )
 
@@ -314,6 +351,7 @@ private fun MainDestination(
             onRename = { name -> vm.renameSession(compactChatId, name) },
             onDelete = { onDeleteSession(compactChatId) },
             onBrowseFiles = onBrowseFiles,
+            onOpenProviders = onOpenProviders,
         )
 
         else -> SessionListPane(
@@ -346,6 +384,7 @@ private fun WideHome(
     onOpenSettings: () -> Unit,
     onDeleteSession: (String) -> Unit,
     onBrowseFiles: (String) -> Unit,
+    onOpenProviders: () -> Unit,
     onOpenPortForwards: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
@@ -378,6 +417,7 @@ private fun WideHome(
                     onRename = { name -> vm.renameSession(chatId, name) },
                     onDelete = { onDeleteSession(chatId) },
                     onBrowseFiles = onBrowseFiles,
+                    onOpenProviders = onOpenProviders,
                 )
             } else {
                 WideEmptyState(onNewChat = onRequestNewChat)

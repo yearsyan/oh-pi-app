@@ -71,6 +71,22 @@ internal actual object PlatformSsh {
         )
     }
 
+    actual fun generateEd25519KeyPair(passphrase: String?): GeneratedSshKeyPair {
+        NativeSshBridge.ensureLoaded()
+        val errorCode = IntArray(1)
+        val errorStrings = arrayOfNulls<String>(2)
+        val material =
+            NativeSshBridge.nativeGenerateEd25519KeyPair(
+                passphrase = passphrase?.takeIf { it.isNotEmpty() }?.encodeToByteArray(),
+                errorCode = errorCode,
+                errorStrings = errorStrings,
+            ) ?: throw SshTunnelException(errorCode.toSshError(errorStrings))
+        return GeneratedSshKeyPair(
+            privateKey = material.getOrNull(0)?.decodeToString().orEmpty(),
+            publicKey = material.getOrNull(1)?.decodeToString().orEmpty(),
+        )
+    }
+
     actual fun libraryVersion(): String {
         NativeSshBridge.ensureLoaded()
         return NativeSshBridge.nativeVersion()
@@ -162,6 +178,13 @@ internal object NativeSshBridge {
         commandTimeoutMillis: Int,
         maxOutputBytes: Int,
         exitStatus: IntArray,
+        errorCode: IntArray,
+        errorStrings: Array<String?>,
+    ): Array<ByteArray?>?
+
+    @JvmStatic
+    external fun nativeGenerateEd25519KeyPair(
+        passphrase: ByteArray?,
         errorCode: IntArray,
         errorStrings: Array<String?>,
     ): Array<ByteArray?>?

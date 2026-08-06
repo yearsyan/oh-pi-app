@@ -10,5 +10,6 @@ class NavigationRouteSerializationTest {
         serializer(typeOf<SessionListRoute>())
         serializer(typeOf<ChatRoute>())
         serializer(typeOf<SettingsRoute>())
+        serializer(typeOf<SettingsSectionRoute>())
     }
 }

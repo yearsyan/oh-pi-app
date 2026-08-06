@@ -247,6 +247,7 @@ class ChatController(
     /** True when a prompt can be sent now or can create this local draft. */
     val canSendPrompt: Boolean
         get() = pendingPrompt == null && pendingCompactId == null && !capabilitiesLoading &&
+            !missingModel &&
             promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
 
     /** True after submit and until the corresponding prompt or command is accepted. */
@@ -260,6 +261,26 @@ class ChatController(
     val canConfigureDraft: Boolean
         get() = isDraft && !capabilitiesLoading && pendingCreatePrompt == null &&
             (conn == ConnState.Disconnected || conn == ConnState.Error)
+
+    /**
+     * True when model discovery finished and confirmed there is no usable
+     * model (no signed-in provider). pi would reject any prompt with an
+     * API-key error, so the UI blocks sending and points at provider
+     * management instead.
+     */
+    val missingModel: Boolean
+        get() = !capabilitiesLoading && models.isEmpty() && when {
+            isDraft -> capabilitiesError == null && pendingCreatePrompt == null
+            else -> conn == ConnState.Ready && modelsSynced
+        }
+
+    /** Set once the UI auto-opened provider management for this draft. */
+    var providerSetupNavigated by mutableStateOf(false); private set
+
+    /** Records that provider management was auto-opened for this draft. */
+    fun markProviderSetupNavigated() {
+        providerSetupNavigated = true
+    }
 
     /** A draft can retry only after its first create attempt has stopped. */
     val canReconnect: Boolean
@@ -279,6 +300,8 @@ class ChatController(
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
     private var connectionGeneration = 0L
+    /** True once the gateway answered get_available_models on this connection. */
+    private var modelsSynced = false
     private var sessionStatsRefreshQueued = false
     private var sessionMetricsJob: Job? = null
     private var sessionMetricsGeneration = 0L
@@ -328,6 +351,8 @@ class ChatController(
         currentModel = null
         thinkingLevel = ""
         capabilitiesError = null
+        modelsSynced = false
+        providerSetupNavigated = false
         lastAction = "create"
         lastSessionId = null
         lastWorkDir = workDir
@@ -430,6 +455,7 @@ class ChatController(
         capabilitiesJob = null
         capabilitiesGeneration++
         capabilitiesLoading = false
+        modelsSynced = false
         reconnectJob?.cancel()
         reconnectJob = null
         reconnectAttempt = 0
@@ -890,6 +916,12 @@ class ChatController(
             put("type", "set_thinking_level")
             put("level", level)
         }
+    }
+
+    /** Re-requests the model list after a provider login/logout changed it. */
+    fun refreshModels() {
+        if (conn != ConnState.Ready) return
+        sendCommand { put("type", "get_available_models"); this }
     }
 
     fun setSessionNameLocally(name: String) {
@@ -1404,6 +1436,7 @@ class ChatController(
             }
             "get_available_models" -> {
                 models.clear()
+                modelsSynced = true
                 data?.arr("models")?.forEach { el ->
                     (el as? JsonObject)?.let { m ->
                         val id = m.strOrEmpty("id")

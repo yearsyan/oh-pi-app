@@ -58,6 +58,7 @@ typedef enum pi_ssh_error_code {
     PI_SSH_ERROR_REMOTE_COMMAND = 14,
     PI_SSH_ERROR_COMMAND_TIMEOUT = 15,
     PI_SSH_ERROR_OUTPUT_LIMIT = 16,
+    PI_SSH_ERROR_KEY_GENERATION = 17,
 } pi_ssh_error_code;
 
 /*
@@ -138,6 +139,13 @@ typedef struct pi_ssh_command_result {
     size_t stderr_size;
 } pi_ssh_command_result;
 
+/* In-memory OpenSSH key material returned by the generation function below. */
+typedef struct pi_ssh_key_pair {
+    uint32_t struct_size;
+    char *private_key;
+    char *public_key;
+} pi_ssh_key_pair;
+
 /* Initializes a config with ABI-safe defaults. */
 PI_SSH_API void pi_ssh_tunnel_config_init(pi_ssh_tunnel_config *config);
 
@@ -152,6 +160,22 @@ PI_SSH_API void pi_ssh_command_result_init(pi_ssh_command_result *result);
 
 /* Securely clears and releases buffers returned by command_execute(). */
 PI_SSH_API void pi_ssh_command_result_free(pi_ssh_command_result *result);
+
+/* Initializes an empty key-pair result. */
+PI_SSH_API void pi_ssh_key_pair_init(pi_ssh_key_pair *key_pair);
+
+/* Securely clears and releases buffers returned by key-pair generation. */
+PI_SSH_API void pi_ssh_key_pair_free(pi_ssh_key_pair *key_pair);
+
+/*
+ * Generates an Ed25519 key pair entirely in memory. The private key is
+ * exported in OpenSSH format and encrypted when passphrase is non-empty. The
+ * public key is returned in authorized_keys form ("ssh-ed25519 AAAA...").
+ */
+PI_SSH_API int pi_ssh_key_pair_generate_ed25519(
+    const char *passphrase,
+    pi_ssh_key_pair *key_pair,
+    pi_ssh_error *error);
 
 /*
  * Executes one command through an authenticated SSH session. A successfully

@@ -11,6 +11,10 @@ import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_result_free
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_result_init
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_error
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_library_version
+import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_key_pair
+import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_key_pair_free
+import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_key_pair_generate_ed25519
+import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_key_pair_init
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_config
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_config_init
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_copy_last_error
@@ -117,6 +121,30 @@ internal actual object PlatformSsh {
                 )
             } finally {
                 pi_ssh_command_result_free(nativeResult.ptr)
+            }
+        }
+
+    actual fun generateEd25519KeyPair(passphrase: String?): GeneratedSshKeyPair =
+        memScoped {
+            val nativeKeyPair = alloc<pi_ssh_key_pair>()
+            val nativeError = alloc<pi_ssh_error>()
+            pi_ssh_key_pair_init(nativeKeyPair.ptr)
+            try {
+                val result =
+                    pi_ssh_key_pair_generate_ed25519(
+                        passphrase?.takeIf { it.isNotEmpty() },
+                        nativeKeyPair.ptr,
+                        nativeError.ptr,
+                    )
+                if (result != 0) {
+                    throw SshTunnelException(nativeError.toSshError())
+                }
+                GeneratedSshKeyPair(
+                    privateKey = nativeKeyPair.private_key?.toKString().orEmpty(),
+                    publicKey = nativeKeyPair.public_key?.toKString().orEmpty(),
+                )
+            } finally {
+                pi_ssh_key_pair_free(nativeKeyPair.ptr)
             }
         }
 

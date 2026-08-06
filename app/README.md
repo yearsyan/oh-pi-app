@@ -31,7 +31,8 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 - **内置 SSH 隧道**：可通过 SSH 密码或集中管理的私钥连接远端服务器，再让
   WebSocket 与 `/fs/list` 共同复用一条本机回环隧道。Android、Desktop 与 iOS 都
   调用相同的 `libssh` C 核心；首次连接以及主机密钥变化时必须人工确认 SHA-256 指纹。
-- **SSH 私钥管理**：私钥在设置页集中管理，一份私钥可被多台机器引用；服务器配置
+- **SSH 私钥管理**：可导入已有私钥，或由内置 libssh 在本机生成 Ed25519 密钥对；
+  公钥可从密钥的长按菜单查看与复制。一份私钥可被多台机器引用；服务器配置
   只保存密钥 id，不保存私钥内容。iOS 上私钥列表整体存入系统 Keychain（不随
   iCloud 同步、不迁移到新设备），其他平台保存在应用私有设置中。
 - **SSH 自动安装**：只填写普通用户 SSH 凭据，App 即可识别 macOS / Linux / Windows，
@@ -44,7 +45,7 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
 
 ```
 data/        ServerProfile、SavedSession、SettingsStore（设备设置与旧列表迁移）
-net/         PiClient（Ktor CIO WebSocket）、会话/目录 HTTP API、协议 JSON 工具
+net/         PiClient（Ktor WebSocket；iOS Darwin、其他平台 CIO）、会话/目录 HTTP API、协议 JSON 工具
 ssh/         pi_ssh 的 JNI / Kotlin-Native cinterop 绑定
 chat/        ChatController（连接 + pi RPC 状态机 + 时间线归约）、Timeline 模型
 markdown/    轻量 Markdown 渲染器
@@ -67,7 +68,7 @@ Mbed TLS 3.6.6，一个 worker 线程复用多个 `direct-tcpip` channel。依�
 - iOS：后端地址固定为 SSH 服务器上的 `127.0.0.1`（不可编辑，TLS 选项隐藏），只需填写后端端口（默认 `18080`）；
 - Android / Desktop：网关地址为 SSH 服务器自身看到的 ohpi 地址，通常 `http://127.0.0.1:18080`；
 - SSH 主机、端口、用户名；
-- SSH 密码，或从集中管理的密钥库选择 / 新建一份 OpenSSH / PEM 私钥（含可选口令）。
+- SSH 密码，或从集中管理的密钥库选择 / 导入一份 OpenSSH / PEM 私钥（含可选口令）。
 
 新建服务器配置的默认端口全平台为 `18080`。
 

@@ -46,6 +46,8 @@ data class SshPrivateKey(
     /** Private key contents in OpenSSH or PEM form; no filesystem path is used. */
     val privateKey: String,
     val passphrase: String = "",
+    /** Optional authorized_keys-form public key, present for generated key pairs. */
+    val publicKey: String = "",
 )
 
 /** A remote TCP port exposed on the device's loopback through the SSH connection. */

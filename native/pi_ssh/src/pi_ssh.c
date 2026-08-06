@@ -155,6 +155,33 @@ void pi_ssh_command_result_free(pi_ssh_command_result *result)
     pi_ssh_command_result_init(result);
 }
 
+void pi_ssh_key_pair_init(pi_ssh_key_pair *key_pair)
+{
+    if (key_pair == NULL) {
+        return;
+    }
+    memset(key_pair, 0, sizeof(*key_pair));
+    key_pair->struct_size = (uint32_t)sizeof(*key_pair);
+}
+
+void pi_ssh_key_pair_free(pi_ssh_key_pair *key_pair)
+{
+    if (key_pair == NULL) {
+        return;
+    }
+    if (key_pair->private_key != NULL) {
+        pi_ssh_secure_zero(key_pair->private_key,
+                           strlen(key_pair->private_key));
+        ssh_string_free_char(key_pair->private_key);
+    }
+    if (key_pair->public_key != NULL) {
+        pi_ssh_secure_zero(key_pair->public_key,
+                           strlen(key_pair->public_key));
+        ssh_string_free_char(key_pair->public_key);
+    }
+    pi_ssh_key_pair_init(key_pair);
+}
+
 static void pi_ssh_set_error_value(pi_ssh_error *error,
                                    pi_ssh_error_code code,
                                    int system_error,
@@ -179,6 +206,120 @@ static void pi_ssh_set_error_value(pi_ssh_error *error,
     va_start(arguments, format);
     (void)vsnprintf(error->message, sizeof(error->message), format, arguments);
     va_end(arguments);
+}
+
+int pi_ssh_key_pair_generate_ed25519(const char *passphrase,
+                                     pi_ssh_key_pair *key_pair,
+                                     pi_ssh_error *error)
+{
+    ssh_key key = NULL;
+    char *private_key = NULL;
+    char *public_key_base64 = NULL;
+    char *public_key = NULL;
+    const char *key_type;
+    const char *effective_passphrase = NULL;
+    size_t key_type_length;
+    size_t public_key_base64_length;
+    size_t public_key_length;
+    int result = -1;
+
+    if (key_pair == NULL || key_pair->struct_size < sizeof(*key_pair)) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_INVALID_ARGUMENT,
+                               0,
+                               NULL,
+                               "An initialized SSH key-pair result is required");
+        return -1;
+    }
+    pi_ssh_key_pair_free(key_pair);
+    pi_ssh_error_init(error);
+    if (passphrase != NULL && passphrase[0] != '\0') {
+        effective_passphrase = passphrase;
+    }
+
+    if (ssh_pki_generate_key(SSH_KEYTYPE_ED25519, NULL, &key) != SSH_OK ||
+        key == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_KEY_GENERATION,
+                               0,
+                               NULL,
+                               "Could not generate an Ed25519 SSH key");
+        goto cleanup;
+    }
+    if (ssh_pki_export_privkey_base64_format(key,
+                                             effective_passphrase,
+                                             NULL,
+                                             NULL,
+                                             &private_key,
+                                             SSH_FILE_FORMAT_OPENSSH) != SSH_OK ||
+        private_key == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_KEY_GENERATION,
+                               0,
+                               NULL,
+                               "Could not export the generated SSH private key");
+        goto cleanup;
+    }
+    if (ssh_pki_export_pubkey_base64(key, &public_key_base64) != SSH_OK ||
+        public_key_base64 == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_KEY_GENERATION,
+                               0,
+                               NULL,
+                               "Could not export the generated SSH public key");
+        goto cleanup;
+    }
+
+    key_type = ssh_key_type_to_char(ssh_key_type(key));
+    if (key_type == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_KEY_GENERATION,
+                               0,
+                               NULL,
+                               "Could not identify the generated SSH key type");
+        goto cleanup;
+    }
+    key_type_length = strlen(key_type);
+    public_key_base64_length = strlen(public_key_base64);
+    if (key_type_length > SIZE_MAX - public_key_base64_length - 2u) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_OUT_OF_MEMORY,
+                               0,
+                               NULL,
+                               "Generated SSH public key is too large");
+        goto cleanup;
+    }
+    public_key_length = key_type_length + 1u + public_key_base64_length;
+    public_key = (char *)malloc(public_key_length + 1u);
+    if (public_key == NULL) {
+        pi_ssh_set_error_value(error,
+                               PI_SSH_ERROR_OUT_OF_MEMORY,
+                               0,
+                               NULL,
+                               "Could not allocate the generated SSH public key");
+        goto cleanup;
+    }
+    (void)snprintf(public_key,
+                   public_key_length + 1u,
+                   "%s %s",
+                   key_type,
+                   public_key_base64);
+
+    key_pair->private_key = private_key;
+    private_key = NULL;
+    key_pair->public_key = public_key;
+    public_key = NULL;
+    result = 0;
+
+cleanup:
+    if (private_key != NULL) {
+        pi_ssh_secure_zero(private_key, strlen(private_key));
+        ssh_string_free_char(private_key);
+    }
+    ssh_string_free_char(public_key_base64);
+    ssh_string_free_char(public_key);
+    ssh_key_free(key);
+    return result;
 }
 
 static void pi_ssh_set_tunnel_error(pi_ssh_tunnel *tunnel,

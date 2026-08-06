@@ -74,7 +74,10 @@ kotlin {
                 )
             }
         tasks.matching { it.name == piSshInterop.interopProcessingTaskName }
-            .configureEach { dependsOn(buildTask) }
+            .configureEach {
+                dependsOn(buildTask)
+                inputs.file(piSshSourceDir.resolve("include/pi_ssh.h"))
+            }
 
         iosTarget.binaries.framework {
             baseName = "Shared"
@@ -142,7 +145,7 @@ kotlin {
             implementation(libs.ktor.client.cio)
         }
         iosMain.dependencies {
-            implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.darwin)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

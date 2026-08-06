@@ -33,6 +33,11 @@ fun App(
     vm: AppViewModel = viewModel { AppViewModel() },
     titleBar: (@Composable () -> Unit)? = null,
 ) {
+    AppActivationEffect(
+        onInactive = vm::onAppInactive,
+        onActive = vm::onAppActive,
+    )
+
     val systemDark = isSystemInDarkTheme()
     val dark = when (vm.themeMode) {
         ThemeMode.System -> systemDark

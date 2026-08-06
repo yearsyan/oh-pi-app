@@ -37,6 +37,7 @@ enum class SshTunnelErrorCode(val nativeValue: Int) {
     RemoteCommand(14),
     CommandTimeout(15),
     OutputLimit(16),
+    KeyGeneration(17),
     ;
 
     companion object {
@@ -94,6 +95,12 @@ data class SshTunnelError(
     val hostKeySha256: String? = null,
 )
 
+/** An Ed25519 key pair generated in memory by the bundled SSH library. */
+data class GeneratedSshKeyPair(
+    val privateKey: String,
+    val publicKey: String,
+)
+
 class SshTunnelException(
     val error: SshTunnelError,
 ) : Exception(error.message)
@@ -110,6 +117,8 @@ internal expect object PlatformSsh {
     fun start(config: SshTunnelConfig): SshTunnelHandle
 
     fun execute(config: SshCommandConfig): SshCommandResult
+
+    fun generateEd25519KeyPair(passphrase: String? = null): GeneratedSshKeyPair
 
     fun libraryVersion(): String
 }

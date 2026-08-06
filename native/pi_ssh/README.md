@@ -10,6 +10,10 @@ stdin, separate bounded stdout/stderr buffers, a remote exit status, and a
 deadline. The managed installer uses this path for OS probing, service control,
 and direct binary upload without adding SFTP or shell download dependencies.
 
+The ABI also generates passphrase-protected Ed25519 key pairs entirely in
+memory. It returns an OpenSSH private key and an authorized_keys-form public
+key; callers own the result until `pi_ssh_key_pair_free()` securely clears it.
+
 The app packages this worker for Android, iOS, macOS (arm64/x86_64), Linux
 x86_64, and Windows x86_64. POSIX targets use file descriptors and a pipe for
 event wakeups. Windows uses WinSock sockets plus a loopback UDP socket pair so

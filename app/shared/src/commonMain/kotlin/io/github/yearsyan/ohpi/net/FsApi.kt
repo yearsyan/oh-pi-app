@@ -1,7 +1,6 @@
 package io.github.yearsyan.ohpi.net
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -37,7 +36,7 @@ private data class FsMkdirRequest(
     val name: String,
 )
 
-internal val gatewayHttp = HttpClient(CIO)
+internal val gatewayHttp = HttpClient()
 
 internal fun gatewayHttpBase(gateway: String): String {
     val ws = normalizeGatewayUrl(gateway)

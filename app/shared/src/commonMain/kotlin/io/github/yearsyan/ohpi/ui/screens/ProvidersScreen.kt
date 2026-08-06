@@ -69,7 +69,7 @@ import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 
 /** Signed-in providers, shown as a plain list; details open in a bottom sheet. */
 @Composable
-fun ProvidersScreen(vm: AppViewModel, onBack: () -> Unit, onAddProvider: () -> Unit) {
+fun ProvidersScreen(vm: AppViewModel, onBack: (() -> Unit)?, onAddProvider: () -> Unit) {
     var detailProviderId by remember { mutableStateOf<String?>(null) }
     var logoutTarget by remember { mutableStateOf<GatewayProvider?>(null) }
     val configured = vm.providers.filter { it.configured }
@@ -191,7 +191,7 @@ fun AddProviderScreen(vm: AppViewModel, onBack: () -> Unit) {
 private fun ProviderTopBar(
     title: String,
     loading: Boolean,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onRefresh: () -> Unit,
     actions: @Composable () -> Unit = {},
 ) {
@@ -199,8 +199,12 @@ private fun ProviderTopBar(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
     ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
+            }
+        } else {
+            Spacer(Modifier.width(16.dp))
         }
         Text(
             title,

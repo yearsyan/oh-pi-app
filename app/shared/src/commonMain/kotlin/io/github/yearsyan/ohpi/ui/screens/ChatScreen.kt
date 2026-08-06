@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -89,6 +91,7 @@ import kotlinx.coroutines.launch
 private enum class ChatBodyState {
     Loading,
     Empty,
+    NoModel,
     Messages,
 }
 
@@ -101,6 +104,7 @@ fun ChatScreen(
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
     onBrowseFiles: (String) -> Unit = {},
+    onOpenProviders: () -> Unit = {},
 ) {
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
@@ -110,6 +114,15 @@ fun ChatScreen(
 
     // Keep the display awake while the model is generating output.
     KeepScreenOn(controller.isStreaming)
+
+    // A fresh draft with no usable model can only fail on submit; take the
+    // user straight to provider management, once per draft.
+    LaunchedEffect(controller, controller.missingModel) {
+        if (controller.isDraft && controller.missingModel && !controller.providerSetupNavigated) {
+            controller.markProviderSetupNavigated()
+            onOpenProviders()
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ChatTopBar(
@@ -124,6 +137,7 @@ fun ChatScreen(
         val bodyState = when {
             controller.items.isNotEmpty() -> ChatBodyState.Messages
             controller.conn == ConnState.Connecting || controller.isLoadingHistory -> ChatBodyState.Loading
+            controller.missingModel -> ChatBodyState.NoModel
             else -> ChatBodyState.Empty
         }
         Box(Modifier.weight(1f)) {
@@ -136,6 +150,8 @@ fun ChatScreen(
                 when (state) {
                     ChatBodyState.Loading -> SessionLoadingState(controller, Modifier.fillMaxSize())
                     ChatBodyState.Empty -> EmptyChatState(Modifier.fillMaxSize())
+                    ChatBodyState.NoModel ->
+                        NoModelChatState(onOpenProviders, Modifier.fillMaxSize())
                     ChatBodyState.Messages ->
                         MessageList(
                             controller = controller,
@@ -146,14 +162,24 @@ fun ChatScreen(
                 }
             }
 
-            Composer(
-                controller = controller,
-                onPromptSent = { scrollToBottomTick++ },
-                modifier =
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .onSizeChanged { composerHeightPx = it.height },
-            )
+            if (controller.missingModel) {
+                NoModelComposerBar(
+                    onOpenProviders = onOpenProviders,
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { composerHeightPx = it.height },
+                )
+            } else {
+                Composer(
+                    controller = controller,
+                    onPromptSent = { scrollToBottomTick++ },
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { composerHeightPx = it.height },
+                )
+            }
         }
     }
 
@@ -442,6 +468,37 @@ internal fun MessageList(
 
 @Composable
 private fun EmptyChatState(modifier: Modifier = Modifier) {
+    ChatPlaceholder(
+        title = S.emptyChatTitle,
+        body = S.emptyChatBody,
+        actionLabel = null,
+        onAction = {},
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun NoModelChatState(
+    onOpenProviders: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ChatPlaceholder(
+        title = S.noModelConfiguredTitle,
+        body = S.noModelConfiguredBody,
+        actionLabel = S.noModelConfigureAction,
+        onAction = onOpenProviders,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ChatPlaceholder(
+    title: String,
+    body: String,
+    actionLabel: String?,
+    onAction: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -463,16 +520,60 @@ private fun EmptyChatState(modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.height(20.dp))
         Text(
-            S.emptyChatTitle,
+            title,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            S.emptyChatBody,
+            body,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        if (actionLabel != null) {
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
+/** Composer replacement shown while no provider/model is configured. */
+@Composable
+private fun NoModelComposerBar(
+    onOpenProviders: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxWidth().imePadding()) {
+        // Same floating-card treatment as the regular composer.
+        Box(
+            Modifier
+                .matchParentSize()
+                .padding(top = 36.dp)
+                .background(MaterialTheme.colorScheme.background),
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 4.dp,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    S.noModelConfiguredTitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.size(8.dp))
+                Button(onClick = onOpenProviders) {
+                    Text(S.noModelConfigureAction, maxLines = 1)
+                }
+            }
+        }
     }
 }

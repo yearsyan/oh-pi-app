@@ -73,14 +73,43 @@ interface Strings {
     val installCancel: String
     val installBackToForm: String
 
+    // add-server wizard
+    val addServerChooseTitle: String
+    val addServerDirectTitle: String
+    val addServerDirectBody: String
+    val addServerSshTitle: String
+    val addServerSshBody: String
+    val addServerCheckConnection: String
+    val addServerCheckingTitle: (String) -> String
+    val addServerStepDetectGateway: String
+    val addServerGatewayFoundTitle: String
+    val addServerGatewayFoundBody: (Int) -> String
+    val addServerGatewayMissingTitle: String
+    val addServerGatewayMissingBody: (Int) -> String
+    val addServerInstallTitle: String
+    val addServerInstallBody: String
+    val addServerManualTitle: String
+    val addServerManualBody: String
+
     // managed SSH keys
     val sshKeysSection: String
     val sshKeysEmpty: String
     val sshKeyAdd: String
+    val sshKeyAddChoiceTitle: String
+    val sshKeyAddExisting: String
+    val sshKeyAddExistingHint: String
+    val sshKeyGenerate: String
+    val sshKeyGenerateHint: String
+    val sshKeyGenerating: String
+    val sshKeyGenerationFailed: (String) -> String
     val sshKeyEdit: String
+    val sshKeyPublicLabel: String
+    val sshKeyViewPublic: String
+    val sshKeyPublicTitle: String
     val sshKeyDeleteTitle: String
     val sshKeyDeleteBody: (String) -> String
     val sshKeyUsage: (Int) -> String
+    val sshKeyCount: (Int) -> String
     val sshKeyCreateNew: String
     val sshKeySelectPlaceholder: String
     val sshKeyNameLabel: String
@@ -197,6 +226,9 @@ interface Strings {
     val selectThinkingLevel: String
     val loadingModels: String
     val retryModels: String
+    val noModelConfiguredTitle: String
+    val noModelConfiguredBody: String
+    val noModelConfigureAction: String
     val modelOptionsFailed: (String) -> String
     val commandRejected: String
     val notConnected: String
@@ -419,11 +451,49 @@ object EnStrings : Strings {
     override val installCancel = "Cancel"
     override val installBackToForm = "Back"
 
+    override val addServerChooseTitle = "How do you want to connect?"
+    override val addServerDirectTitle = "Direct connection"
+    override val addServerDirectBody =
+        "The gateway is reachable over the network — by IP or hostname."
+    override val addServerSshTitle = "Over SSH"
+    override val addServerSshBody =
+        "Tunnel through SSH. The app checks for a running gateway and can install one for you."
+    override val addServerCheckConnection = "Check connection"
+    override val addServerCheckingTitle = { target: String -> "Checking $target" }
+    override val addServerStepDetectGateway = "Checking for a gateway on the default port"
+    override val addServerGatewayFoundTitle = "Gateway detected"
+    override val addServerGatewayFoundBody = { port: Int ->
+        "A healthy ohpi gateway answered on port $port. Enter its token to finish."
+    }
+    override val addServerGatewayMissingTitle = "No gateway on the default port"
+    override val addServerGatewayMissingBody = { port: Int ->
+        "The SSH connection works, but no healthy gateway answered on port $port. Choose how to continue."
+    }
+    override val addServerInstallTitle = "Install automatically"
+    override val addServerInstallBody =
+        "The app installs pi and the gateway for this SSH user, then starts them."
+    override val addServerManualTitle = "Enter the address manually"
+    override val addServerManualBody = "The gateway listens on a different port or interface."
+
     override val sshKeysSection = "SSH keys"
     override val sshKeysEmpty =
         "No keys yet. A stored key can be shared by any number of machines."
     override val sshKeyAdd = "Add key"
+    override val sshKeyAddChoiceTitle = "Add SSH key"
+    override val sshKeyAddExisting = "Add existing key"
+    override val sshKeyAddExistingHint =
+        "Import an OpenSSH or PEM private key. The public key is optional."
+    override val sshKeyGenerate = "Generate key pair"
+    override val sshKeyGenerateHint =
+        "Create an Ed25519 key pair locally with the bundled SSH library."
+    override val sshKeyGenerating = "Generating…"
+    override val sshKeyGenerationFailed = { error: String ->
+        "Could not generate the SSH key pair: $error"
+    }
     override val sshKeyEdit = "Edit key"
+    override val sshKeyPublicLabel = "Public key (optional)"
+    override val sshKeyViewPublic = "View public key"
+    override val sshKeyPublicTitle = "SSH public key"
     override val sshKeyDeleteTitle = "Delete SSH key?"
     override val sshKeyDeleteBody = { name: String ->
         "This removes \"$name\" from this device. Servers using it will need another key or password."
@@ -432,7 +502,10 @@ object EnStrings : Strings {
         if (count == 0) "Not used by any server"
         else "Used by $count ${if (count == 1) "server" else "servers"}"
     }
-    override val sshKeyCreateNew = "New key…"
+    override val sshKeyCount = { count: Int ->
+        if (count == 1) "1 key" else "$count keys"
+    }
+    override val sshKeyCreateNew = "Import key…"
     override val sshKeySelectPlaceholder = "Select a key"
     override val sshKeyNameLabel = "Key name"
     override val sshKeyNamePlaceholder = "My workstation key"
@@ -545,6 +618,9 @@ object EnStrings : Strings {
     override val selectThinkingLevel = "Thinking effort"
     override val loadingModels = "Loading models…"
     override val retryModels = "Retry models"
+    override val noModelConfiguredTitle = "No model configured"
+    override val noModelConfiguredBody = "Sign in to a provider and pick a model to start chatting."
+    override val noModelConfigureAction = "Manage providers"
     override val modelOptionsFailed = { reason: String -> "Could not load model options: $reason" }
     override val commandRejected = "Command rejected"
     override val notConnected = "Not connected"
@@ -776,10 +852,41 @@ object ZhStrings : Strings {
     override val installCancel = "取消"
     override val installBackToForm = "返回"
 
+    override val addServerChooseTitle = "选择连接方式"
+    override val addServerDirectTitle = "直接连接"
+    override val addServerDirectBody = "网关可通过网络直接访问（IP 或主机名）。"
+    override val addServerSshTitle = "通过 SSH 连接"
+    override val addServerSshBody = "通过 SSH 隧道连接。App 会检查网关是否在运行，也可以自动安装。"
+    override val addServerCheckConnection = "检查连接"
+    override val addServerCheckingTitle = { target: String -> "正在检查 $target" }
+    override val addServerStepDetectGateway = "检查默认端口上的网关"
+    override val addServerGatewayFoundTitle = "已发现网关"
+    override val addServerGatewayFoundBody = { port: Int ->
+        "端口 $port 上有健康的 ohpi 网关响应。请输入其令牌完成连接。"
+    }
+    override val addServerGatewayMissingTitle = "默认端口上没有网关"
+    override val addServerGatewayMissingBody = { port: Int ->
+        "SSH 连接正常，但端口 $port 上没有健康的网关响应。请选择如何继续。"
+    }
+    override val addServerInstallTitle = "自动安装"
+    override val addServerInstallBody = "App 将为该 SSH 用户安装 pi 与网关并启动。"
+    override val addServerManualTitle = "手动填写地址"
+    override val addServerManualBody = "网关监听在其他端口或网卡上。"
+
     override val sshKeysSection = "SSH 密钥"
     override val sshKeysEmpty = "暂无密钥。一个已保存的密钥可以给多台机器使用。"
     override val sshKeyAdd = "添加密钥"
+    override val sshKeyAddChoiceTitle = "添加 SSH 密钥"
+    override val sshKeyAddExisting = "添加已有密钥"
+    override val sshKeyAddExistingHint = "导入 OpenSSH 或 PEM 私钥；公钥可以不填。"
+    override val sshKeyGenerate = "新建密钥对"
+    override val sshKeyGenerateHint = "使用 App 内置 SSH 库在本机生成 Ed25519 密钥对。"
+    override val sshKeyGenerating = "正在生成…"
+    override val sshKeyGenerationFailed = { error: String -> "无法生成 SSH 密钥对：$error" }
     override val sshKeyEdit = "编辑密钥"
+    override val sshKeyPublicLabel = "公钥（可选）"
+    override val sshKeyViewPublic = "查看公钥"
+    override val sshKeyPublicTitle = "SSH 公钥"
     override val sshKeyDeleteTitle = "删除 SSH 密钥？"
     override val sshKeyDeleteBody = { name: String ->
         "这只会从本设备移除「$name」。使用该密钥的服务器需要改用其他密钥或密码。"
@@ -787,7 +894,8 @@ object ZhStrings : Strings {
     override val sshKeyUsage = { count: Int ->
         if (count == 0) "未被任何服务器使用" else "被 $count 台服务器使用"
     }
-    override val sshKeyCreateNew = "新建密钥…"
+    override val sshKeyCount = { count: Int -> "${count} 个密钥" }
+    override val sshKeyCreateNew = "导入密钥…"
     override val sshKeySelectPlaceholder = "选择密钥"
     override val sshKeyNameLabel = "密钥名称"
     override val sshKeyNamePlaceholder = "我的工作机密钥"
@@ -898,6 +1006,9 @@ object ZhStrings : Strings {
     override val selectThinkingLevel = "思考强度"
     override val loadingModels = "正在加载模型…"
     override val retryModels = "重试加载模型"
+    override val noModelConfiguredTitle = "尚未配置模型"
+    override val noModelConfiguredBody = "登录 Provider 并选择模型后，才能开始对话。"
+    override val noModelConfigureAction = "管理 Provider"
     override val modelOptionsFailed = { reason: String -> "无法加载模型选项：$reason" }
     override val commandRejected = "命令被拒绝"
     override val notConnected = "尚未连接"

@@ -87,13 +87,7 @@ internal suspend fun awaitManagedGatewayHealth(gateway: String): ManagedGatewayH
     repeat(12) { attempt ->
         if (attempt > 0) delay(250)
         try {
-            val response = gatewayHttp.get(gatewayHttpBase(gateway) + "/healthz")
-            if (response.status.value in 200..299) {
-                val health = PiJson.decodeFromString<ManagedGatewayHealth>(response.bodyAsText())
-                if (health.status == "ok" && health.service == "ohpi-gateway" && health.protocol > 0) {
-                    return health
-                }
-            }
+            fetchGatewayHealth(gateway)?.let { return it }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -105,6 +99,34 @@ internal suspend fun awaitManagedGatewayHealth(gateway: String): ManagedGatewayH
         retryable = true,
         cause = lastFailure,
     )
+}
+
+/** Fetches one health snapshot; null when the gateway is unreachable or unhealthy. */
+internal suspend fun fetchGatewayHealth(gateway: String): ManagedGatewayHealth? {
+    val response = gatewayHttp.get(gatewayHttpBase(gateway) + "/healthz")
+    if (response.status.value !in 200..299) return null
+    val health = PiJson.decodeFromString<ManagedGatewayHealth>(response.bodyAsText())
+    return health.takeIf {
+        it.status == "ok" && it.service == "ohpi-gateway" && it.protocol > 0
+    }
+}
+
+/**
+ * Short non-throwing probe used by the add-server wizard: true when a healthy
+ * ohpi gateway answers at [gateway] within a few attempts.
+ */
+internal suspend fun checkGatewayHealth(gateway: String, attempts: Int = 4): Boolean {
+    repeat(attempts.coerceAtLeast(1)) { attempt ->
+        if (attempt > 0) delay(250)
+        try {
+            if (fetchGatewayHealth(gateway) != null) return true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // unreachable or unparsable; keep trying until attempts run out
+        }
+    }
+    return false
 }
 
 internal object GitHubManagedGatewayArtifactSource : ManagedGatewayArtifactSource {

@@ -55,7 +55,7 @@ import androidx.compose.material.icons.filled.ChevronRight
  * submitting to app stores such as Apple App Store.
  */
 @Composable
-fun LicensesScreen(onBack: () -> Unit) {
+fun LicensesScreen(onBack: (() -> Unit)?) {
     var viewing by remember { mutableStateOf<OssLicense?>(null) }
     val platformComponents = ossComponentsFor(getPlatform().target)
 
@@ -69,8 +69,12 @@ fun LicensesScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = S.back)
+                }
+            } else {
+                Spacer(Modifier.width(16.dp))
             }
             Text(
                 S.openSourceLicenses,

@@ -184,6 +184,76 @@ cleanup:
     return output;
 }
 
+static jobjectArray pi_ssh_jni_key_pair_output(
+    JNIEnv *environment,
+    const pi_ssh_key_pair *key_pair)
+{
+    jclass byte_array_class = NULL;
+    jobjectArray output = NULL;
+    jbyteArray private_key = NULL;
+    jbyteArray public_key = NULL;
+    size_t private_key_size = strlen(key_pair->private_key);
+    size_t public_key_size = strlen(key_pair->public_key);
+
+    if (private_key_size > INT_MAX || public_key_size > INT_MAX) {
+        return NULL;
+    }
+    byte_array_class = (*environment)->FindClass(environment, "[B");
+    if (byte_array_class == NULL) {
+        return NULL;
+    }
+    output = (*environment)->NewObjectArray(environment,
+                                            2,
+                                            byte_array_class,
+                                            NULL);
+    if (output == NULL) {
+        goto cleanup;
+    }
+    private_key =
+        (*environment)->NewByteArray(environment, (jsize)private_key_size);
+    public_key =
+        (*environment)->NewByteArray(environment, (jsize)public_key_size);
+    if (private_key == NULL || public_key == NULL) {
+        output = NULL;
+        goto cleanup;
+    }
+    (*environment)->SetByteArrayRegion(environment,
+                                      private_key,
+                                      0,
+                                      (jsize)private_key_size,
+                                      (const jbyte *)key_pair->private_key);
+    if (!(*environment)->ExceptionCheck(environment)) {
+        (*environment)->SetByteArrayRegion(environment,
+                                          public_key,
+                                          0,
+                                          (jsize)public_key_size,
+                                          (const jbyte *)key_pair->public_key);
+    }
+    if (!(*environment)->ExceptionCheck(environment)) {
+        (*environment)->SetObjectArrayElement(environment,
+                                              output,
+                                              0,
+                                              private_key);
+        (*environment)->SetObjectArrayElement(environment,
+                                              output,
+                                              1,
+                                              public_key);
+    }
+    if ((*environment)->ExceptionCheck(environment)) {
+        output = NULL;
+    }
+
+cleanup:
+    if (private_key != NULL) {
+        (*environment)->DeleteLocalRef(environment, private_key);
+    }
+    if (public_key != NULL) {
+        (*environment)->DeleteLocalRef(environment, public_key);
+    }
+    (*environment)->DeleteLocalRef(environment, byte_array_class);
+    return output;
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeStart(
     JNIEnv *environment,
@@ -362,6 +432,45 @@ cleanup:
     for (index = 0; index < sizeof(values) / sizeof(values[0]); ++index) {
         pi_ssh_jni_free_bytes(&values[index]);
     }
+    return output;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeGenerateEd25519KeyPair(
+    JNIEnv *environment,
+    jobject receiver,
+    jbyteArray passphrase,
+    jintArray error_code,
+    jobjectArray error_strings)
+{
+    pi_ssh_jni_bytes passphrase_value;
+    pi_ssh_key_pair key_pair;
+    pi_ssh_error error;
+    jobjectArray output = NULL;
+
+    (void)receiver;
+    memset(&passphrase_value, 0, sizeof(passphrase_value));
+    pi_ssh_key_pair_init(&key_pair);
+    if (!pi_ssh_jni_copy_bytes(environment,
+                               passphrase,
+                               false,
+                               &passphrase_value)) {
+        goto cleanup;
+    }
+    if (pi_ssh_key_pair_generate_ed25519(passphrase_value.value,
+                                         &key_pair,
+                                         &error) != 0) {
+        pi_ssh_jni_write_error(environment,
+                               &error,
+                               error_code,
+                               error_strings);
+        goto cleanup;
+    }
+    output = pi_ssh_jni_key_pair_output(environment, &key_pair);
+
+cleanup:
+    pi_ssh_key_pair_free(&key_pair);
+    pi_ssh_jni_free_bytes(&passphrase_value);
     return output;
 }
 

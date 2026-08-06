@@ -85,10 +85,10 @@ internal class OnboardingInstallController {
     private var trustedHostKey = ""
     private var hostKeyDecision: CompletableDeferred<Boolean>? = null
 
-    fun prepare(profile: ServerProfile, labels: List<String>) {
+    fun prepare(profile: ServerProfile, labels: List<String>, trustedHostKey: String = "") {
         this.profile = profile
         stepLabels = labels
-        trustedHostKey = ""
+        this.trustedHostKey = trustedHostKey
         reset()
     }
 
@@ -397,7 +397,7 @@ private fun ChoosePathContent(onChoose: (OnboardingPath) -> Unit) {
 }
 
 @Composable
-private fun PathCard(
+internal fun PathCard(
     icon: @Composable () -> Unit,
     title: String,
     body: String,
@@ -441,7 +441,7 @@ private fun PathCard(
 }
 
 @Composable
-private fun FormTopBar(title: String, onBack: () -> Unit) {
+internal fun FormTopBar(title: String, onBack: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
@@ -581,7 +581,7 @@ private fun ExistingMachineContent(
 }
 
 @Composable
-private fun InstallProgressContent(
+internal fun InstallProgressContent(
     install: OnboardingInstallController,
     host: String,
     username: String,
@@ -672,13 +672,13 @@ private fun InstallProgressContent(
     }
 }
 
-private enum class InstallStepState { Pending, Active, Done, Failed }
+internal enum class InstallStepState { Pending, Active, Done, Failed }
 
 /** Position of the "installing pi" step in the wizard's fixed step list. */
-private const val PiInstallStepIndex = 2
+internal const val PiInstallStepIndex = 2
 
 @Composable
-private fun InstallStepRow(label: String, state: InstallStepState, hint: String? = null) {
+internal fun InstallStepRow(label: String, state: InstallStepState, hint: String? = null) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),

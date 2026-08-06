@@ -19,6 +19,7 @@ import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
 import io.github.yearsyan.ohpi.i18n.Strings
+import io.github.yearsyan.ohpi.isApplicationActive
 import io.github.yearsyan.ohpi.net.FileApiException
 import io.github.yearsyan.ohpi.net.FileListResponse
 import io.github.yearsyan.ohpi.net.FileReadResponse
@@ -120,6 +121,7 @@ class AppViewModel(
     private var forwardManagerServerId = ""
     private var sshHostKeyDecision: CompletableDeferred<Boolean>? = null
     private var sessionRefreshGeneration = 0L
+    private var interruptedSessionRefreshGeneration: Long? = null
     private var providerRefreshGeneration = 0L
     private var providerAuthGeneration = 0L
     private var providerAuthClient: PiClient? = null
@@ -556,7 +558,9 @@ class AppViewModel(
 
     private fun refreshAfterProviderMutation() {
         refreshProviders()
-        controllers.values.filter { it.isDraft }.forEach { it.reloadCapabilities() }
+        controllers.values.forEach {
+            if (it.isDraft) it.reloadCapabilities() else it.refreshModels()
+        }
     }
 
     // ---- sessions ----
@@ -567,6 +571,29 @@ class AppViewModel(
         // reads as a completed refresh instead of a no-op flicker.
         if (!sessionsLoading) {
             loadSessionsForActive(clearExisting = false, minIndicatorMs = MIN_REFRESH_INDICATOR_MS)
+        }
+    }
+
+    /**
+     * iOS makes the app inactive while showing its first local-network permission alert.
+     * Remember the in-flight load so a failure caused by that alert is not presented as
+     * a server error.
+     */
+    fun onAppInactive() {
+        if (sessionsLoading) {
+            interruptedSessionRefreshGeneration = sessionRefreshGeneration
+        }
+    }
+
+    /** Restarts a session load after an iOS system alert returns focus to the app. */
+    fun onAppActive() {
+        val interruptedGeneration = interruptedSessionRefreshGeneration ?: return
+        interruptedSessionRefreshGeneration = null
+        if (
+            interruptedGeneration == sessionRefreshGeneration &&
+            activeServer != null
+        ) {
+            loadSessionsForActive(clearExisting = false)
         }
     }
 
@@ -616,11 +643,23 @@ class AppViewModel(
                         .map(::mergeControllerStatus)
                         .sortedByDescending { it.createdAt },
                 )
+                if (interruptedSessionRefreshGeneration == generation) {
+                    interruptedSessionRefreshGeneration = null
+                }
                 if (migrationComplete) store.clearLegacySessions(server.id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (generation == sessionRefreshGeneration && activeServerId == server.id) {
+                if (!isApplicationActive()) {
+                    interruptedSessionRefreshGeneration = generation
+                }
+                val interruptedBySystemAlert =
+                    interruptedSessionRefreshGeneration == generation
+                if (
+                    generation == sessionRefreshGeneration &&
+                    activeServerId == server.id &&
+                    !interruptedBySystemAlert
+                ) {
                     toast(
                         "Could not load sessions: ${failure.message ?: "unknown error"}",
                         Toast.Kind.Error,
