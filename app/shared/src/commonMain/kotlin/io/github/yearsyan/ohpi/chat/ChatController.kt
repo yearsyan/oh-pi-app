@@ -189,6 +189,7 @@ class ChatController(
         val displayText: String,
         val priorOccurrences: Int,
         val confirmOnResponse: Boolean,
+        val accepted: Boolean = false,
     )
 
     /** Small string contract so the controller stays UI-independent. */
@@ -236,6 +237,22 @@ class ChatController(
     var followUpQueue = mutableStateListOf<String>(); private set
     var dialog by mutableStateOf<UiDialogRequest?>(null); private set
 
+    /** Per-session composer state survives navigation and transient reconnects. */
+    var composerText by mutableStateOf(""); private set
+    var composerImages by mutableStateOf<List<PromptImage>>(emptyList()); private set
+
+    /** Local submission awaiting either RPC acceptance or its user-message event. */
+    val pendingSubmission: PendingSubmission?
+        get() = pendingPrompt?.let { pending ->
+            PendingSubmission(
+                sourceId = pending.sourceId,
+                text = pending.displayText,
+                images = pending.images,
+                streaming = pending.streaming,
+                accepted = pending.accepted,
+            )
+        }
+
     val items = mutableStateListOf<TimelineItem>()
 
     /**
@@ -263,7 +280,7 @@ class ChatController(
             !missingModel &&
             promptDispatch(conn, isDraft, pendingCreatePrompt != null) != PromptDispatch.Unavailable
 
-    /** True after submit and until the corresponding prompt or command is accepted. */
+    /** True after submit and until the input is rejected or enters the transcript. */
     val isPromptPending: Boolean get() = pendingPrompt != null || pendingCompactId != null
 
     /** Manual compaction requires an idle, attached session. */
@@ -343,6 +360,7 @@ class ChatController(
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingCompactId by mutableStateOf<String?>(null)
+    private var composerSubmissionSourceId: String? = null
     var lastConfirmedPromptSourceId by mutableStateOf<String?>(null); private set
 
     // ---------- connection ----------
@@ -359,6 +377,7 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
+        resetComposer()
         models.clear()
         thinkingLevels.clear()
         slashCommands.clear()
@@ -458,6 +477,7 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
+        resetComposer()
         slashCommands.clear()
         sessionStats = null
         sessionStatsLoading = false
@@ -663,6 +683,9 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
+        composerSubmissionSourceId = null
+        steeringQueue.clear()
+        followUpQueue.clear()
     }
 
     private fun handleConnectionClosed(code: Short, reason: String) {
@@ -809,14 +832,29 @@ class ChatController(
         }
     }
 
+    fun updateComposerText(text: String) {
+        if (!isPromptPending) composerText = text
+    }
+
+    fun updateComposerImages(images: List<PromptImage>) {
+        if (!isPromptPending) composerImages = images.toList()
+    }
+
     /** Routes app-owned slash commands to RPC and all other input through pi's prompt handler. */
     fun submitInput(text: String, images: List<PromptImage> = emptyList()): String? {
         val invocation = parseSlashInvocation(text)
-        return if (invocation?.name == "compact") {
-            if (images.isNotEmpty()) null else compact(invocation.arguments)
-        } else {
-            sendPrompt(text, images)
+        val sourceId =
+            if (invocation?.name == "compact") {
+                if (images.isNotEmpty()) null else compact(invocation.arguments)
+            } else {
+                sendPrompt(text, images)
+            }
+        if (sourceId != null) {
+            composerText = text
+            composerImages = images.toList()
+            composerSubmissionSourceId = sourceId
         }
+        return sourceId
     }
 
     fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): String? {
@@ -1423,8 +1461,12 @@ class ChatController(
             ) {
                 if (pendingCreatePrompt?.sourceId == responseID) pendingCreatePrompt = null
                 pendingPrompt = null
+                releaseComposerSubmission(responseID)
             }
-            if (command == "compact" && pendingCompactId == responseID) pendingCompactId = null
+            if (command == "compact" && pendingCompactId == responseID) {
+                pendingCompactId = null
+                releaseComposerSubmission(responseID)
+            }
             val error = msg.strOrEmpty("error")
             if (command !in setOf("abort", "get_commands")) {
                 onToast("$command: $error", Toast.Kind.Error)
@@ -1435,11 +1477,16 @@ class ChatController(
             return
         }
         val pending = pendingPrompt
-        if (command == "prompt" && pending?.confirmOnResponse == true && pending.sourceId == responseID) {
-            confirmPendingPrompt(responseID)
+        if (command == "prompt" && pending?.sourceId == responseID) {
+            if (pending.confirmOnResponse) {
+                confirmPendingPrompt(responseID)
+            } else {
+                pendingPrompt = pending.copy(accepted = true)
+            }
         }
         if (command == "compact" && pendingCompactId == responseID) {
             pendingCompactId = null
+            confirmComposerSubmission(responseID)
             lastConfirmedPromptSourceId = responseID
         }
         when (command) {
@@ -1693,7 +1740,27 @@ class ChatController(
         if (pending.sourceId != sourceId) return
         if (pendingCreatePrompt?.sourceId == sourceId) pendingCreatePrompt = null
         pendingPrompt = null
+        confirmComposerSubmission(sourceId)
         lastConfirmedPromptSourceId = sourceId
+    }
+
+    private fun confirmComposerSubmission(sourceId: String) {
+        if (composerSubmissionSourceId != sourceId) return
+        composerText = ""
+        composerImages = emptyList()
+        composerSubmissionSourceId = null
+    }
+
+    private fun releaseComposerSubmission(sourceId: String) {
+        if (composerSubmissionSourceId == sourceId) composerSubmissionSourceId = null
+    }
+
+    private fun resetComposer() {
+        composerText = ""
+        composerImages = emptyList()
+        composerSubmissionSourceId = null
+        steeringQueue.clear()
+        followUpQueue.clear()
     }
 
     // ---------- timeline: tools ----------

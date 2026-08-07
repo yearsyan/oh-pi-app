@@ -276,6 +276,9 @@ interface Strings {
     val copy: String
     val queueSteer: String
     val queueFollowUp: String
+    val queueSubmitting: String
+    val queueSubmitted: String
+    val queueAwaitingConsumption: String
     val compacting: String
     val compacted: String
     val retrying: String
@@ -683,8 +686,11 @@ object EnStrings : Strings {
     override val emptyChatBody = "Ask anything, or let the agent inspect your project."
     override val copied = "Copied"
     override val copy = "Copy"
-    override val queueSteer = "steer queued"
-    override val queueFollowUp = "follow-up queued"
+    override val queueSteer = "Steer · queued"
+    override val queueFollowUp = "Follow-up · queued"
+    override val queueSubmitting = "Submitting…"
+    override val queueSubmitted = "Submitted"
+    override val queueAwaitingConsumption = "Awaiting agent"
     override val compacting = "Compacting context…"
     override val compacted = "Context compacted"
     override val retrying = "Retrying"
@@ -1088,8 +1094,11 @@ object ZhStrings : Strings {
     override val emptyChatBody = "随便问点什么，或让智能体检查当前项目。"
     override val copied = "已复制"
     override val copy = "复制"
-    override val queueSteer = "条引导排队中"
-    override val queueFollowUp = "条跟进排队中"
+    override val queueSteer = "引导 · 已排队"
+    override val queueFollowUp = "跟进 · 已排队"
+    override val queueSubmitting = "正在提交…"
+    override val queueSubmitted = "已提交"
+    override val queueAwaitingConsumption = "待 Agent 消费"
     override val compacting = "正在压缩上下文…"
     override val compacted = "上下文压缩完成"
     override val retrying = "正在重试"

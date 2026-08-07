@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -279,7 +280,7 @@ private fun WorkspaceHeader(
                     onEdit()
                 },
             )
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TechnologyIcon(workspace.technology)
@@ -357,32 +358,36 @@ private fun WorkspaceListToggle(
     )
 }
 
-internal data class TechnologyVisual(val label: String, val color: Color)
+internal data class TechnologyVisual(
+    val label: String,
+    val color: Color,
+    val icon: ImageVector? = null,
+)
 
 internal fun technologyVisual(technology: String): TechnologyVisual =
     when (technology.lowercase()) {
-        "nextjs" -> TechnologyVisual("N", Color(0xFF111111))
-        "nuxt" -> TechnologyVisual("N", Color(0xFF00A86B))
-        "svelte" -> TechnologyVisual("S", Color(0xFFFF3E00))
-        "angular" -> TechnologyVisual("A", Color(0xFFDD0031))
-        "vite" -> TechnologyVisual("V", Color(0xFF646CFF))
-        "vue" -> TechnologyVisual("V", Color(0xFF42B883))
-        "react" -> TechnologyVisual("⚛", Color(0xFF087EA4))
-        "flutter" -> TechnologyVisual("F", Color(0xFF02569B))
-        "rust" -> TechnologyVisual("Rs", Color(0xFFB7410E))
-        "go" -> TechnologyVisual("Go", Color(0xFF00ADD8))
-        "kotlin" -> TechnologyVisual("Kt", Color(0xFF7F52FF))
-        "swift" -> TechnologyVisual("Sw", Color(0xFFF05138))
-        "dotnet" -> TechnologyVisual(".N", Color(0xFF512BD4))
-        "python" -> TechnologyVisual("Py", Color(0xFF3776AB))
-        "typescript" -> TechnologyVisual("TS", Color(0xFF3178C6))
-        "javascript" -> TechnologyVisual("JS", Color(0xFFB59F00))
-        "php" -> TechnologyVisual("PHP", Color(0xFF777BB4))
-        "ruby" -> TechnologyVisual("Rb", Color(0xFFCC342D))
-        "elixir" -> TechnologyVisual("Ex", Color(0xFF6E4A7E))
-        "dart" -> TechnologyVisual("Dt", Color(0xFF0175C2))
-        "cpp" -> TechnologyVisual("C++", Color(0xFF00599C))
-        "java" -> TechnologyVisual("Jv", Color(0xFFB07219))
+        "nextjs" -> TechnologyVisual("N", Color(0xFF111111), TechBrandNextJs)
+        "nuxt" -> TechnologyVisual("N", Color(0xFF00A86B), TechBrandNuxt)
+        "svelte" -> TechnologyVisual("S", Color(0xFFFF3E00), TechBrandSvelte)
+        "angular" -> TechnologyVisual("A", Color(0xFFDD0031), TechBrandAngular)
+        "vite" -> TechnologyVisual("V", Color(0xFF646CFF), TechBrandVite)
+        "vue" -> TechnologyVisual("V", Color(0xFF42B883), TechBrandVue)
+        "react" -> TechnologyVisual("⚛", Color(0xFF087EA4), TechBrandReact)
+        "flutter" -> TechnologyVisual("F", Color(0xFF02569B), TechBrandFlutter)
+        "rust" -> TechnologyVisual("Rs", Color(0xFFB7410E), TechBrandRust)
+        "go" -> TechnologyVisual("Go", Color(0xFF00ADD8), TechBrandGo)
+        "kotlin" -> TechnologyVisual("Kt", Color(0xFF7F52FF), TechBrandKotlin)
+        "swift" -> TechnologyVisual("Sw", Color(0xFFF05138), TechBrandSwift)
+        "dotnet" -> TechnologyVisual(".N", Color(0xFF512BD4), TechBrandDotNet)
+        "python" -> TechnologyVisual("Py", Color(0xFF3776AB), TechBrandPython)
+        "typescript" -> TechnologyVisual("TS", Color(0xFF3178C6), TechBrandTypescript)
+        "javascript" -> TechnologyVisual("JS", Color(0xFFB59F00), TechBrandJavascript)
+        "php" -> TechnologyVisual("PHP", Color(0xFF777BB4), TechBrandPhp)
+        "ruby" -> TechnologyVisual("Rb", Color(0xFFCC342D), TechBrandRuby)
+        "elixir" -> TechnologyVisual("Ex", Color(0xFF6E4A7E), TechBrandElixir)
+        "dart" -> TechnologyVisual("Dt", Color(0xFF0175C2), TechBrandDart)
+        "cpp" -> TechnologyVisual("C++", Color(0xFF00599C), TechBrandCpp)
+        "java" -> TechnologyVisual("Jv", Color(0xFFB07219), TechBrandOpenJdk)
         else -> TechnologyVisual("<>", Color(0xFF607D8B))
     }
 
@@ -396,13 +401,24 @@ private fun TechnologyIcon(technology: String) {
             .background(visual.color),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            visual.label,
-            color = Color.White,
-            fontSize = if (visual.label.length > 2) 6.sp else 8.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
+        if (visual.icon != null) {
+            Icon(
+                visual.icon,
+                contentDescription = null,
+                modifier = Modifier.size(13.dp),
+                tint = Color.White,
+            )
+        } else {
+            val fontSize = if (visual.label.length > 2) 6.sp else 8.sp
+            Text(
+                visual.label,
+                color = Color.White,
+                fontSize = fontSize,
+                lineHeight = fontSize,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
     }
 }
 

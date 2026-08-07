@@ -50,6 +50,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -381,6 +382,8 @@ private fun ContextUsageRing(
 
 // Usage ramp hues: green when the window is nearly empty, blue at half
 // capacity, red when full; intermediate values blend along the hue wheel.
+// Saturation/brightness stay muted so the ring reads as a calm indicator
+// instead of a neon alarm; dark mode lifts the value for legibility.
 private const val UsageHueGreen = 145f
 private const val UsageHueBlue = 215f
 private const val UsageHueRed = 360f
@@ -395,7 +398,12 @@ private fun contextUsageColor(percent: Double?): Color {
         } else {
             UsageHueBlue + (UsageHueRed - UsageHueBlue) * ((p - 0.5f) / 0.5f)
         }
-    return Color.hsv(hue, saturation = 0.82f, value = 0.92f)
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return if (dark) {
+        Color.hsv(hue, saturation = 0.32f, value = 0.82f)
+    } else {
+        Color.hsv(hue, saturation = 0.42f, value = 0.66f)
+    }
 }
 
 private fun formatCount(value: Long): String =

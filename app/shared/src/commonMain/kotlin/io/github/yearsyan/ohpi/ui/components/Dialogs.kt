@@ -254,6 +254,7 @@ fun WorkspaceDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceMetadataDialog(
     workspace: WorkspaceSummary,
@@ -264,51 +265,58 @@ fun WorkspaceMetadataDialog(
     var prompt by remember(workspace.id) {
         mutableStateOf(workspace.additionalSystemPrompt)
     }
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(S.workspaceMetadataTitle) },
-        text = {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 480.dp)
-                    .verticalScroll(rememberScrollState()),
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        ) {
+            Text(
+                S.workspaceMetadataTitle,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                workspace.directory,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(S.workspaceNameLabel) },
+                placeholder = { Text(workspace.displayName) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                label = { Text(S.additionalSystemPromptLabel) },
+                supportingText = { Text(S.additionalSystemPromptHint) },
+                minLines = 5,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
             ) {
-                Text(
-                    workspace.directory,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(S.workspaceNameLabel) },
-                    placeholder = { Text(workspace.displayName) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    label = { Text(S.additionalSystemPromptLabel) },
-                    supportingText = { Text(S.additionalSystemPromptHint) },
-                    minLines = 5,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                TextButton(onClick = onDismiss) { Text(S.cancel) }
+                TextButton(
+                    onClick = {
+                        onConfirm(name.trim(), prompt)
+                        onDismiss()
+                    },
+                ) { Text(S.confirm) }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(name.trim(), prompt)
-                    onDismiss()
-                },
-            ) { Text(S.confirm) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(S.cancel) } },
-    )
+        }
+    }
 }
 
 /** Bottom-sheet directory browser used to add a workspace on the gateway host. */

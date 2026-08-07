@@ -1,13 +1,16 @@
 package io.github.yearsyan.ohpi.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -36,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,15 +49,24 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.PromptImage
+import io.github.yearsyan.ohpi.chat.QueuedPromptItem
+import io.github.yearsyan.ohpi.chat.QueuedPromptKind
+import io.github.yearsyan.ohpi.chat.QueuedPromptState
 import io.github.yearsyan.ohpi.chat.SlashCommand
 import io.github.yearsyan.ohpi.chat.SlashCommandSource
 import io.github.yearsyan.ohpi.chat.matchingSlashCommands
+import io.github.yearsyan.ohpi.chat.queuedPromptItems
 import io.github.yearsyan.ohpi.i18n.S
+import kotlin.io.encoding.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.jetbrains.compose.resources.decodeToImageBitmap
 
 /** Rounded message composer with model controls, image attachment and send/stop action. */
 @Composable
@@ -62,21 +75,20 @@ fun Composer(
     modifier: Modifier = Modifier,
     onPromptSent: () -> Unit = {},
 ) {
-    var text by remember { mutableStateOf("") }
-    var images by remember { mutableStateOf<List<PromptImage>>(emptyList()) }
+    val text = controller.composerText
+    val images = controller.composerImages
     var pickerError by remember { mutableStateOf<String?>(null) }
-    var submittedSourceId by remember { mutableStateOf<String?>(null) }
+    var observedConfirmation by
+        remember(controller) { mutableStateOf(controller.lastConfirmedPromptSourceId) }
     val focusRequester = remember { FocusRequester() }
     val promptPending = controller.isPromptPending
     LaunchedEffect(controller.lastConfirmedPromptSourceId) {
         val confirmed = controller.lastConfirmedPromptSourceId
-        if (confirmed != null && confirmed == submittedSourceId) {
-            text = ""
-            images = emptyList()
+        if (confirmed != null && confirmed != observedConfirmation) {
             pickerError = null
-            submittedSourceId = null
             onPromptSent()
         }
+        observedConfirmation = confirmed
     }
     val imageTooLarge = S.imageTooLarge
     val imageReadFailed = S.imageReadFailed
@@ -85,7 +97,7 @@ fun Composer(
             if (controller.isPromptPending) return@rememberImagePicker
             when (result) {
                 is ImagePickResult.Success -> {
-                    images = (images + result.images).take(MaxPickedImageCount)
+                    controller.updateComposerImages((images + result.images).take(MaxPickedImageCount))
                     pickerError = null
                 }
                 ImagePickResult.TooLarge -> pickerError = imageTooLarge
@@ -95,6 +107,12 @@ fun Composer(
     val hasPrompt = text.isNotBlank() || images.isNotEmpty()
     val canSend = controller.canSubmitInput(text, images.isNotEmpty())
     val showStop = controller.isStreaming && !hasPrompt
+    val queuedPrompts =
+        queuedPromptItems(
+            pending = controller.pendingSubmission,
+            steering = controller.steeringQueue,
+            followUp = controller.followUpQueue,
+        )
     val slashMatches =
         matchingSlashCommands(
             text,
@@ -140,10 +158,13 @@ fun Composer(
                     SlashCommandMenu(
                         commands = slashMatches,
                         onSelect = { command ->
-                            text = "/${command.name} "
+                            controller.updateComposerText("/${command.name} ")
                             focusRequester.requestFocus()
                         },
                     )
+                }
+                if (queuedPrompts.isNotEmpty()) {
+                    QueuedPromptPanel(queuedPrompts)
                 }
                 Box(
                     modifier =
@@ -161,7 +182,7 @@ fun Composer(
                     }
                     BasicTextField(
                         value = text,
-                        onValueChange = { text = it },
+                        onValueChange = controller::updateComposerText,
                         enabled = !promptPending,
                         modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                         textStyle =
@@ -183,7 +204,7 @@ fun Composer(
                                 image = selected,
                                 enabled = !promptPending,
                                 onRemove = {
-                                    images = images.filterIndexed { i, _ -> i != index }
+                                    controller.updateComposerImages(images.filterIndexed { i, _ -> i != index })
                                     pickerError = null
                                 },
                             )
@@ -230,7 +251,7 @@ fun Composer(
                                 when {
                                     showStop -> controller.abort()
                                     canSend -> {
-                                        submittedSourceId = controller.submitInput(text, images)
+                                        controller.submitInput(text, images)
                                     }
                                 }
                             },
@@ -262,6 +283,91 @@ fun Composer(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueuedPromptPanel(items: List<QueuedPromptItem>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.58f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            items.take(3).forEach { item -> QueuedPromptRow(item) }
+            if (items.size > 3) {
+                Text(
+                    "+${items.size - 3}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.align(Alignment.End),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueuedPromptRow(item: QueuedPromptItem) {
+    val status =
+        when (item.state) {
+            QueuedPromptState.Submitting -> S.queueSubmitting
+            QueuedPromptState.AwaitingConsumption -> {
+                val prefix =
+                    when (item.kind) {
+                        QueuedPromptKind.Submission -> S.queueSubmitted
+                        QueuedPromptKind.Steering -> S.queueSteer
+                        QueuedPromptKind.FollowUp -> S.queueFollowUp
+                    }
+                "$prefix · ${S.queueAwaitingConsumption}"
+            }
+        }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            Modifier
+                .padding(top = 5.dp)
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(
+                    if (item.state == QueuedPromptState.Submitting) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                ),
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                status,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (item.text.isNotBlank()) {
+                Text(
+                    item.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (item.imageCount > 0) {
+                Text(
+                    S.imageAttachment(item.imageCount),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
             }
         }
     }
@@ -348,20 +454,42 @@ private fun SelectedImageChip(
     enabled: Boolean,
     onRemove: () -> Unit,
 ) {
+    val decoded by rememberDecodedPromptImage(image)
+    var previewOpen by remember { mutableStateOf(false) }
     Row(
         modifier =
             Modifier
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.secondaryContainer)
-                .padding(start = 10.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+                .clickable(enabled = enabled) { previewOpen = true }
+                .padding(start = 4.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            Icons.Filled.Image,
-            contentDescription = null,
-            modifier = Modifier.size(17.dp),
-            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-        )
+        Box(
+            modifier =
+                Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (val state = decoded) {
+                is ImagePreviewState.Ready ->
+                    Image(
+                        bitmap = state.bitmap,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                else ->
+                    Icon(
+                        Icons.Filled.Image,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+            }
+        }
         Spacer(Modifier.width(6.dp))
         Text(
             image.name.ifBlank { S.imageAttachment(1) },
@@ -380,7 +508,25 @@ private fun SelectedImageChip(
             )
         }
     }
+    if (previewOpen) {
+        ImagePreviewDialog(
+            state = decoded,
+            onDismiss = { previewOpen = false },
+            title = image.name.ifBlank { null },
+        )
+    }
 }
+
+@Composable
+private fun rememberDecodedPromptImage(image: PromptImage) =
+    produceState<ImagePreviewState>(ImagePreviewState.Loading, image.data) {
+        value =
+            withContext(Dispatchers.Default) {
+                runCatching {
+                    ImagePreviewState.Ready(Base64.decode(image.data).decodeToImageBitmap())
+                }.getOrElse { ImagePreviewState.Failed() }
+            }
+    }
 
 @Composable
 private fun ComposerIconButton(
