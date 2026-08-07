@@ -73,7 +73,7 @@ curl http://127.0.0.1:18080/healthz
 | `--token-file` | `OHPI_TOKEN_FILE` | 无 | 从仅含一行内容的文件读取 token；显式 token 非空时优先 |
 | `--version` | 无 | `false` | 输出构建版本并退出 |
 | `--data-dir` | `OHPI_DATA_DIR` | `$XDG_STATE_HOME/oh-pi-app` 或 `~/.local/state/oh-pi-app` | session 持久化目录 |
-| `--work-dir` | `OHPI_WORK_DIR` | 当前目录 | 旧会话 attach 的回退目录、`/fs/list` 的浏览起点 |
+| `--work-dir` | `OHPI_WORK_DIR` | 当前目录 | 默认工作空间目录、`/fs/list` 的浏览起点 |
 | `--title-model` | `OHPI_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
 | `--pi` | `OHPI_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-env-path` | `OHPI_PI_ENV_PATH` | 继承网关 `PATH` | 只提供给 pi 子进程的 `PATH`；适用于 fnm、nvm 等 Node 安装 |

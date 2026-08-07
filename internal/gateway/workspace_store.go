@@ -45,44 +45,6 @@ func newWorkspaceStore(dataDir string) (*workspaceStore, error) {
 	return &workspaceStore{root: root}, nil
 }
 
-// bootstrapWorkspaces registers the gateway default and assigns a workspace
-// identity to sessions written by pre-2.0 gateways. The wire protocol remains
-// intentionally incompatible; this migration only avoids discarding history.
-func bootstrapWorkspaces(
-	workspaces *workspaceStore,
-	sessions *sessionStore,
-	defaultDirectory string,
-) error {
-	defaultWorkspace, _, err := workspaces.ensure(defaultDirectory)
-	if err != nil {
-		return fmt.Errorf("register default workspace: %w", err)
-	}
-	metas, err := sessions.list()
-	if err != nil {
-		return err
-	}
-	for _, meta := range metas {
-		if meta.WorkspaceID != "" {
-			if _, err := workspaces.load(meta.WorkspaceID); err != nil {
-				return fmt.Errorf("load workspace for session %q: %w", meta.ID, err)
-			}
-			continue
-		}
-		directory := meta.LegacyWorkDir
-		if directory == "" {
-			directory = defaultWorkspace.Directory
-		}
-		workspace, _, ensureErr := workspaces.ensure(directory)
-		if ensureErr != nil {
-			workspace = defaultWorkspace
-		}
-		if err := sessions.assignWorkspace(meta.ID, workspace.ID); err != nil {
-			return fmt.Errorf("assign workspace to session %q: %w", meta.ID, err)
-		}
-	}
-	return nil
-}
-
 func resolveWorkspaceDirectory(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

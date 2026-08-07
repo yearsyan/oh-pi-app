@@ -61,8 +61,8 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := bootstrapWorkspaces(workspaces, store, cfg.WorkDir); err != nil {
-		return nil, fmt.Errorf("initialize workspaces: %w", err)
+	if _, _, err := workspaces.ensure(cfg.WorkDir); err != nil {
+		return nil, fmt.Errorf("register default workspace: %w", err)
 	}
 	providerExtension, err := providerauth.Install(cfg.DataDir)
 	if err != nil {

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionStorePersistsMetadata(t *testing.T) {
@@ -104,12 +106,43 @@ func TestSessionStoreRejectsTraversalAndUnknownIDs(t *testing.T) {
 	}
 }
 
+func TestSessionStoreRequiresWorkspaceIdentity(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := newSessionStore(dataDir)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	if _, _, err := store.create(""); err == nil {
+		t.Fatal("create session without workspace id unexpectedly succeeded")
+	}
+
+	id, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(dataDir, "sessions", id)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("create legacy session directory: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := writeMetadata(dir, sessionMetadata{ID: id, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("write metadata without workspace: %v", err)
+	}
+	if _, _, err := store.load(id); err == nil || !strings.Contains(err.Error(), "invalid session workspace") {
+		t.Fatalf("load metadata without workspace error = %v", err)
+	}
+}
+
 func TestSessionStoreDiscardOnlyRemovesAllocatedSession(t *testing.T) {
 	store, err := newSessionStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, dir, err := store.create("")
+	workspaceID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, dir, err := store.create(workspaceID)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

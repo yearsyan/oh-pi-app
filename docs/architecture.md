@@ -58,7 +58,7 @@ pi <额外参数> [--append-system-prompt <工作空间提示词>] --mode rpc --
 
 各文件的职责如下：
 
-- `ohpi-session.json` 是会话元数据的权威来源，包含名称、`workspace_id`、创建时间和最近活跃时间。网关启动时会把旧格式中直接保存目录的 session 一次性归入对应工作空间；HTTP 与 WebSocket 协议本身不兼容旧接口。
+- `ohpi-session.json` 是会话元数据的权威来源，包含名称、`workspace_id`、创建时间和最近活跃时间。缺少有效 `workspace_id` 的旧格式元数据不会被迁移或加载；HTTP、WebSocket 与磁盘元数据均不兼容 1.x。
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
 - `ohpi-replay.log` 是当前活动 turn 的紧凑事件 WAL。ohpi 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
 - `ohpi-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
