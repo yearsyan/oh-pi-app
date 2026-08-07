@@ -49,6 +49,17 @@ type PromptMetadata = {
 	descriptions?: string[];
 };
 
+// Extension command contexts in pi 0.84 may omit signal at runtime even
+// though the public type declares it. Provider login implementations call
+// throwIfAborted() unconditionally, so keep a non-aborting fallback for those
+// contexts instead of passing undefined into the provider runtime.
+const fallbackCommandSignal = new AbortController().signal;
+
+function commandSignal(ctx: ExtensionCommandContext): AbortSignal {
+	const signal = (ctx as ExtensionCommandContext & { signal?: AbortSignal }).signal;
+	return signal ?? fallbackCommandSignal;
+}
+
 function providerRuntime(ctx: ExtensionCommandContext): ProviderRuntime {
 	// ModelRuntime owns provider login/logout and the cross-process locked
 	// auth.json store. It is intentionally kept behind ModelRegistry in pi's
@@ -115,7 +126,7 @@ function forwardAuthEvent(ctx: ExtensionCommandContext, event: AuthEvent): void 
 
 function authInteraction(ctx: ExtensionCommandContext): AuthInteraction {
 	return {
-		signal: ctx.signal,
+		signal: commandSignal(ctx),
 		prompt: (prompt) => answerPrompt(ctx, prompt),
 		notify: (event) => forwardAuthEvent(ctx, event),
 	};
@@ -142,7 +153,7 @@ function replayAuthInteraction(
 ): AuthInteraction {
 	let index = 0;
 	return {
-		signal: ctx.signal,
+		signal: commandSignal(ctx),
 		prompt: async (prompt) => {
 			const answer = answers[index++];
 			if (!answer || answer.type !== prompt.type) {
@@ -161,6 +172,7 @@ async function validateApiKey(
 	provider: Provider,
 	credential: ApiKeyCredential,
 ): Promise<void> {
+	const signal = commandSignal(ctx);
 	if (typeof runtime.completeSimple !== "function") {
 		throw new Error("this pi version does not support API-key validation");
 	}
@@ -183,14 +195,14 @@ async function validateApiKey(
 			maxRetries: 0,
 			timeoutMs: 15_000,
 			cacheRetention: "none",
-			signal: ctx.signal,
+			signal,
 		},
 	);
 	if (result.stopReason === "error") {
 		throw new Error(`API key validation failed: ${result.errorMessage?.trim() || "provider rejected the request"}`);
 	}
 	if (result.stopReason === "aborted") {
-		if (ctx.signal.aborted) cancelled();
+		if (signal.aborted) cancelled();
 		throw new Error(`API key validation failed: ${result.errorMessage?.trim() || "request was aborted"}`);
 	}
 }

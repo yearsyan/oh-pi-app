@@ -35,4 +35,11 @@ func TestInstallProviderAuthExtension(t *testing.T) {
 		!bytes.Contains(extensionSource, []byte(`runtime.logout`)) {
 		t.Fatal("provider extension does not delegate credential mutations to pi")
 	}
+	if !bytes.Contains(extensionSource, []byte(`fallbackCommandSignal = new AbortController().signal`)) {
+		t.Fatal("provider extension does not provide an AbortSignal fallback")
+	}
+	if bytes.Contains(extensionSource, []byte(`signal: ctx.signal`)) ||
+		bytes.Contains(extensionSource, []byte(`ctx.signal.aborted`)) {
+		t.Fatal("provider extension passes the optional command signal without a fallback")
+	}
 }
