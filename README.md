@@ -15,7 +15,8 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 ## 功能
 
-- 创建、发现、恢复、重命名、停止运行进程和永久删除持久化 session。
+- 服务端维护工作空间及其元信息，自动探测技术栈，并按工作空间分页发现 session。
+- 创建、恢复、重命名、停止运行进程和永久删除持久化 session；工作空间可为每次 pi 启动追加系统提示词。
 - 同一 session 支持多个 WebSocket 客户端共同输入并接收实时输出。
 - 严格保持 WebSocket 文本帧与 pi RPC JSONL 记录之间的一对一映射。
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。

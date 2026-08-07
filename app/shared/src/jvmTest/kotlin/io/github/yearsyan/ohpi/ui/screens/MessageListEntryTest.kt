@@ -36,7 +36,7 @@ class MessageListEntryTest {
             gateway = "ws://localhost",
             token = "",
             onToast = { _, _ -> },
-            onSessionReady = { _, _, _ -> },
+            onSessionReady = { _, _, _, _ -> },
             onSessionNameChanged = { _, _ -> },
             onStreamingChanged = { _, _ -> },
             strings = {

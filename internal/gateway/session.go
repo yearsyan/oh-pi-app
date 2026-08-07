@@ -18,23 +18,24 @@ import (
 )
 
 type piSession struct {
-	id         string
-	dir        string
-	command    string
-	args       []string
-	piPath     string
-	workDir    string
-	maxEvent   int64
-	idleAfter  time.Duration
-	logger     *slog.Logger
-	onExit     func(*piSession, error)
-	onActivity func() error
-	onName     func(string) (bool, error)
-	onMetric   func(sessionMetricSample) error
-	input      chan []byte
-	inputMu    sync.Mutex
-	processEnd chan struct{}
-	done       chan struct{}
+	id          string
+	dir         string
+	workspaceID string
+	command     string
+	args        []string
+	piPath      string
+	workDir     string
+	maxEvent    int64
+	idleAfter   time.Duration
+	logger      *slog.Logger
+	onExit      func(*piSession, error)
+	onActivity  func() error
+	onName      func(string) (bool, error)
+	onMetric    func(sessionMetricSample) error
+	input       chan []byte
+	inputMu     sync.Mutex
+	processEnd  chan struct{}
+	done        chan struct{}
 
 	cmd          *exec.Cmd
 	stdin        io.WriteCloser
@@ -78,6 +79,7 @@ type piSession struct {
 type piSessionConfig struct {
 	ID             string
 	Dir            string
+	WorkspaceID    string
 	Command        string
 	Args           []string
 	PiPath         string
@@ -97,6 +99,7 @@ func newPiSession(cfg piSessionConfig) *piSession {
 	session := &piSession{
 		id:              cfg.ID,
 		dir:             cfg.Dir,
+		workspaceID:     cfg.WorkspaceID,
 		command:         cfg.Command,
 		args:            append([]string(nil), cfg.Args...),
 		piPath:          cfg.PiPath,

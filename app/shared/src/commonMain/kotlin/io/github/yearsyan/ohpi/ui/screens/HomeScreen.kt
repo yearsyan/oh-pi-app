@@ -47,6 +47,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import io.github.yearsyan.ohpi.data.SavedSession
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.filebrowser.FileBrowserController
 import io.github.yearsyan.ohpi.filebrowser.FileBrowserScreen
 import io.github.yearsyan.ohpi.filebrowser.rememberApkOpener
@@ -56,6 +57,7 @@ import io.github.yearsyan.ohpi.ui.GatewayHostOs
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.SessionListPane
 import io.github.yearsyan.ohpi.ui.components.WorkspaceDialog
+import io.github.yearsyan.ohpi.ui.components.WorkspaceMetadataDialog
 import kotlinx.serialization.Serializable
 
 private val WideBreakpoint = 840.dp
@@ -91,6 +93,7 @@ internal data class FilesRoute(val path: String)
 @Composable
 fun HomeScreen(vm: AppViewModel) {
     var renaming by remember { mutableStateOf<SavedSession?>(null) }
+    var editingWorkspace by remember { mutableStateOf<WorkspaceSummary?>(null) }
     var newChatWide by remember { mutableStateOf<Boolean?>(null) }
     val navController = rememberNavController()
     val horizontalDirection = if (LocalLayoutDirection.current == LayoutDirection.Ltr) 1 else -1
@@ -170,6 +173,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onOpenCompactChat = ::openCompactChat,
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
+                    onEditWorkspace = { editingWorkspace = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
                     onOpenProviders = ::openProviders,
@@ -192,6 +196,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onOpenCompactChat = ::openCompactChat,
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
+                    onEditWorkspace = { editingWorkspace = it },
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
                     onOpenProviders = ::openProviders,
@@ -301,15 +306,26 @@ fun HomeScreen(vm: AppViewModel) {
         )
     }
 
+    editingWorkspace?.let { workspace ->
+        WorkspaceMetadataDialog(
+            workspace = workspace,
+            onDismiss = { editingWorkspace = null },
+            onConfirm = { name, prompt ->
+                vm.saveWorkspaceMetadata(workspace.id, name, prompt)
+            },
+        )
+    }
+
     newChatWide?.let { wide ->
         WorkspaceDialog(
-            initial = vm.lastWorkspace,
-            workspaces = vm.sessions.map { it.workDir }.distinct(),
+            initialWorkspaceId = vm.lastWorkspaceId,
+            workspaces = vm.workspaces,
             fetchDirs = { path -> vm.listDirs(path) },
             createDir = { parent, name -> vm.createDir(parent, name) },
+            addWorkspace = vm::addWorkspace,
             onDismiss = { newChatWide = null },
-            onConfirm = { workDir ->
-                val sessionId = vm.startNewChat(workDir)
+            onConfirm = { workspace ->
+                val sessionId = vm.startNewChat(workspace.id)
                 if (!wide) navController.navigate(ChatRoute(sessionId))
             },
         )
@@ -327,6 +343,7 @@ private fun MainDestination(
     onOpenCompactChat: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onRenameSession: (SavedSession) -> Unit,
+    onEditWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
     onBrowseFiles: (String) -> Unit,
     onOpenProviders: () -> Unit,
@@ -336,6 +353,7 @@ private fun MainDestination(
         wide -> WideHome(
             vm = vm,
             onRenameSession = onRenameSession,
+            onEditWorkspace = onEditWorkspace,
             onRequestNewChat = { onRequestNewChat(true) },
             onSelectServer = onSelectServer,
             onOpenSettings = onOpenSettings,
@@ -362,7 +380,7 @@ private fun MainDestination(
         )
 
         else -> SessionListPane(
-            sessions = vm.sessions,
+            workspaces = vm.workspaces,
             servers = vm.servers,
             activeServer = vm.activeServer,
             activeChatId = vm.activeChatId,
@@ -376,6 +394,8 @@ private fun MainDestination(
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
             onStopSessionProcess = { vm.stopSessionProcess(it.id) },
+            onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
+            onEditWorkspace = onEditWorkspace,
             sessionProcessStopSupported =
                 vm.activeGatewayInfo?.supportsSessionProcessStop == true,
             hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
@@ -390,6 +410,7 @@ private fun MainDestination(
 private fun WideHome(
     vm: AppViewModel,
     onRenameSession: (SavedSession) -> Unit,
+    onEditWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: () -> Unit,
     onSelectServer: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -400,7 +421,7 @@ private fun WideHome(
 ) {
     Row(Modifier.fillMaxSize()) {
         SessionListPane(
-            sessions = vm.sessions,
+            workspaces = vm.workspaces,
             servers = vm.servers,
             activeServer = vm.activeServer,
             activeChatId = vm.activeChatId,
@@ -414,6 +435,8 @@ private fun WideHome(
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
             onStopSessionProcess = { vm.stopSessionProcess(it.id) },
+            onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
+            onEditWorkspace = onEditWorkspace,
             sessionProcessStopSupported =
                 vm.activeGatewayInfo?.supportsSessionProcessStop == true,
             hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,

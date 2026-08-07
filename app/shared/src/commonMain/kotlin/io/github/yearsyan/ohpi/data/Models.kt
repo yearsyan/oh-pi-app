@@ -81,13 +81,37 @@ data class SavedSession(
     val name: String = "",
     val createdAt: Long = 0L,
     val lastActive: Long = 0L,
-    /** Workspace (pi working directory) reported by the gateway; blank = unknown/default. */
-    val workDir: String = "",
+    val workspaceId: String = "",
+    /** Canonical workspace root used as the pi working directory. */
+    val workspaceDirectory: String = "",
     /** Whether the gateway currently owns a live pi process for this session. */
     val running: Boolean = false,
     /** Whether that process is between agent_start and agent_settled. */
     val outputting: Boolean = false,
 )
+
+/** Server-owned workspace plus the currently loaded prefix of its sessions. */
+@Serializable
+data class WorkspaceSummary(
+    val id: String,
+    val directory: String,
+    val name: String = "",
+    val additionalSystemPrompt: String = "",
+    val technology: String = "generic",
+    val technologies: List<String> = emptyList(),
+    val sessionCount: Int = 0,
+    val sessions: List<SavedSession> = emptyList(),
+    val nextCursor: String = "",
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L,
+    val sessionsLoading: Boolean = false,
+) {
+    val displayName: String
+        get() = name.ifBlank {
+            directory.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+                .ifBlank { directory }
+        }
+}
 
 enum class ThemeMode { System, Light, Dark }
 

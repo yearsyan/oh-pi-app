@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"1.10.5","protocol":1,"os":"darwin","features":["session_process_stop"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.0.0","protocol":2,"os":"darwin","features":["workspaces_v2","session_process_stop"]}
 ```
 
 ```http
@@ -18,131 +18,158 @@ Authorization: Bearer <TOKEN>
 
 WebSocket 连接通过 `token` query 参数鉴权。生产环境务必使用 `wss://` 并关闭或脱敏反向代理的 query 日志。
 
-## 会话管理 HTTP API
+## 工作空间与会话 HTTP API
 
-### 列出 session
+协议 2 由服务端维护工作空间。当前一个工作空间对应一个已存在的绝对目录；同一规范化目录只会有一个工作空间 ID。旧的 `/api/sessions` 和 `/api/capabilities` 已删除，不提供兼容层。
+
+### 创建和列出工作空间
 
 ```http
-GET /api/sessions
+POST /api/workspaces
+Authorization: Bearer <TOKEN>
+Content-Type: application/json
+
+{"directory":"/path/to/project"}
+```
+
+首次注册返回 HTTP 201；目录已经注册时返回 HTTP 200 和原工作空间。目录会经过清理和 symlink 解析。
+
+```http
+GET /api/workspaces?session_limit=5
 Authorization: Bearer <TOKEN>
 ```
 
-响应按 `last_active` 从新到旧排列；时间戳单位为 Unix 毫秒：
+每个工作空间只内嵌最前面的 `session_limit` 条会话。含运行中会话的工作空间位于最前；工作空间内会话按 `running`、`outputting`、`last_active` 排序。时间戳单位为 Unix 毫秒：
 
 ```json
 {
-  "sessions": [
+  "workspaces": [
     {
-      "id": "6d2f8177-d1b5-43ce-927f-250666646e07",
-      "name": "检查登录流程",
-      "work_dir": "/path/to/project",
-      "created_at": 1785736800000,
-      "last_active": 1785738600000,
-      "running": true,
-      "outputting": false
+      "id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+      "directory": "/path/to/project",
+      "name": "网关项目",
+      "additional_system_prompt": "提交前运行测试。",
+      "technology": "go",
+      "technologies": ["go", "typescript", "javascript"],
+      "session_count": 27,
+      "sessions": [
+        {
+          "id": "6d2f8177-d1b5-43ce-927f-250666646e07",
+          "name": "检查登录流程",
+          "created_at": 1785736800000,
+          "last_active": 1785738600000,
+          "running": true,
+          "outputting": false
+        }
+      ],
+      "next_cursor": "NQ",
+      "created_at": 1785730000000,
+      "updated_at": 1785739000000
     }
   ]
 }
 ```
 
-`running` 表示网关当前是否持有正在运行的 pi 子进程，不表示是否有 WebSocket 客户端连接。`outputting` 表示该进程当前处于 `agent_start` 到 `agent_settled` 之间；它为 `true` 时 `running` 也一定为 `true`。
+`technology` 是用于展示的最高优先级技术栈；`technologies` 保留全部探测结果。框架和构建工具优先于通用语言，例如 Next.js、Nuxt、Svelte、Angular、Vite、Vue、React、Flutter；之后再判断 Rust、Go、Kotlin、Swift、.NET、Python、TypeScript、JavaScript、PHP、Ruby、Elixir、Dart、C++ 和 Java。探测目前只检查工作空间根目录。
 
-### 查询、重命名和删除 session
+### 工作空间元信息
 
 ```http
-GET /api/sessions/<SESSION_ID>
+GET /api/workspaces/<WORKSPACE_ID>
 
-PATCH /api/sessions/<SESSION_ID>
+PATCH /api/workspaces/<WORKSPACE_ID>
+Content-Type: application/json
+
+{
+  "name": "网关项目",
+  "additional_system_prompt": "提交前运行测试。"
+}
+```
+
+两个 PATCH 字段均可单独提交。`name` 最长 200 个 Unicode 字符；`additional_system_prompt` 最长 64 KiB。提示词保存在服务端，并在该工作空间新启动或恢复 pi 进程时通过 `--append-system-prompt` 传入；已在运行的进程不会被中途修改。
+
+### 分页加载工作空间会话
+
+```http
+GET /api/workspaces/<WORKSPACE_ID>/sessions?limit=20&cursor=<NEXT_CURSOR>
+Authorization: Bearer <TOKEN>
+```
+
+`cursor` 是服务端提供的不透明字符串，不应自行解析。响应如下；没有下一页时省略或返回空 `next_cursor`：
+
+```json
+{
+  "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+  "sessions": [],
+  "next_cursor": "MjU"
+}
+```
+
+`running` 表示网关当前持有该会话的 pi 子进程，不表示存在 WebSocket 客户端。`outputting` 表示进程处于 `agent_start` 到 `agent_settled` 之间；它为 `true` 时 `running` 也一定为 `true`。
+
+### 查询、重命名和删除会话
+
+```http
+GET /api/workspaces/<WORKSPACE_ID>/sessions/<SESSION_ID>
+
+PATCH /api/workspaces/<WORKSPACE_ID>/sessions/<SESSION_ID>
 Content-Type: application/json
 
 {"name":"新的会话名称"}
 
-DELETE /api/sessions/<SESSION_ID>
+DELETE /api/workspaces/<WORKSPACE_ID>/sessions/<SESSION_ID>
 ```
 
-以上请求均须携带 `Authorization: Bearer <TOKEN>`。
+会话 ID 必须属于路径中的工作空间。名称会去除首尾空白，不能为空，最长 200 个 Unicode 字符。永久删除会先关闭活动进程和 WebSocket，再删除完整 session 目录；成功返回 HTTP 204。
 
-名称会去除首尾空白，不能为空，最长 200 个 Unicode 字符。重命名会写入网关元数据，并同步到正在运行的 pi session；以后恢复停止的 session 时也会重新应用该名称。
-
-`DELETE` 是永久操作：活动中的 pi 子进程和 WebSocket 会先被正常关闭，随后整个 `<data-dir>/sessions/<session-id>` 目录（包括 pi JSONL、历史快照和 replay WAL）都会被删除。成功返回 HTTP 204。
-
-### 仅停止 session 的 pi 进程
+### 仅停止会话的 pi 进程
 
 ```http
-DELETE /api/sessions/<SESSION_ID>/process
+DELETE /api/workspaces/<WORKSPACE_ID>/sessions/<SESSION_ID>/process
 Authorization: Bearer <TOKEN>
 ```
 
-该操作只停止当前 pi 子进程并断开它的 WebSocket，完整 session 目录和历史都会保留；下一次 attach 会重新启动 pi 并恢复 session。没有运行中进程时也返回 HTTP 204，因此可以安全重试。
+该操作保留完整会话和历史；下一次 attach 会在对应工作空间重新启动 pi。没有运行中进程时也返回 HTTP 204。当 `outputting: true` 时返回 HTTP 409 `session_outputting`：客户端必须先通过 WebSocket 发送 `abort`，等待 `agent_settled` 后再停止。
 
-当 session 处于 `outputting: true` 时，接口返回 HTTP 409 `session_outputting`，不会直接结束进程。客户端必须先通过 WebSocket 发送 pi 的 `abort`，并等待 `agent_settled`（或列表中的 `outputting` 变为 `false`），之后才能再次调用该接口。支持此端点的网关会在 `/healthz` 的 `features` 中声明 `session_process_stop`。
-
-### 查询 session 生成性能
+### 查询会话生成性能
 
 ```http
-GET /api/sessions/<SESSION_ID>/metrics
+GET /api/workspaces/<WORKSPACE_ID>/sessions/<SESSION_ID>/metrics
 Authorization: Bearer <TOKEN>
 ```
 
-该接口返回网关从 pi 实时 RPC 事件观测并独立持久化的生成性能汇总；查询不要求 session 的 pi 子进程正在运行：
-
-```json
-{
-  "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
-  "sample_count": 4,
-  "total_output_tokens": 580,
-  "total_generation_ms": 22400,
-  "average_tps": 25.892857142857142,
-  "average_ttft_ms": 812.5
-}
-```
-
-每次可测量的 assistant 模型调用形成一条样本。TTFT 是网关收到 `turn_start` 到首个有效 text、thinking 或 tool-call 流式输出的时间；生成时长从该首个输出计算到 assistant `message_end`。平均 TPS 使用 `总 output token / 总生成秒数`，而不是对单次 TPS 做算术平均。失败、中止、缺少首个流式输出或没有权威 output usage 的调用不进入汇总。
-
-尚无有效样本时，`sample_count` 和两个总数为 `0`，`average_tps`、`average_ttft_ms` 为 `null`。这些指标是网关观测值，样本不会写入对话 replay。
+该接口返回网关从 pi 实时事件观测并持久化的 `sample_count`、`total_output_tokens`、`total_generation_ms`、`average_tps` 和 `average_ttft_ms`。查询不要求 pi 进程正在运行；无有效样本时两个平均值为 `null`。
 
 ### 查询新会话能力
 
 ```http
-GET /api/capabilities?work_dir=/path/to/project
+GET /api/workspaces/<WORKSPACE_ID>/capabilities
 Authorization: Bearer <TOKEN>
 ```
 
-该接口用与正式会话相同的工作目录、环境和 `--pi-arg` 启动一个短生命周期的 `pi --mode rpc --no-session` 探测进程，因此会加载该工作区可用的 provider、模型和扩展，但不会创建或持久化 session。结果按规范化后的工作目录短期缓存。
+网关在工作空间目录中启动短生命周期的 `pi --mode rpc --no-session`，探测 provider、模型、思考强度和扩展指令，但不创建 session。结果按工作空间目录短期缓存：
 
 ```json
 {
-  "work_dir": "/path/to/project",
+  "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+  "directory": "/path/to/project",
   "default": {
     "provider": "openai",
     "model_id": "gpt-5",
     "thinking_level": "medium"
   },
-  "models": [
-    {
-      "id": "gpt-5",
-      "name": "GPT-5",
-      "provider": "openai",
-      "thinking_levels": ["off", "minimal", "low", "medium", "high"]
-    }
-  ],
-  "commands": [
-    {
-      "name": "skill:review",
-      "description": "Review changed code",
-      "source": "skill"
-    }
-  ]
+  "models": [],
+  "commands": []
 }
 ```
 
-思考强度是模型级能力，客户端应在切换模型时改用该模型自己的 `thinking_levels`。`commands` 来自 pi 的 `get_commands`，包含当前工作区可用的 extension、prompt template 和 skill 指令；调用时在 `name` 前加 `/`。旧版 pi 不支持 `get_commands` 时返回空列表。
+思考强度是模型级能力，客户端切换模型时应使用该模型自己的 `thinking_levels`。`commands` 来自 pi 的 `get_commands`，包含当前工作空间可用的 extension、prompt template 和 skill 指令。
 
 ## pi 内置 Provider 管理
 
 这些接口只管理 pi 自带 catalog 中的 Provider。`models.json` 新增的自定义 Provider 和
 extension Provider 不会出现在管理清单中，也不能通过这些接口登录或登出；它们仍由 pi
-照常加载，提供的模型也仍会出现在 `/api/capabilities` 和会话模型选择器中。
+照常加载，提供的模型也仍会出现在工作空间的 `capabilities` 接口和会话模型选择器中。
 
 ### 列出 Provider 与模型
 
@@ -310,13 +337,13 @@ GET /api/files/download?path=<绝对路径>
 
 ### 创建 session
 
-连接时必须用 `work_dir` 指定工作区：
+连接时必须用服务端工作空间 ID：
 
 ```text
-ws://127.0.0.1:18080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&model=openai/gpt-5&thinking=high
+ws://127.0.0.1:18080/ws?action=create&token=<TOKEN>&workspace_id=e28a1f96-41c4-41df-b659-678d7dbc1e8c&model=openai/gpt-5&thinking=high
 ```
 
-`work_dir` 是 pi 子进程的工作目录，必须是已存在目录的绝对路径。省略 `work_dir` 或路径非法（相对路径、不存在、不是目录）时，在 WebSocket 升级前返回 HTTP 400。
+`workspace_id` 必须先通过 `/api/workspaces` 注册。省略或格式非法时在 WebSocket 升级前返回 HTTP 400；工作空间不存在时返回 HTTP 404。网关使用工作空间的规范化 `directory` 作为 pi 子进程目录。
 
 可选的 `model` 必须使用 `provider/model-id` 格式。可选的 `thinking` 为 `off`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`。它们只允许用于 `action=create`，并在 pi 读取第一条 RPC 命令前作为该 session 的初始配置应用。
 
@@ -328,11 +355,12 @@ ws://127.0.0.1:18080/ws?action=create&token=<TOKEN>&work_dir=/path/to/project&mo
   "event": "ready",
   "action": "create",
   "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
-  "work_dir": "/path/to/project"
+  "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+  "workspace_directory": "/path/to/project"
 }
 ```
 
-客户端可以立即使用 `session_id`；以后也可以通过 `GET /api/sessions` 发现并恢复 session。`work_dir` 随 session 元数据持久化。
+客户端可以立即使用 `session_id`；以后通过对应工作空间的 session 列表发现并恢复。session 元数据持久化 `workspace_id`，目录和追加系统提示词由工作空间统一管理。
 
 ### 连接历史 session
 
@@ -371,7 +399,8 @@ attach 按以下顺序发送，最后才发送 `ohpi/ready`。收到 `ready` 表
   "event": "ready",
   "action": "attach",
   "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07",
-  "work_dir": "/path/to/project"
+  "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+  "workspace_directory": "/path/to/project"
 }
 ```
 
@@ -440,7 +469,7 @@ skill、prompt template 会展开输入文本，extension 指令也可能不产�
 const ws = new WebSocket(
   "ws://127.0.0.1:18080/ws?action=create&token=" +
     encodeURIComponent(token) +
-    "&work_dir=" + encodeURIComponent("/path/to/project"),
+    "&workspace_id=" + encodeURIComponent(workspaceId),
 );
 
 ws.onmessage = ({ data }) => {

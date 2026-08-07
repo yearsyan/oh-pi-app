@@ -60,7 +60,8 @@ func TestProviderLogoutInvalidatesCapabilities(t *testing.T) {
 	t.Setenv("OHPI_TEST_PROBE_LOG", probeLog)
 	_, server := startTestGateway(t, t.TempDir())
 	workDir := t.TempDir()
-	capabilitiesURL := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(workDir)
+	workspace := createTestWorkspace(t, server, workDir)
+	capabilitiesURL := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
 
 	getAuthenticated(t, capabilitiesURL)
 	request, err := http.NewRequest(http.MethodDelete, server.URL+"/api/providers/openai/credential", nil)

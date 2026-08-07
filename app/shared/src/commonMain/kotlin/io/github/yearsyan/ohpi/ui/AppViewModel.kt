@@ -18,6 +18,7 @@ import io.github.yearsyan.ohpi.data.SettingsStore
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.isApplicationActive
 import io.github.yearsyan.ohpi.net.FileApiException
@@ -38,6 +39,7 @@ import io.github.yearsyan.ohpi.net.loopbackUrlTarget
 import io.github.yearsyan.ohpi.net.rewriteLoopbackUrl
 import io.github.yearsyan.ohpi.net.rewriteLoopbackUrlToGatewayHost
 import io.github.yearsyan.ohpi.net.createGatewayDir
+import io.github.yearsyan.ohpi.net.createGatewayWorkspace
 import io.github.yearsyan.ohpi.net.gatewayTarget
 import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
@@ -47,12 +49,14 @@ import io.github.yearsyan.ohpi.net.getGatewayCapabilities
 import io.github.yearsyan.ohpi.net.listGatewayProviders
 import io.github.yearsyan.ohpi.net.listGatewayDirs
 import io.github.yearsyan.ohpi.net.listGatewayFiles
-import io.github.yearsyan.ohpi.net.listGatewaySessions
+import io.github.yearsyan.ohpi.net.listGatewayWorkspaceSessions
+import io.github.yearsyan.ohpi.net.listGatewayWorkspaces
 import io.github.yearsyan.ohpi.net.logoutGatewayProvider
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.readGatewayFile
 import io.github.yearsyan.ohpi.net.renameGatewaySession
 import io.github.yearsyan.ohpi.net.stopGatewaySessionProcess
+import io.github.yearsyan.ohpi.net.updateGatewayWorkspace
 import io.github.yearsyan.ohpi.net.buildProviderAuthWsUrl
 import io.github.yearsyan.ohpi.net.parseProviderAuthEvent
 import io.github.yearsyan.ohpi.net.providerAuthCancelResponse
@@ -132,6 +136,7 @@ class AppViewModel(
     var activeServerId by mutableStateOf(""); private set
     var themeMode by mutableStateOf(ThemeMode.System); private set
     var language by mutableStateOf(AppLanguage.System); private set
+    var workspaces = mutableStateListOf<WorkspaceSummary>(); private set
     var sessions = mutableStateListOf<SavedSession>(); private set
     var providers = mutableStateListOf<GatewayProvider>(); private set
 
@@ -181,23 +186,33 @@ class AppViewModel(
     val hasServers: Boolean get() = servers.isNotEmpty()
 
     /** Selects a chat, preparing new chats locally and attaching saved sessions. */
-    fun openChat(sessionId: String, isNew: Boolean = false, workDir: String = "") {
+    fun openChat(
+        sessionId: String,
+        isNew: Boolean = false,
+        workspaceId: String = "",
+        workspaceDirectory: String = "",
+    ) {
         activeChatId = sessionId
         val c = controllerFor(sessionId)
         if (isNew) {
-            c.prepareCreate(workDir)
+            c.prepareCreate(workspaceId, workspaceDirectory)
         } else if (!c.active) {
             seedSessionName(c, sessionId)
             c.connect("attach", sessionId)
         }
     }
 
-    fun selectChatWide(sessionId: String?, isNew: Boolean = false, workDir: String = "") {
+    fun selectChatWide(
+        sessionId: String?,
+        isNew: Boolean = false,
+        workspaceId: String = "",
+        workspaceDirectory: String = "",
+    ) {
         activeChatId = sessionId
         sessionId ?: return
         val c = controllerFor(sessionId)
         if (isNew) {
-            c.prepareCreate(workDir)
+            c.prepareCreate(workspaceId, workspaceDirectory)
         } else if (!c.active) {
             seedSessionName(c, sessionId)
             c.connect("attach", sessionId)
@@ -323,6 +338,7 @@ class AppViewModel(
                 if (activeServerId != server.id) return@launch
                 resetActiveConnections()
                 activeChatId = null
+                workspaces.clear()
                 sessions.clear()
                 sessionsLoading = false
                 toast(stringsProvider().managedGatewayStopped, Toast.Kind.Success)
@@ -639,14 +655,16 @@ class AppViewModel(
     private fun loadSessionsForActive(clearExisting: Boolean = true, minIndicatorMs: Long = 0) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
-        if (clearExisting) sessions.clear()
+        if (clearExisting) {
+            workspaces.clear()
+            sessions.clear()
+        }
         if (server == null) {
             sessionsLoading = false
             return
         }
         sessionsLoading = true
         val startedAt = nowMillis()
-        val legacySessions = store.loadLegacySessions(server.id)
         viewModelScope.launch {
             if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
             try {
@@ -668,41 +686,20 @@ class AppViewModel(
                         features = it.features.toSet(),
                     )
                 }
-                var loaded = listGatewaySessions(gateway, server.token)
-
-                // Releases before the server list API kept titles locally. Migrate
-                // matching titles once, then discard the obsolete local list.
-                var migrationComplete = true
-                if (legacySessions.isNotEmpty()) {
-                    val legacyById = legacySessions.associateBy { it.id }
-                    loaded = loaded.map { remote ->
-                        val legacyName = legacyById[remote.id]?.name.orEmpty()
-                        if (remote.name.isBlank() && legacyName.isNotBlank()) {
-                            try {
-                                renameGatewaySession(gateway, server.token, remote.id, legacyName)
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (_: Throwable) {
-                                migrationComplete = false
-                                remote
-                            }
-                        } else {
-                            remote
-                        }
-                    }
-                }
+                val loaded = listGatewayWorkspaces(gateway, server.token)
 
                 if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
-                sessions.clear()
-                sessions.addAll(
-                    loaded
-                        .map(::mergeControllerStatus)
-                        .sortedByDescending { it.createdAt },
+                workspaces.clear()
+                workspaces.addAll(
+                    loaded.map { workspace ->
+                        workspace.copy(sessions = workspace.sessions.map(::mergeControllerStatus))
+                    },
                 )
+                syncSessionsFromWorkspaces()
                 if (interruptedSessionRefreshGeneration == generation) {
                     interruptedSessionRefreshGeneration = null
                 }
-                if (migrationComplete) store.clearLegacySessions(server.id)
+                store.clearLegacySessions(server.id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -717,7 +714,7 @@ class AppViewModel(
                     !interruptedBySystemAlert
                 ) {
                     toast(
-                        "Could not load sessions: ${failure.message ?: "unknown error"}",
+                        "Could not load workspaces: ${failure.message ?: "unknown error"}",
                         Toast.Kind.Error,
                     )
                 }
@@ -732,32 +729,206 @@ class AppViewModel(
         }
     }
 
-    private fun addOrTouchSession(id: String, name: String = "", workDir: String = "") {
-        val idx = sessions.indexOfFirst { it.id == id }
-        val now = nowMillis()
-        if (idx >= 0) {
-            val s = sessions[idx]
-            sessions[idx] = s.copy(
-                lastActive = now,
-                name = name.ifBlank { s.name },
-                workDir = workDir.ifBlank { s.workDir },
-                running = true,
-            )
-            sessions.sortByDescending { it.createdAt }
-        } else {
-            sessions.add(
-                SavedSession(
-                    id = id,
-                    name = name,
-                    createdAt = now,
-                    lastActive = now,
-                    workDir = workDir,
-                    running = true,
-                ),
-            )
-            sessions.sortByDescending { it.createdAt }
+    fun loadMoreWorkspaceSessions(workspaceId: String) {
+        val index = workspaces.indexOfFirst { it.id == workspaceId }
+        val snapshot = workspaces.getOrNull(index) ?: return
+        if (snapshot.sessionsLoading || snapshot.nextCursor.isBlank()) return
+        val server = activeServer ?: return
+        workspaces[index] = snapshot.copy(sessionsLoading = true)
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                val page = listGatewayWorkspaceSessions(
+                    gateway = gateway,
+                    token = server.token,
+                    workspace = snapshot,
+                    cursor = snapshot.nextCursor,
+                )
+                if (activeServerId != server.id) return@launch
+                val currentIndex = workspaces.indexOfFirst { it.id == workspaceId }
+                val current = workspaces.getOrNull(currentIndex) ?: return@launch
+                val merged =
+                    (current.sessions + page.sessions.map(::mergeControllerStatus))
+                        .distinctBy { it.id }
+                        .sortedWith(sessionActivityComparator)
+                workspaces[currentIndex] = current.copy(
+                    sessions = merged,
+                    nextCursor = page.nextCursor,
+                    sessionsLoading = false,
+                )
+                syncSessionsFromWorkspaces()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    val currentIndex = workspaces.indexOfFirst { it.id == workspaceId }
+                    if (currentIndex >= 0) {
+                        workspaces[currentIndex] = workspaces[currentIndex].copy(sessionsLoading = false)
+                    }
+                    toast(
+                        "Could not load more sessions: ${failure.message ?: "unknown error"}",
+                        Toast.Kind.Error,
+                    )
+                }
+            }
         }
     }
+
+    suspend fun addWorkspace(directory: String): WorkspaceSummary {
+        val server = activeServer ?: throw FsListException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        val created = createGatewayWorkspace(gateway, server.token, directory)
+        if (activeServerId == server.id) {
+            val index = workspaces.indexOfFirst { it.id == created.id }
+            if (index >= 0) {
+                val current = workspaces[index]
+                workspaces[index] = created.copy(
+                    sessions = current.sessions,
+                    nextCursor = current.nextCursor,
+                    sessionCount = current.sessionCount,
+                )
+            } else {
+                workspaces.add(created)
+                moveActiveWorkspacesFirst()
+            }
+            syncSessionsFromWorkspaces()
+        }
+        return created
+    }
+
+    fun saveWorkspaceMetadata(workspaceId: String, name: String, additionalSystemPrompt: String) {
+        val server = activeServer ?: return
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                val updated = updateGatewayWorkspace(
+                    gateway,
+                    server.token,
+                    workspaceId,
+                    name,
+                    additionalSystemPrompt,
+                )
+                if (activeServerId != server.id) return@launch
+                val index = workspaces.indexOfFirst { it.id == workspaceId }
+                val current = workspaces.getOrNull(index) ?: return@launch
+                workspaces[index] = updated.copy(
+                    sessions = current.sessions,
+                    nextCursor = current.nextCursor,
+                    sessionCount = current.sessionCount,
+                )
+                moveActiveWorkspacesFirst()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    toast(
+                        "Could not update workspace: ${failure.message ?: "unknown error"}",
+                        Toast.Kind.Error,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun syncSessionsFromWorkspaces() {
+        sessions.clear()
+        sessions.addAll(workspaces.flatMap { it.sessions }.distinctBy { it.id })
+    }
+
+    private fun addOrTouchSession(
+        id: String,
+        name: String = "",
+        workspaceId: String = "",
+        workspaceDirectory: String = "",
+    ) {
+        val previous = sessions.firstOrNull { it.id == id }
+        val controller = controllers[id]
+        val now = nowMillis()
+        val resolvedWorkspaceId =
+            workspaceId.ifBlank { previous?.workspaceId ?: controller?.workspaceId.orEmpty() }
+        val resolvedDirectory =
+            workspaceDirectory.ifBlank {
+                previous?.workspaceDirectory ?: controller?.workDir.orEmpty()
+            }
+        val updated =
+            previous?.copy(
+                lastActive = now,
+                name = name.ifBlank { previous.name },
+                workspaceId = resolvedWorkspaceId,
+                workspaceDirectory = resolvedDirectory,
+                running = true,
+            ) ?: SavedSession(
+                id = id,
+                name = name,
+                createdAt = now,
+                lastActive = now,
+                workspaceId = resolvedWorkspaceId,
+                workspaceDirectory = resolvedDirectory,
+                running = true,
+            )
+        upsertWorkspaceSession(updated)
+    }
+
+    private fun upsertWorkspaceSession(session: SavedSession) {
+        var workspaceIndex = workspaces.indexOfFirst { it.id == session.workspaceId }
+        if (workspaceIndex < 0 && session.workspaceId.isNotBlank()) {
+            workspaces.add(
+                WorkspaceSummary(
+                    id = session.workspaceId,
+                    directory = session.workspaceDirectory,
+                ),
+            )
+            workspaceIndex = workspaces.lastIndex
+        }
+        if (workspaceIndex < 0) return
+
+        val workspace = workspaces[workspaceIndex]
+        val existed = workspace.sessions.any { it.id == session.id }
+        val updatedSessions =
+            (workspace.sessions.filterNot { it.id == session.id } + session)
+                .sortedWith(sessionActivityComparator)
+        workspaces[workspaceIndex] = workspace.copy(
+            sessions = updatedSessions,
+            sessionCount = if (existed) workspace.sessionCount else workspace.sessionCount + 1,
+        )
+        moveActiveWorkspacesFirst()
+        syncSessionsFromWorkspaces()
+    }
+
+    private fun removeWorkspaceSession(id: String) {
+        val workspaceIndex = workspaces.indexOfFirst { workspace ->
+            workspace.sessions.any { it.id == id }
+        }
+        if (workspaceIndex < 0) return
+        val workspace = workspaces[workspaceIndex]
+        workspaces[workspaceIndex] = workspace.copy(
+            sessions = workspace.sessions.filterNot { it.id == id },
+            sessionCount = (workspace.sessionCount - 1).coerceAtLeast(0),
+        )
+        moveActiveWorkspacesFirst()
+        syncSessionsFromWorkspaces()
+    }
+
+    private fun moveActiveWorkspacesFirst() {
+        val ordered = workspaces.sortedWith(
+            compareByDescending<WorkspaceSummary> { workspace ->
+                workspace.sessions.any { it.running }
+            }.thenByDescending { workspace ->
+                maxOf(
+                    workspace.updatedAt,
+                    workspace.sessions.maxOfOrNull { it.lastActive } ?: 0L,
+                )
+            }.thenBy { it.directory },
+        )
+        workspaces.clear()
+        workspaces.addAll(ordered)
+    }
+
+    private val sessionActivityComparator =
+        compareByDescending<SavedSession> { it.running }
+            .thenByDescending { it.outputting }
+            .thenByDescending { it.lastActive }
+            .thenByDescending { it.createdAt }
 
     private fun mergeControllerStatus(session: SavedSession): SavedSession {
         val controller = controllers[session.id] ?: return session
@@ -769,9 +940,8 @@ class AppViewModel(
     }
 
     private fun updateSessionStreaming(id: String, streaming: Boolean) {
-        val index = sessions.indexOfFirst { it.id == id }
-        if (index < 0) return
-        sessions[index] = sessions[index].copy(running = true, outputting = streaming)
+        val session = sessions.firstOrNull { it.id == id } ?: return
+        upsertWorkspaceSession(session.copy(running = true, outputting = streaming))
     }
 
     fun renameSession(id: String, name: String) {
@@ -779,29 +949,31 @@ class AppViewModel(
             it.setSessionNameLocally(name)
             return
         }
-        val idx = sessions.indexOfFirst { it.id == id }
-        val previous = sessions.getOrNull(idx)
-        if (idx >= 0) {
-            sessions[idx] = sessions[idx].copy(name = name)
-        }
+        val previous = sessions.firstOrNull { it.id == id } ?: return
+        upsertWorkspaceSession(previous.copy(name = name))
         controllers[id]?.setSessionNameLocally(name)
         val server = activeServer ?: return
         viewModelScope.launch {
             try {
                 val gateway = transportFor(server).resolveGateway()
-                val updated = renameGatewaySession(gateway, server.token, id, name)
+                val updated = renameGatewaySession(
+                    gateway,
+                    server.token,
+                    previous.workspaceId,
+                    previous.workspaceDirectory,
+                    id,
+                    name,
+                )
                 if (activeServerId != server.id) return@launch
-                val current = sessions.indexOfFirst { it.id == id }
-                if (current >= 0) sessions[current] = updated
+                upsertWorkspaceSession(updated)
                 controllers[id]?.setSessionNameLocally(updated.name)
-                sessions.sortByDescending { it.createdAt }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
-                    val current = sessions.indexOfFirst { it.id == id }
-                    if (current >= 0 && sessions[current].name == name && previous != null) {
-                        sessions[current] = previous
+                    val current = sessions.firstOrNull { it.id == id }
+                    if (current?.name == name) {
+                        upsertWorkspaceSession(previous)
                         controllers[id]?.setSessionNameLocally(previous.name)
                     }
                     toast(
@@ -829,13 +1001,10 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val gateway = transportFor(server).resolveGateway()
-                stopGatewaySessionProcess(gateway, server.token, id)
+                stopGatewaySessionProcess(gateway, server.token, session.workspaceId, id)
                 if (activeServerId != server.id) return@launch
                 controllers[id]?.disconnect()
-                val index = sessions.indexOfFirst { it.id == id }
-                if (index >= 0) {
-                    sessions[index] = sessions[index].copy(running = false, outputting = false)
-                }
+                upsertWorkspaceSession(session.copy(running = false, outputting = false))
                 toast(stringsProvider().piProcessStopped, Toast.Kind.Success)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -860,8 +1029,8 @@ class AppViewModel(
             if (activeChatId == id) activeChatId = null
             return
         }
-        val removed = sessions.firstOrNull { it.id == id }
-        sessions.removeAll { it.id == id }
+        val removed = sessions.firstOrNull { it.id == id } ?: return
+        removeWorkspaceSession(id)
         controllers.remove(id)?.disconnect()
         if (activeChatId == id) {
             activeChatId = null
@@ -870,15 +1039,15 @@ class AppViewModel(
         viewModelScope.launch {
             try {
                 val gateway = transportFor(server).resolveGateway()
-                deleteGatewaySession(gateway, server.token, id)
+                deleteGatewaySession(gateway, server.token, removed.workspaceId, id)
                 withContext(Dispatchers.Default) { clearEntryCache(server.id, id) }
+                if (activeServerId == server.id) loadSessionsForActive(clearExisting = false)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
-                    if (removed != null && sessions.none { it.id == id }) {
-                        sessions.add(removed)
-                        sessions.sortByDescending { it.createdAt }
+                    if (sessions.none { it.id == id }) {
+                        upsertWorkspaceSession(removed)
                     }
                     toast(
                         "Could not delete session: ${failure.message ?: "unknown error"}",
@@ -900,8 +1069,12 @@ class AppViewModel(
                 gateway = server.url,
                 token = server.token,
                 onToast = ::toast,
-                onSessionReady = { sid, isNew, workDir ->
-                    addOrTouchSession(sid, workDir = workDir)
+                onSessionReady = { sid, isNew, workspaceId, workspaceDirectory ->
+                    addOrTouchSession(
+                        sid,
+                        workspaceId = workspaceId,
+                        workspaceDirectory = workspaceDirectory,
+                    )
                     if (activeChatId != sid && sessionId == activeChatId) {
                         // gateway assigned a fresh id for a create action
                         controllers.remove(sessionId)?.let { old ->
@@ -930,8 +1103,8 @@ class AppViewModel(
                         modelOptionsFailed = s.modelOptionsFailed,
                     )
                 },
-                loadCapabilities = { workDir ->
-                    getGatewayCapabilities(transport.resolveGateway(), server.token, workDir)
+                loadCapabilities = { workspaceId ->
+                    getGatewayCapabilities(transport.resolveGateway(), server.token, workspaceId)
                 },
                 resolveGateway = transport::resolveGateway,
                 cacheNamespace = server.id,
@@ -940,16 +1113,26 @@ class AppViewModel(
     }
 
     /** Creates a local-only draft and returns its temporary route ID. */
-    fun startNewChat(workDir: String = ""): String {
-        activeServerId.takeIf { it.isNotBlank() }?.let { store.saveLastWorkspace(it, workDir) }
+    fun startNewChat(workspaceId: String): String {
+        val workspace = workspaces.firstOrNull { it.id == workspaceId }
+            ?: error("unknown workspace")
+        activeServerId.takeIf { it.isNotBlank() }
+            ?.let { store.saveLastWorkspaceId(it, workspace.id) }
         val tempId = "new-" + Random.nextLong().toString(16)
-        openChat(tempId, isNew = true, workDir = workDir)
+        openChat(
+            tempId,
+            isNew = true,
+            workspaceId = workspace.id,
+            workspaceDirectory = workspace.directory,
+        )
         return tempId
     }
 
-    /** Workspace used for the previous new chat on the active server (blank = gateway start dir). */
-    val lastWorkspace: String
-        get() = activeServerId.takeIf { it.isNotBlank() }?.let { store.lastWorkspace(it) } ?: ""
+    /** Server-owned workspace selected for the previous new chat. */
+    val lastWorkspaceId: String
+        get() = activeServerId.takeIf { it.isNotBlank() }
+            ?.let { store.lastWorkspaceId(it) }
+            .orEmpty()
 
     /** Lists subdirectories of [path] on the active gateway for the workspace browser. */
     suspend fun listDirs(path: String): FsListResponse {

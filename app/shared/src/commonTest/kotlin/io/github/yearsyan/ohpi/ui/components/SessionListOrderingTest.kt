@@ -1,45 +1,26 @@
 package io.github.yearsyan.ohpi.ui.components
 
-import io.github.yearsyan.ohpi.data.SavedSession
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 class SessionListOrderingTest {
     @Test
-    fun groupsAndSessionsUseNewestCreationTime() {
-        val groups = groupSessionsByCreation(
-            listOf(
-                SavedSession(id = "workspace-a-old", createdAt = 100, lastActive = 900, workDir = "/a"),
-                SavedSession(id = "workspace-b", createdAt = 200, lastActive = 800, workDir = "/b"),
-                SavedSession(id = "workspace-a-new", createdAt = 300, lastActive = 400, workDir = "/a"),
-            ),
-        )
-
-        assertEquals(listOf("/a", "/b"), groups.map { it.workDir })
+    fun workspaceDisplayNameUsesMetadataBeforeDirectory() {
         assertEquals(
-            listOf("workspace-a-new", "workspace-a-old"),
-            groups.first().sessions.map { it.id },
+            "Mobile client",
+            WorkspaceSummary(id = "one", directory = "/srv/app", name = "Mobile client").displayName,
         )
+        assertEquals("app", WorkspaceSummary(id = "two", directory = "/srv/app").displayName)
+        assertEquals("app", WorkspaceSummary(id = "three", directory = "C:\\src\\app\\").displayName)
     }
 
     @Test
-    fun previewKeepsActiveSessionVisibleWithoutDuplicatingIt() {
-        val sessions =
-            (0 until 12).map { index ->
-                SavedSession(id = "session-$index", createdAt = 100L - index, workDir = "/workspace")
-            }
-
-        val withOlderActive = workspaceSessionPreview(sessions, activeChatId = "session-11", expanded = false)
-        assertEquals(11, withOlderActive.size)
-        assertTrue(withOlderActive.any { it.id == "session-11" })
-        assertFalse(withOlderActive.any { it.id == "session-10" })
-
-        val withRecentActive = workspaceSessionPreview(sessions, activeChatId = "session-2", expanded = false)
-        assertEquals(10, withRecentActive.size)
-        assertEquals(1, withRecentActive.count { it.id == "session-2" })
-
-        assertEquals(sessions, workspaceSessionPreview(sessions, activeChatId = "session-11", expanded = true))
+    fun technologyBadgesCoverPrimaryDetectedStacks() {
+        assertEquals("Go", technologyVisual("go").label)
+        assertEquals("Rs", technologyVisual("rust").label)
+        assertEquals("TS", technologyVisual("typescript").label)
+        assertEquals("V", technologyVisual("vite").label)
+        assertEquals("<>", technologyVisual("unknown").label)
     }
 }

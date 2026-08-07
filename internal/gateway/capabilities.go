@@ -42,10 +42,11 @@ type capabilityCommand struct {
 }
 
 type capabilitiesResponse struct {
-	WorkDir  string               `json:"work_dir"`
-	Default  *capabilitySelection `json:"default,omitempty"`
-	Models   []capabilityModel    `json:"models"`
-	Commands []capabilityCommand  `json:"commands"`
+	WorkspaceID string               `json:"workspace_id"`
+	Directory   string               `json:"directory"`
+	Default     *capabilitySelection `json:"default,omitempty"`
+	Models      []capabilityModel    `json:"models"`
+	Commands    []capabilityCommand  `json:"commands"`
 }
 
 type cachedCapabilities struct {
@@ -154,7 +155,7 @@ func (loader *capabilitiesLoader) insertLocked(workDir string, value cachedCapab
 	loader.cache[workDir] = value
 }
 
-func (g *Gateway) handleCapabilities(writer http.ResponseWriter, request *http.Request) {
+func (g *Gateway) handleWorkspaceCapabilities(writer http.ResponseWriter, request *http.Request, workspaceID string) {
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", http.MethodGet)
 		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
@@ -165,14 +166,19 @@ func (g *Gateway) handleCapabilities(writer http.ResponseWriter, request *http.R
 		return
 	}
 
-	workDir, err := g.resolveWorkDir(request.URL.Query().Get("work_dir"))
+	workspace, err := g.workspaces.load(workspaceID)
 	if err != nil {
-		writeHTTPError(writer, http.StatusBadRequest, "invalid_work_dir", err.Error())
+		if errors.Is(err, errWorkspaceNotFound) {
+			writeHTTPError(writer, http.StatusNotFound, "workspace_not_found", "workspace does not exist")
+			return
+		}
+		g.cfg.Logger.Error("load workspace for capabilities", "workspace_id", workspaceID, "error", err)
+		writeHTTPError(writer, http.StatusInternalServerError, "workspace_lookup_failed", "could not inspect workspace")
 		return
 	}
-	response, err := g.capabilities.get(request.Context(), workDir)
+	response, err := g.capabilities.get(request.Context(), workspace.Directory)
 	if err != nil {
-		g.cfg.Logger.Error("inspect pi capabilities", "work_dir", workDir, "error", err)
+		g.cfg.Logger.Error("inspect pi capabilities", "workspace_id", workspaceID, "directory", workspace.Directory, "error", err)
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			writeHTTPError(writer, http.StatusGatewayTimeout, "capabilities_timeout", "pi capability discovery timed out")
 			return
@@ -180,6 +186,7 @@ func (g *Gateway) handleCapabilities(writer http.ResponseWriter, request *http.R
 		writeHTTPError(writer, http.StatusBadGateway, "capabilities_failed", "could not inspect pi capabilities")
 		return
 	}
+	response.WorkspaceID = workspace.ID
 	writeJSONResponse(writer, http.StatusOK, response)
 }
 
@@ -329,9 +336,9 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 	}
 
 	response := capabilitiesResponse{
-		WorkDir:  workDir,
-		Models:   make([]capabilityModel, 0, len(models.Models)),
-		Commands: make([]capabilityCommand, 0, len(availableCommands.Commands)),
+		Directory: workDir,
+		Models:    make([]capabilityModel, 0, len(models.Models)),
+		Commands:  make([]capabilityCommand, 0, len(availableCommands.Commands)),
 	}
 	for _, model := range models.Models {
 		if model.ID == "" || model.Provider == "" {

@@ -69,7 +69,11 @@ func TestSessionStorePersistsAndSummarizesMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, dir, err := store.create(t.TempDir())
+	workspaceID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, dir, err := store.create(workspaceID)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

@@ -19,12 +19,13 @@ const metadataFileName = "ohpi-session.json"
 var errSessionNotFound = errors.New("session not found")
 
 type sessionMetadata struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	NameSet   bool      `json:"name_set,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	WorkDir   string    `json:"work_dir,omitempty"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	NameSet       bool      `json:"name_set,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	WorkspaceID   string    `json:"workspace_id"`
+	LegacyWorkDir string    `json:"work_dir,omitempty"`
 }
 
 type sessionStore struct {
@@ -40,7 +41,7 @@ func newSessionStore(dataDir string) (*sessionStore, error) {
 	return &sessionStore{root: root}, nil
 }
 
-func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
+func (s *sessionStore) create(workspaceID string) (sessionMetadata, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -59,10 +60,10 @@ func (s *sessionStore) create(workDir string) (sessionMetadata, string, error) {
 
 		now := time.Now().UTC()
 		meta := sessionMetadata{
-			ID:        id,
-			CreatedAt: now,
-			UpdatedAt: now,
-			WorkDir:   workDir,
+			ID:          id,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			WorkspaceID: workspaceID,
 		}
 		if err := writeMetadata(dir, meta); err != nil {
 			_ = os.Remove(dir)
@@ -114,6 +115,9 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 	if meta.ID != id || meta.CreatedAt.IsZero() {
 		return sessionMetadata{}, "", fmt.Errorf("invalid session metadata for %q", id)
 	}
+	if meta.WorkspaceID != "" && !validSessionID(meta.WorkspaceID) {
+		return sessionMetadata{}, "", fmt.Errorf("invalid session workspace for %q", id)
+	}
 	if meta.UpdatedAt.IsZero() {
 		// Metadata created by older gateways did not record activity time.
 		meta.UpdatedAt = meta.CreatedAt
@@ -128,6 +132,21 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 		meta.NameSet = true
 	}
 	return meta, dir, nil
+}
+
+func (s *sessionStore) assignWorkspace(id, workspaceID string) error {
+	if !validSessionID(workspaceID) {
+		return fmt.Errorf("invalid workspace id %q", workspaceID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		return err
+	}
+	meta.WorkspaceID = workspaceID
+	meta.LegacyWorkDir = ""
+	return replaceMetadata(dir, meta)
 }
 
 func (s *sessionStore) list() ([]sessionMetadata, error) {

@@ -3,6 +3,7 @@ package io.github.yearsyan.ohpi.ui.components
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -328,9 +329,15 @@ private fun ContextUsageRing(
     ringSize: Dp,
     compact: Boolean,
 ) {
-    val ringColor = contextUsageColor(percent)
     val trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)
     val progress = ((percent ?: 0.0) / 100.0).coerceIn(0.0, 1.0).toFloat()
+    val animatedProgress by
+        animateFloatAsState(
+            targetValue = progress,
+            animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+            label = "contextUsageProgress",
+        )
+    val ringColor = contextUsageColor(percent?.let { animatedProgress * 100.0 })
     val strokeWidth = if (compact) 3.dp else 7.dp
     Box(Modifier.size(ringSize), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
@@ -343,11 +350,11 @@ private fun ContextUsageRing(
                 radius = diameter / 2f,
                 style = Stroke(width = stroke),
             )
-            if (percent != null && progress > 0f) {
+            if (percent != null && animatedProgress > 0f) {
                 drawArc(
                     color = ringColor,
                     startAngle = -90f,
-                    sweepAngle = 360f * progress,
+                    sweepAngle = 360f * animatedProgress,
                     useCenter = false,
                     topLeft = origin,
                     size = arcSize,
@@ -372,12 +379,23 @@ private fun ContextUsageRing(
     }
 }
 
+// Usage ramp hues: green when the window is nearly empty, blue at half
+// capacity, red when full; intermediate values blend along the hue wheel.
+private const val UsageHueGreen = 145f
+private const val UsageHueBlue = 215f
+private const val UsageHueRed = 360f
+
 @Composable
-private fun contextUsageColor(percent: Double?): Color = when {
-    percent == null -> MaterialTheme.colorScheme.onSurfaceVariant
-    percent > 90.0 -> MaterialTheme.colorScheme.error
-    percent > 70.0 -> piExtras.warning
-    else -> MaterialTheme.colorScheme.primary
+private fun contextUsageColor(percent: Double?): Color {
+    if (percent == null) return MaterialTheme.colorScheme.onSurfaceVariant
+    val p = (percent / 100.0).coerceIn(0.0, 1.0).toFloat()
+    val hue =
+        if (p < 0.5f) {
+            UsageHueGreen + (UsageHueBlue - UsageHueGreen) * (p / 0.5f)
+        } else {
+            UsageHueBlue + (UsageHueRed - UsageHueBlue) * ((p - 0.5f) / 0.5f)
+        }
+    return Color.hsv(hue, saturation = 0.82f, value = 0.92f)
 }
 
 private fun formatCount(value: Long): String =

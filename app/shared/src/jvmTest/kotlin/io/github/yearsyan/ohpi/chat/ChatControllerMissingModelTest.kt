@@ -24,7 +24,7 @@ class ChatControllerMissingModelTest {
             gateway = "ws://localhost",
             token = "",
             onToast = { _, _ -> },
-            onSessionReady = { _, _, _ -> },
+            onSessionReady = { _, _, _, _ -> },
             onSessionNameChanged = { _, _ -> },
             onStreamingChanged = { _, _ -> },
             strings = {
@@ -55,9 +55,9 @@ class ChatControllerMissingModelTest {
     @Test
     fun draftWithoutModelsReportsMissingAndBlocksSubmit() {
         val controller = testController(CoroutineScope(Dispatchers.Default)) {
-            GatewayCapabilities(workDir = "", models = emptyList())
+            GatewayCapabilities(workspaceId = "workspace", directory = "/workspace", models = emptyList())
         }
-        controller.prepareCreate("")
+        controller.prepareCreate("workspace", "/workspace")
         awaitCapabilities(controller)
 
         assertTrue(controller.missingModel)
@@ -69,11 +69,12 @@ class ChatControllerMissingModelTest {
     fun draftWithModelsAllowsSubmit() {
         val controller = testController(CoroutineScope(Dispatchers.Default)) {
             GatewayCapabilities(
-                workDir = "",
+                workspaceId = "workspace",
+                directory = "/workspace",
                 models = listOf(GatewayModelCapability(id = "m1", name = "M1", provider = "p1")),
             )
         }
-        controller.prepareCreate("")
+        controller.prepareCreate("workspace", "/workspace")
         awaitCapabilities(controller)
 
         assertFalse(controller.missingModel)
@@ -86,7 +87,7 @@ class ChatControllerMissingModelTest {
         val controller = testController(CoroutineScope(Dispatchers.Default)) {
             throw IllegalStateException("gateway unreachable")
         }
-        controller.prepareCreate("")
+        controller.prepareCreate("workspace", "/workspace")
         awaitCapabilities(controller)
 
         assertFalse(controller.missingModel)
@@ -96,9 +97,9 @@ class ChatControllerMissingModelTest {
     @Test
     fun providerSetupNavigationIsTrackedOncePerDraft() {
         val controller = testController(CoroutineScope(Dispatchers.Default)) {
-            GatewayCapabilities(workDir = "", models = emptyList())
+            GatewayCapabilities(workspaceId = "workspace", directory = "/workspace", models = emptyList())
         }
-        controller.prepareCreate("")
+        controller.prepareCreate("workspace", "/workspace")
         awaitCapabilities(controller)
         assertTrue(controller.missingModel)
         assertFalse(controller.providerSetupNavigated)
@@ -107,7 +108,7 @@ class ChatControllerMissingModelTest {
         assertTrue(controller.providerSetupNavigated)
 
         // the next new chat gets its own auto-navigation
-        controller.prepareCreate("")
+        controller.prepareCreate("workspace", "/workspace")
         assertFalse(controller.providerSetupNavigated)
     }
 }

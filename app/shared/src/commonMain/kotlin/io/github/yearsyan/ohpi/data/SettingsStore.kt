@@ -72,12 +72,12 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         settings.remove("$KEY_SESSIONS$serverId")
     }
 
-    /** Last workspace the user picked for new chats on this server (blank = gateway default). */
-    fun lastWorkspace(serverId: String): String =
-        settings.getString("$KEY_LAST_WORKSPACE$serverId", "")
+    /** Last server-owned workspace selected for a new chat. */
+    fun lastWorkspaceId(serverId: String): String =
+        settings.getString("$KEY_LAST_WORKSPACE_ID$serverId", "")
 
-    fun saveLastWorkspace(serverId: String, workDir: String) {
-        settings.putString("$KEY_LAST_WORKSPACE$serverId", workDir)
+    fun saveLastWorkspaceId(serverId: String, workspaceId: String) {
+        settings.putString("$KEY_LAST_WORKSPACE_ID$serverId", workspaceId)
     }
 
     private inline fun <reified T> decodeList(raw: String): List<T> {
@@ -94,6 +94,6 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         private const val KEY_LANGUAGE = "language"
         private const val KEY_LAST_SESSION = "last_session"
         private const val KEY_SESSIONS = "sessions_" // pre-server-list releases
-        private const val KEY_LAST_WORKSPACE = "last_workspace_"
+        private const val KEY_LAST_WORKSPACE_ID = "last_workspace_id_"
     }
 }

@@ -25,11 +25,19 @@ pi 通过带跨进程锁的 `auth.json` 存储实现读写，网关和 App 都�
 管理操作串行执行，登录连接断开时辅助进程立即退出。
 
 管理清单以 pi 的内置 Provider catalog 为边界，不包含 `models.json` 新增的自定义
-Provider 或 extension Provider。正式 session 和 `/api/capabilities` 仍按原方式加载完整
+Provider 或 extension Provider。正式 session 和工作空间 `capabilities` 接口仍按原方式加载完整
 工作区配置，所以这些自定义来源提供的模型不会从模型选择器中消失。认证变化后能力缓存
 会失效；已稳定的 session 进程会回收并在正常重连时载入新凭据，正在生成的调用不会被中断。
 
-## Session 目录
+## 工作空间与 Session 目录
+
+工作空间是服务端权威对象。当前一个工作空间对应一个经过 symlink 解析的绝对目录；同一目录只注册一次。工作空间元信息独立持久化：
+
+```text
+<data-dir>/workspaces/<workspace-id>/workspace.json
+```
+
+其中包含 ID、目录、显示名、追加系统提示词和时间戳。技术栈不持久化，而是在返回 API 时根据根目录的框架配置、语言 manifest 和 `package.json` 依赖按优先级重新探测。未来可以在该结构上增加子工作空间；协议 2 暂不提供子目录层级。
 
 每个 session 使用独立目录：
 
@@ -45,12 +53,12 @@ Provider 或 extension Provider。正式 session 和 `/api/capabilities` 仍按�
 ohpi 以以下受控参数启动子进程：
 
 ```text
-pi <额外参数> --mode rpc --session-dir <目录> --session-id <ID>
+pi <额外参数> [--append-system-prompt <工作空间提示词>] --mode rpc --session-dir <目录> --session-id <ID>
 ```
 
 各文件的职责如下：
 
-- `ohpi-session.json` 是会话列表元数据的权威来源，包含名称、工作区、创建时间和最近活跃时间；旧版元数据会兼容读取。
+- `ohpi-session.json` 是会话元数据的权威来源，包含名称、`workspace_id`、创建时间和最近活跃时间。网关启动时会把旧格式中直接保存目录的 session 一次性归入对应工作空间；HTTP 与 WebSocket 协议本身不兼容旧接口。
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
 - `ohpi-replay.log` 是当前活动 turn 的紧凑事件 WAL。ohpi 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
 - `ohpi-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。

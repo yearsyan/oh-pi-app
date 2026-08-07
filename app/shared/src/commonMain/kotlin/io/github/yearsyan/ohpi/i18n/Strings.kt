@@ -167,6 +167,10 @@ interface Strings {
     val noSubdirectories: String
     val createFolder: String
     val folderNameLabel: String
+    val workspaceMetadataTitle: String
+    val workspaceNameLabel: String
+    val additionalSystemPromptLabel: String
+    val additionalSystemPromptHint: String
 
     // file browser
     val browseFiles: String
@@ -571,6 +575,11 @@ object EnStrings : Strings {
     override val noSubdirectories = "No subdirectories"
     override val createFolder = "New folder"
     override val folderNameLabel = "Folder name"
+    override val workspaceMetadataTitle = "Workspace settings"
+    override val workspaceNameLabel = "Display name"
+    override val additionalSystemPromptLabel = "Additional system prompt"
+    override val additionalSystemPromptHint =
+        "Appended whenever a new pi process starts in this workspace."
 
     override val browseFiles = "Browse files"
     override val filesEmptyFolder = "This folder is empty"
@@ -974,6 +983,10 @@ object ZhStrings : Strings {
     override val noSubdirectories = "没有子目录"
     override val createFolder = "新建文件夹"
     override val folderNameLabel = "文件夹名称"
+    override val workspaceMetadataTitle = "工作区设置"
+    override val workspaceNameLabel = "显示名称"
+    override val additionalSystemPromptLabel = "追加系统提示词"
+    override val additionalSystemPromptHint = "每次在此工作区启动新的 pi 进程时追加。"
 
     override val browseFiles = "浏览文件"
     override val filesEmptyFolder = "此文件夹为空"

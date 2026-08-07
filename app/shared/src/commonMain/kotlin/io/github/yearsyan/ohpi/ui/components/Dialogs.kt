@@ -59,8 +59,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import io.github.yearsyan.ohpi.chat.UiDialogRequest
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.FsListResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.put
@@ -104,108 +106,119 @@ fun RenameDialog(
  */
 @Composable
 fun WorkspaceDialog(
-    initial: String,
-    workspaces: List<String>,
+    initialWorkspaceId: String,
+    workspaces: List<WorkspaceSummary>,
     fetchDirs: suspend (String) -> FsListResponse,
     createDir: suspend (parent: String, name: String) -> Unit,
+    addWorkspace: suspend (String) -> WorkspaceSummary,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (WorkspaceSummary) -> Unit,
 ) {
-    var options by remember {
+    var options by remember(workspaces) { mutableStateOf(workspaces) }
+    var selectedId by remember(initialWorkspaceId) {
         mutableStateOf(
-            buildList {
-                add("")
-                addAll(workspaces)
-                if (initial.isNotBlank()) add(initial)
-            }.distinct(),
-        )
-    }
-    var selected by remember {
-        mutableStateOf(
-            initial.takeIf { it.isNotBlank() }
-                ?: options.firstOrNull { it.isNotBlank() }
-                ?: "",
+            initialWorkspaceId.takeIf { id -> workspaces.any { it.id == id } }
+                ?: workspaces.firstOrNull()?.id.orEmpty(),
         )
     }
     var menuOpen by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
+    var addError by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    val selected = options.firstOrNull { it.id == selectedId } ?: options.firstOrNull()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(S.workspaceDialogTitle) },
         text = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box(Modifier.weight(1f)) {
-                    OutlinedTextField(
-                        value = if (selected.isBlank()) S.defaultWorkspace else selected,
-                        onValueChange = {},
-                        readOnly = true,
-                        singleLine = true,
-                        label = { Text(S.workspaceLabel) },
-                        trailingIcon = {
-                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    // The read-only field consumes touches; overlay a tap target.
-                    Box(Modifier.matchParentSize().clickable { menuOpen = true })
-                    DropdownMenu(
-                        expanded = menuOpen,
-                        onDismissRequest = { menuOpen = false },
-                    ) {
-                        options.forEach { dir ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text(
-                                                workspaceDisplayName(dir),
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            if (dir.isNotBlank()) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = selected?.displayName.orEmpty(),
+                            onValueChange = {},
+                            readOnly = true,
+                            singleLine = true,
+                            label = { Text(S.workspaceLabel) },
+                            supportingText = selected?.let {
+                                { Text(it.directory, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            },
+                            trailingIcon = {
+                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        // The read-only field consumes touches; overlay a tap target.
+                        Box(Modifier.matchParentSize().clickable { menuOpen = true })
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false },
+                        ) {
+                            options.forEach { workspace ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
                                                 Text(
-                                                    dir,
+                                                    workspace.displayName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                Text(
+                                                    workspace.directory,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
+                                            if (workspace.id == selectedId) {
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
                                         }
-                                        if (dir == selected) {
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp),
-                                                tint = MaterialTheme.colorScheme.primary,
-                                            )
-                                        }
-                                    }
-                                },
-                                onClick = {
-                                    selected = dir
-                                    menuOpen = false
-                                },
+                                    },
+                                    onClick = {
+                                        selectedId = workspace.id
+                                        menuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    IconButton(onClick = { showPicker = true }, enabled = !adding) {
+                        if (adding) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = S.addWorkspace,
+                                tint = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
                 }
-                IconButton(onClick = { showPicker = true }) {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = S.addWorkspace,
-                        tint = MaterialTheme.colorScheme.primary,
+                if (addError.isNotBlank()) {
+                    Text(
+                        addError,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(selected); onDismiss() }) {
+            TextButton(
+                onClick = { selected?.let(onConfirm); onDismiss() },
+                enabled = selected != null && !adding,
+            ) {
                 Text(S.confirm)
             }
         },
@@ -216,23 +229,87 @@ fun WorkspaceDialog(
 
     if (showPicker) {
         WorkspacePickerSheet(
-            initial = selected,
+            initial = selected?.directory.orEmpty(),
             fetchDirs = fetchDirs,
             createDir = createDir,
             onDismiss = { showPicker = false },
             onSelect = { path ->
-                if (path.isNotBlank() && path !in options) options = options + path
-                selected = path
+                scope.launch {
+                    adding = true
+                    addError = ""
+                    try {
+                        val workspace = addWorkspace(path)
+                        options = (options.filterNot { it.id == workspace.id } + workspace)
+                        selectedId = workspace.id
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        addError = failure.message ?: "error"
+                    } finally {
+                        adding = false
+                    }
+                }
             },
         )
     }
 }
 
-/** Short label for a workspace path, mirroring the session list header. */
 @Composable
-private fun workspaceDisplayName(dir: String): String =
-    if (dir.isBlank()) S.defaultWorkspace
-    else dir.substringAfterLast('/').ifBlank { dir }
+fun WorkspaceMetadataDialog(
+    workspace: WorkspaceSummary,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, additionalSystemPrompt: String) -> Unit,
+) {
+    var name by remember(workspace.id) { mutableStateOf(workspace.name) }
+    var prompt by remember(workspace.id) {
+        mutableStateOf(workspace.additionalSystemPrompt)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(S.workspaceMetadataTitle) },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    workspace.directory,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(S.workspaceNameLabel) },
+                    placeholder = { Text(workspace.displayName) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text(S.additionalSystemPromptLabel) },
+                    supportingText = { Text(S.additionalSystemPromptHint) },
+                    minLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(name.trim(), prompt)
+                    onDismiss()
+                },
+            ) { Text(S.confirm) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(S.cancel) } },
+    )
+}
 
 /** Bottom-sheet directory browser used to add a workspace on the gateway host. */
 @OptIn(ExperimentalMaterial3Api::class)

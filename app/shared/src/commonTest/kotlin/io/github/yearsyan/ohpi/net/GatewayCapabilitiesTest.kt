@@ -10,7 +10,8 @@ class GatewayCapabilitiesTest {
         val capabilities = PiJson.decodeFromString<GatewayCapabilities>(
             """
             {
-              "work_dir": "/workspace",
+              "workspace_id": "workspace-1",
+              "directory": "/workspace",
               "default": {
                 "provider": "router",
                 "model_id": "vendor/model",
@@ -31,7 +32,8 @@ class GatewayCapabilitiesTest {
             """.trimIndent(),
         )
 
-        assertEquals("/workspace", capabilities.workDir)
+        assertEquals("workspace-1", capabilities.workspaceId)
+        assertEquals("/workspace", capabilities.directory)
         assertEquals("vendor/model", assertNotNull(capabilities.defaultSelection).modelId)
         assertEquals(listOf("off", "low", "high"), capabilities.models.single().thinkingLevels)
         assertEquals("skill:review", capabilities.commands.single().name)

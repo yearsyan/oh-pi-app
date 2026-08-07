@@ -144,7 +144,7 @@ fun buildWsUrl(
     token: String,
     action: String,
     sessionId: String?,
-    workDir: String = "",
+    workspaceId: String = "",
     initialModel: String = "",
     initialThinking: String = "",
     entrySince: String = "",
@@ -154,7 +154,9 @@ fun buildWsUrl(
 ): String {
     val b = StringBuilder(normalizeGatewayUrl(base)).append("/ws?action=").append(action)
     if (!sessionId.isNullOrBlank()) b.append("&session_id=").append(urlEncode(sessionId))
-    if (workDir.isNotBlank()) b.append("&work_dir=").append(urlEncode(workDir))
+    if (action == "create" && workspaceId.isNotBlank()) {
+        b.append("&workspace_id=").append(urlEncode(workspaceId))
+    }
     if (action == "create" && initialModel.isNotBlank()) {
         b.append("&model=").append(urlEncode(initialModel))
     }

@@ -22,32 +22,38 @@ type managedSession struct {
 }
 
 type sessionManager struct {
-	cfg      Config
-	store    *sessionStore
-	mu       sync.Mutex
-	sessions map[string]*piSession
-	deleting map[string]struct{}
-	closing  bool
-	wg       sync.WaitGroup
+	cfg        Config
+	store      *sessionStore
+	workspaces *workspaceStore
+	mu         sync.Mutex
+	sessions   map[string]*piSession
+	deleting   map[string]struct{}
+	closing    bool
+	wg         sync.WaitGroup
 }
 
-func newSessionManager(cfg Config, store *sessionStore) *sessionManager {
+func newSessionManager(cfg Config, store *sessionStore, workspaces *workspaceStore) *sessionManager {
 	return &sessionManager{
-		cfg:      cfg,
-		store:    store,
-		sessions: make(map[string]*piSession),
-		deleting: make(map[string]struct{}),
+		cfg:        cfg,
+		store:      store,
+		workspaces: workspaces,
+		sessions:   make(map[string]*piSession),
+		deleting:   make(map[string]struct{}),
 	}
 }
 
-func (m *sessionManager) create(workDir string, initial initialSessionConfig) (*piSession, error) {
-	meta, dir, err := m.store.create(workDir)
+func (m *sessionManager) create(workspaceID string, initial initialSessionConfig) (*piSession, error) {
+	workspace, err := m.workspaces.load(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	args := append([]string(nil), m.cfg.PiArgs...)
+	meta, dir, err := m.store.create(workspace.ID)
+	if err != nil {
+		return nil, err
+	}
+	args := m.argsForWorkspace(workspace)
 	args = append(args, initial.args()...)
-	session, _, err := m.getOrStart(meta.ID, dir, meta.WorkDir, args, true)
+	session, _, err := m.getOrStart(meta.ID, dir, workspace.ID, workspace.Directory, args, true)
 	if err != nil {
 		if discardErr := m.store.discard(meta.ID); discardErr != nil {
 			m.cfg.Logger.Warn(
@@ -67,13 +73,18 @@ func (m *sessionManager) attach(id string) (*piSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	workDir := meta.WorkDir
-	if workDir == "" {
-		// Sessions persisted before workspaces existed fall back to the
-		// gateway-wide working directory.
-		workDir = m.cfg.WorkDir
+	workspace, err := m.workspaces.load(meta.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("load session workspace: %w", err)
 	}
-	session, started, err := m.getOrStart(meta.ID, dir, workDir, m.cfg.PiArgs, false)
+	session, started, err := m.getOrStart(
+		meta.ID,
+		dir,
+		workspace.ID,
+		workspace.Directory,
+		m.argsForWorkspace(workspace),
+		false,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("start existing session: %w", err)
 	}
@@ -134,15 +145,53 @@ func (m *sessionManager) list() ([]managedSession, error) {
 		})
 	}
 	m.mu.Unlock()
-	sort.Slice(result, func(i, j int) bool {
-		left := result[i].Metadata
-		right := result[j].Metadata
+	sortManagedSessions(result)
+	return result, nil
+}
+
+func (m *sessionManager) listWorkspace(workspaceID string) ([]managedSession, error) {
+	if _, err := m.workspaces.load(workspaceID); err != nil {
+		return nil, err
+	}
+	all, err := m.list()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]managedSession, 0, len(all))
+	for _, session := range all {
+		if session.Metadata.WorkspaceID == workspaceID {
+			result = append(result, session)
+		}
+	}
+	return result, nil
+}
+
+func sortManagedSessions(sessions []managedSession) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].Running != sessions[j].Running {
+			return sessions[i].Running
+		}
+		if sessions[i].Outputting != sessions[j].Outputting {
+			return sessions[i].Outputting
+		}
+		left := sessions[i].Metadata
+		right := sessions[j].Metadata
 		if left.UpdatedAt.Equal(right.UpdatedAt) {
 			return left.ID < right.ID
 		}
 		return left.UpdatedAt.After(right.UpdatedAt)
 	})
-	return result, nil
+}
+
+func (m *sessionManager) getInWorkspace(workspaceID, id string) (managedSession, error) {
+	session, err := m.get(id)
+	if err != nil {
+		return managedSession{}, err
+	}
+	if session.Metadata.WorkspaceID != workspaceID {
+		return managedSession{}, errSessionNotFound
+	}
+	return session, nil
 }
 
 func (m *sessionManager) get(id string) (managedSession, error) {
@@ -288,7 +337,14 @@ func waitForSessionStop(ctx context.Context, session *piSession) error {
 	}
 }
 
-func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newSession bool) (*piSession, bool, error) {
+func (m *sessionManager) getOrStart(
+	id,
+	dir,
+	workspaceID,
+	workDir string,
+	args []string,
+	newSession bool,
+) (*piSession, bool, error) {
 	for {
 		m.mu.Lock()
 		if m.closing {
@@ -321,6 +377,7 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newS
 		session := newPiSession(piSessionConfig{
 			ID:             id,
 			Dir:            dir,
+			WorkspaceID:    workspaceID,
 			Command:        m.cfg.PiCommand,
 			Args:           args,
 			PiPath:         m.cfg.PiEnvironmentPath,
@@ -357,6 +414,14 @@ func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newS
 		m.mu.Unlock()
 		return session, true, nil
 	}
+}
+
+func (m *sessionManager) argsForWorkspace(workspace workspaceMetadata) []string {
+	args := append([]string(nil), m.cfg.PiArgs...)
+	if workspace.AdditionalSystemPrompt != "" {
+		args = append(args, "--append-system-prompt", workspace.AdditionalSystemPrompt)
+	}
+	return args
 }
 
 func (m *sessionManager) sessionExited(session *piSession, _ error) {

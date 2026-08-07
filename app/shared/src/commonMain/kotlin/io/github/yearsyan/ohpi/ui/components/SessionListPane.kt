@@ -51,9 +51,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.yearsyan.ohpi.data.SavedSession
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
@@ -68,20 +70,16 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 
-private const val WorkspacePreviewCount = 10
-
 @Composable
 fun SessionListPane(
-    sessions: List<SavedSession>,
+    workspaces: List<WorkspaceSummary>,
     servers: List<ServerProfile>,
     activeServer: ServerProfile?,
     activeChatId: String?,
@@ -95,6 +93,8 @@ fun SessionListPane(
     onRenameSession: (SavedSession) -> Unit,
     onDeleteSession: (SavedSession) -> Unit,
     onStopSessionProcess: (SavedSession) -> Unit,
+    onLoadMoreSessions: (WorkspaceSummary) -> Unit,
+    onEditWorkspace: (WorkspaceSummary) -> Unit,
     sessionProcessStopSupported: Boolean,
     hostOs: GatewayHostOs,
     onBrowseFiles: () -> Unit,
@@ -104,7 +104,6 @@ fun SessionListPane(
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
     var stopCandidate by remember { mutableStateOf<SavedSession?>(null) }
     var collapsedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
-    var fullyExpandedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         // header
         Row(
@@ -195,34 +194,26 @@ fun SessionListPane(
             onRefresh = onRefresh,
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
-            if (sessions.isEmpty()) {
+            if (workspaces.isEmpty()) {
                 if (sessionsLoading) SessionsLoading() else EmptySessions()
             } else {
-                val groups = groupSessionsByCreation(sessions)
                 LazyColumn(Modifier.fillMaxSize()) {
-                    groups.forEach { group ->
-                        val collapsed = group.workDir in collapsedWorkspaces
-                        val showAll = group.workDir in fullyExpandedWorkspaces
-                        item(key = "ws-${group.workDir}") {
+                    workspaces.forEach { workspace ->
+                        val collapsed = workspace.id in collapsedWorkspaces
+                        item(key = "ws-${workspace.id}") {
                             WorkspaceHeader(
-                                workDir = group.workDir,
-                                sessionCount = group.sessions.size,
+                                workspace = workspace,
                                 collapsed = collapsed,
                                 onToggle = {
                                     collapsedWorkspaces =
-                                        if (collapsed) collapsedWorkspaces - group.workDir
-                                        else collapsedWorkspaces + group.workDir
+                                        if (collapsed) collapsedWorkspaces - workspace.id
+                                        else collapsedWorkspaces + workspace.id
                                 },
+                                onEdit = { onEditWorkspace(workspace) },
                             )
                         }
                         if (!collapsed) {
-                            val visible =
-                                workspaceSessionPreview(
-                                    sessions = group.sessions,
-                                    activeChatId = activeChatId,
-                                    expanded = showAll,
-                                )
-                            items(visible, key = { it.id }) { session ->
+                            items(workspace.sessions, key = { it.id }) { session ->
                                 SessionRow(
                                     session = session,
                                     active = wide && session.id == activeChatId,
@@ -233,27 +224,15 @@ fun SessionListPane(
                                     processStopSupported = sessionProcessStopSupported,
                                 )
                             }
-                            val hiddenCount = group.sessions.size - visible.size
-                            if (hiddenCount > 0) {
-                                item(key = "more-${group.workDir}") {
+                            if (workspace.nextCursor.isNotBlank()) {
+                                item(key = "more-${workspace.id}") {
                                     WorkspaceListToggle(
-                                        text = S.showMoreSessions(hiddenCount),
-                                        expand = true,
-                                        onClick = {
-                                            fullyExpandedWorkspaces =
-                                                fullyExpandedWorkspaces + group.workDir
-                                        },
-                                    )
-                                }
-                            } else if (showAll && group.sessions.size > WorkspacePreviewCount) {
-                                item(key = "less-${group.workDir}") {
-                                    WorkspaceListToggle(
-                                        text = S.showLessSessions,
-                                        expand = false,
-                                        onClick = {
-                                            fullyExpandedWorkspaces =
-                                                fullyExpandedWorkspaces - group.workDir
-                                        },
+                                        text = S.showMoreSessions(
+                                            (workspace.sessionCount - workspace.sessions.size)
+                                                .coerceAtLeast(1),
+                                        ),
+                                        loading = workspace.sessionsLoading,
+                                        onClick = { onLoadMoreSessions(workspace) },
                                     )
                                 }
                             }
@@ -283,60 +262,40 @@ fun SessionListPane(
     }
 }
 
-internal data class WorkspaceGroup(val workDir: String, val sessions: List<SavedSession>)
-
-internal fun groupSessionsByCreation(sessions: List<SavedSession>): List<WorkspaceGroup> =
-    sessions
-        .groupBy { it.workDir }
-        .map { (dir, list) -> WorkspaceGroup(dir, list.sortedByDescending { it.createdAt }) }
-        .sortedByDescending { group -> group.sessions.maxOf { it.createdAt } }
-
-/** Keeps the selected session visible even when it falls outside the newest preview. */
-internal fun workspaceSessionPreview(
-    sessions: List<SavedSession>,
-    activeChatId: String?,
-    expanded: Boolean,
-): List<SavedSession> {
-    if (expanded || sessions.size <= WorkspacePreviewCount) return sessions
-    val preview = sessions.take(WorkspacePreviewCount)
-    val active = activeChatId?.let { id -> sessions.firstOrNull { it.id == id } }
-    return if (active == null || preview.any { it.id == active.id }) preview else preview + active
-}
-
 @Composable
 private fun WorkspaceHeader(
-    workDir: String,
-    sessionCount: Int,
+    workspace: WorkspaceSummary,
     collapsed: Boolean,
     onToggle: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
+            .combinedClickable(
+                onClick = onToggle,
+                onLongClick = {
+                    longPressHaptic()
+                    onEdit()
+                },
+            )
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            Icons.Filled.Folder,
-            contentDescription = null,
-            modifier = Modifier.size(13.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
+        TechnologyIcon(workspace.technology)
         Spacer(Modifier.width(6.dp))
         Text(
-            if (workDir.isBlank()) S.defaultWorkspace
-            else workDir.substringAfterLast('/').ifBlank { workDir },
+            workspace.displayName,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (workDir.isNotBlank()) {
+        if (workspace.directory.isNotBlank()) {
             Spacer(Modifier.width(8.dp))
             Text(
-                workDir,
+                workspace.directory,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -347,7 +306,7 @@ private fun WorkspaceHeader(
             Spacer(Modifier.weight(1f))
         }
         Text(
-            "$sessionCount",
+            "${workspace.sessionCount}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -363,22 +322,26 @@ private fun WorkspaceHeader(
 @Composable
 private fun WorkspaceListToggle(
     text: String,
-    expand: Boolean,
+    loading: Boolean,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = !loading, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            if (expand) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
-            contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp)
+        } else {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         Spacer(Modifier.width(6.dp))
         Text(
             text,
@@ -392,6 +355,55 @@ private fun WorkspaceListToggle(
         color = MaterialTheme.colorScheme.outlineVariant,
         thickness = 0.5.dp,
     )
+}
+
+internal data class TechnologyVisual(val label: String, val color: Color)
+
+internal fun technologyVisual(technology: String): TechnologyVisual =
+    when (technology.lowercase()) {
+        "nextjs" -> TechnologyVisual("N", Color(0xFF111111))
+        "nuxt" -> TechnologyVisual("N", Color(0xFF00A86B))
+        "svelte" -> TechnologyVisual("S", Color(0xFFFF3E00))
+        "angular" -> TechnologyVisual("A", Color(0xFFDD0031))
+        "vite" -> TechnologyVisual("V", Color(0xFF646CFF))
+        "vue" -> TechnologyVisual("V", Color(0xFF42B883))
+        "react" -> TechnologyVisual("⚛", Color(0xFF087EA4))
+        "flutter" -> TechnologyVisual("F", Color(0xFF02569B))
+        "rust" -> TechnologyVisual("Rs", Color(0xFFB7410E))
+        "go" -> TechnologyVisual("Go", Color(0xFF00ADD8))
+        "kotlin" -> TechnologyVisual("Kt", Color(0xFF7F52FF))
+        "swift" -> TechnologyVisual("Sw", Color(0xFFF05138))
+        "dotnet" -> TechnologyVisual(".N", Color(0xFF512BD4))
+        "python" -> TechnologyVisual("Py", Color(0xFF3776AB))
+        "typescript" -> TechnologyVisual("TS", Color(0xFF3178C6))
+        "javascript" -> TechnologyVisual("JS", Color(0xFFB59F00))
+        "php" -> TechnologyVisual("PHP", Color(0xFF777BB4))
+        "ruby" -> TechnologyVisual("Rb", Color(0xFFCC342D))
+        "elixir" -> TechnologyVisual("Ex", Color(0xFF6E4A7E))
+        "dart" -> TechnologyVisual("Dt", Color(0xFF0175C2))
+        "cpp" -> TechnologyVisual("C++", Color(0xFF00599C))
+        "java" -> TechnologyVisual("Jv", Color(0xFFB07219))
+        else -> TechnologyVisual("<>", Color(0xFF607D8B))
+    }
+
+@Composable
+private fun TechnologyIcon(technology: String) {
+    val visual = technologyVisual(technology)
+    Box(
+        modifier = Modifier
+            .size(22.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(visual.color),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            visual.label,
+            color = Color.White,
+            fontSize = if (visual.label.length > 2) 6.sp else 8.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

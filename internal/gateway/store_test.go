@@ -12,15 +12,19 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, dir, err := store.create(t.TempDir())
+	workspaceID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, dir, err := store.create(workspaceID)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	if !validSessionID(created.ID) {
 		t.Fatalf("invalid session id %q", created.ID)
 	}
-	if created.WorkDir == "" {
-		t.Fatal("created session lost its work_dir")
+	if created.WorkspaceID != workspaceID {
+		t.Fatalf("created session workspace = %q, want %q", created.WorkspaceID, workspaceID)
 	}
 	if created.NameSet {
 		t.Fatal("new session unexpectedly has an authoritative name")
@@ -46,7 +50,11 @@ func TestSessionStoreAdoptsOnlyTheFirstObservedName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create store: %v", err)
 	}
-	created, _, err := store.create(t.TempDir())
+	workspaceID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, _, err := store.create(workspaceID)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

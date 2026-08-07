@@ -277,7 +277,8 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve test work directory: %v", err)
 	}
-	endpoint := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(workDir)
+	workspace := createTestWorkspace(t, server, workDir)
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
 
 	unauthorized, err := http.Get(endpoint)
 	if err != nil {
@@ -307,7 +308,7 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 		if decodeErr != nil {
 			t.Fatalf("decode capabilities: %v", decodeErr)
 		}
-		if payload.WorkDir != resolvedWorkDir || payload.Default == nil {
+		if payload.WorkspaceID != workspace.ID || payload.Directory != resolvedWorkDir || payload.Default == nil {
 			t.Fatalf("capabilities metadata = %#v", payload)
 		}
 		if payload.Default.Provider != "fake" || payload.Default.ModelID != "reasoning-model" || payload.Default.ThinkingLevel != "medium" {
@@ -350,7 +351,8 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 func TestCapabilitiesAllowPiWithoutGetCommands(t *testing.T) {
 	t.Setenv("OHPI_TEST_NO_GET_COMMANDS", "1")
 	_, server := startTestGateway(t, t.TempDir())
-	endpoint := server.URL + "/api/capabilities?work_dir=" + url.QueryEscape(t.TempDir())
+	workspace := createTestWorkspace(t, server, t.TempDir())
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
 	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		t.Fatalf("create capabilities request: %v", err)
@@ -395,9 +397,10 @@ func TestCreateAppliesInitialModelAndThinking(t *testing.T) {
 
 func TestCreateRejectsInvalidInitialConfiguration(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
+	workspace := createTestWorkspace(t, server, t.TempDir())
 	tests := []url.Values{
-		{"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()}, "model": {"missing-provider"}},
-		{"action": {"create"}, "token": {testToken}, "work_dir": {t.TempDir()}, "thinking": {"extreme"}},
+		{"action": {"create"}, "token": {testToken}, "workspace_id": {workspace.ID}, "model": {"missing-provider"}},
+		{"action": {"create"}, "token": {testToken}, "workspace_id": {workspace.ID}, "thinking": {"extreme"}},
 		{"action": {"attach"}, "token": {testToken}, "session_id": {"11111111-1111-4111-8111-111111111111"}, "thinking": {"high"}},
 	}
 	for _, query := range tests {
@@ -544,50 +547,35 @@ func TestAttachRestartsHistoricalSessionAfterGatewayRestart(t *testing.T) {
 	}
 }
 
-func TestCreateWithCustomWorkDir(t *testing.T) {
+func TestCreateInWorkspaceDirectory(t *testing.T) {
 	dataDir := t.TempDir()
 	app, server := startTestGateway(t, dataDir)
-	// The gateway resolves symlinks in work_dir, so compare against the
+	// Workspace registration resolves symlinks, so compare against the
 	// canonical path (macOS temp dirs live under /private/var).
 	customWorkDir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve custom work dir: %v", err)
 	}
 
-	_, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
-		"action":   {"create"},
-		"token":    {testToken},
-		"work_dir": {"relative/path"},
-	}), nil)
-	if err == nil {
-		t.Fatal("create with a relative work_dir unexpectedly succeeded")
+	for _, directory := range []string{"relative/path", filepath.Join(customWorkDir, "missing")} {
+		body, _ := json.Marshal(createWorkspaceRequest{Directory: directory})
+		response := workspaceAPIRequest(t, server, http.MethodPost, "/api/workspaces", body, testToken)
+		response.Body.Close()
+		if response.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid workspace %q status = %d, want 400", directory, response.StatusCode)
+		}
 	}
-	if response == nil || response.StatusCode != 400 {
-		t.Fatalf("relative work_dir status = %v, want 400", responseStatus(response))
-	}
-	_ = response.Body.Close()
 
-	_, response, err = websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
-		"action":   {"create"},
-		"token":    {testToken},
-		"work_dir": {filepath.Join(customWorkDir, "missing")},
-	}), nil)
-	if err == nil {
-		t.Fatal("create with a missing work_dir unexpectedly succeeded")
-	}
-	if response == nil || response.StatusCode != 400 {
-		t.Fatalf("missing work_dir status = %v, want 400", responseStatus(response))
-	}
-	_ = response.Body.Close()
+	workspace := createTestWorkspace(t, server, customWorkDir)
 
 	conn := dialWebSocket(t, server, url.Values{
-		"action":   {"create"},
-		"token":    {testToken},
-		"work_dir": {customWorkDir},
+		"action":       {"create"},
+		"token":        {testToken},
+		"workspace_id": {workspace.ID},
 	})
 	ready := readEvent(t, conn)
-	if ready.string("work_dir") != customWorkDir {
-		t.Fatalf("ready work_dir = %q, want %q", ready.string("work_dir"), customWorkDir)
+	if ready.string("workspace_id") != workspace.ID || ready.string("workspace_directory") != customWorkDir {
+		t.Fatalf("ready workspace = %#v", ready)
 	}
 	sessionID := ready.string("session_id")
 	// The ready event fires as soon as the child is spawned; round-trip a
@@ -605,7 +593,7 @@ func TestCreateWithCustomWorkDir(t *testing.T) {
 	}
 
 	// The workspace is persisted: after a gateway restart, attach must restart
-	// the child in the session's own work_dir, not the gateway default.
+	// the child in the workspace directory, not the gateway default.
 	shutdownGateway(t, app)
 	server.Close()
 
@@ -618,8 +606,8 @@ func TestCreateWithCustomWorkDir(t *testing.T) {
 	})
 	defer attached.Close()
 	readyAttached, _, _ := readAttachHistory(t, attached)
-	if readyAttached.string("work_dir") != customWorkDir {
-		t.Fatalf("attached ready work_dir = %q, want %q", readyAttached.string("work_dir"), customWorkDir)
+	if readyAttached.string("workspace_id") != workspace.ID || readyAttached.string("workspace_directory") != customWorkDir {
+		t.Fatalf("attached ready workspace = %#v", readyAttached)
 	}
 
 	cwdData, err = os.ReadFile(filepath.Join(dataDir, "sessions", sessionID, "fake-cwd.log"))
@@ -633,17 +621,17 @@ func TestCreateWithCustomWorkDir(t *testing.T) {
 	}
 }
 
-func TestCreateWithoutWorkDirIsRejected(t *testing.T) {
+func TestCreateWithoutWorkspaceIDIsRejected(t *testing.T) {
 	_, server := startTestGateway(t, t.TempDir())
 	_, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, url.Values{
 		"action": {"create"},
 		"token":  {testToken},
 	}), nil)
 	if err == nil {
-		t.Fatal("create without work_dir unexpectedly succeeded")
+		t.Fatal("create without workspace_id unexpectedly succeeded")
 	}
 	if response == nil || response.StatusCode != 400 {
-		t.Fatalf("missing work_dir status = %v, want 400", responseStatus(response))
+		t.Fatalf("missing workspace_id status = %v, want 400", responseStatus(response))
 	}
 	_ = response.Body.Close()
 }
@@ -1534,8 +1522,9 @@ func TestHealthIdentifiesGatewayVersion(t *testing.T) {
 	if response.StatusCode != http.StatusOK || health.Status != "ok" ||
 		health.Service != "ohpi-gateway" || health.Version != "1.2.3" ||
 		health.Protocol != gatewayProtocolVersion || health.OS != runtime.GOOS ||
-		len(health.Features) != 1 ||
-		health.Features[0] != gatewayFeatureSessionProcessStop {
+		len(health.Features) != 2 ||
+		health.Features[0] != gatewayFeatureWorkspaces ||
+		health.Features[1] != gatewayFeatureSessionProcessStop {
 		t.Fatalf("unexpected health response: status=%d body=%+v", response.StatusCode, health)
 	}
 }
@@ -1608,6 +1597,16 @@ func shutdownGateway(t *testing.T, app *Gateway) {
 
 func dialWebSocket(t *testing.T, server *httptest.Server, query url.Values) *websocket.Conn {
 	t.Helper()
+	if query.Get("action") == "create" && query.Get("workspace_id") == "" && query.Get("work_dir") != "" {
+		workspace := createTestWorkspace(t, server, query.Get("work_dir"))
+		queryCopy := make(url.Values, len(query))
+		for key, values := range query {
+			queryCopy[key] = append([]string(nil), values...)
+		}
+		query = queryCopy
+		query.Del("work_dir")
+		query.Set("workspace_id", workspace.ID)
+	}
 	conn, response, err := websocket.DefaultDialer.Dial(webSocketURL(server, query), nil)
 	if err != nil {
 		if response != nil {

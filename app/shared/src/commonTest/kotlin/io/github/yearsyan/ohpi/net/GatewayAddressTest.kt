@@ -33,13 +33,13 @@ class GatewayAddressTest {
     @Test
     fun includesInitialModelOptionsOnlyWhenCreating() {
         assertEquals(
-            "ws://gateway.test:8080/ws?action=create&work_dir=%2Fworkspace&model=router%2Fvendor%2Fmodel&thinking=xhigh&token=token",
+            "ws://gateway.test:8080/ws?action=create&workspace_id=workspace-1&model=router%2Fvendor%2Fmodel&thinking=xhigh&token=token",
             buildWsUrl(
                 base = "ws://gateway.test:8080",
                 token = "token",
                 action = "create",
                 sessionId = null,
-                workDir = "/workspace",
+                workspaceId = "workspace-1",
                 initialModel = "router/vendor/model",
                 initialThinking = "xhigh",
             ),

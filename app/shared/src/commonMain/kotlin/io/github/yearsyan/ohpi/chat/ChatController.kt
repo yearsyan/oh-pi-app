@@ -168,11 +168,16 @@ class ChatController(
     val gateway: String,
     val token: String,
     private val onToast: (String, Toast.Kind) -> Unit,
-    private val onSessionReady: (sessionId: String, isNew: Boolean, workDir: String) -> Unit,
+    private val onSessionReady: (
+        sessionId: String,
+        isNew: Boolean,
+        workspaceId: String,
+        workspaceDirectory: String,
+    ) -> Unit,
     private val onSessionNameChanged: (sessionId: String, title: String) -> Unit,
     private val onStreamingChanged: (sessionId: String, streaming: Boolean) -> Unit,
     private val strings: () -> ChatStrings,
-    private val loadCapabilities: suspend (workDir: String) -> GatewayCapabilities,
+    private val loadCapabilities: suspend (workspaceId: String) -> GatewayCapabilities,
     private val resolveGateway: suspend () -> String = { gateway },
     private val cacheNamespace: String = gateway,
 ) {
@@ -202,6 +207,7 @@ class ChatController(
 
     var conn by mutableStateOf(ConnState.Disconnected); private set
     var sessionId by mutableStateOf(""); private set
+    var workspaceId by mutableStateOf(""); private set
     var workDir by mutableStateOf(""); private set
     var sessionName by mutableStateOf("")
     var model by mutableStateOf(""); private set
@@ -249,7 +255,7 @@ class ChatController(
     val active: Boolean get() = conn == ConnState.Ready || conn == ConnState.Connecting
 
     /** True until a locally prepared chat receives its server-assigned session ID. */
-    val isDraft: Boolean get() = draftWorkDir != null
+    val isDraft: Boolean get() = draftWorkspaceId != null
 
     /** True when a prompt can be sent now or can create this local draft. */
     val canSendPrompt: Boolean
@@ -299,6 +305,7 @@ class ChatController(
     private var keySeq = 1L
     private var lastAction = "attach"
     private var lastSessionId: String? = null
+    private var lastWorkspaceId = ""
     private var lastWorkDir = ""
     private var reconnectJob: Job? = null
     private var connectionSetupJob: Job? = null
@@ -332,7 +339,7 @@ class ChatController(
     private var replayProgressThroughSeq = -1L
     private var replayProgressPayloadBytes = 0L
     private var replayProgressPayloadTotal: Long? = null
-    private var draftWorkDir by mutableStateOf<String?>(null)
+    private var draftWorkspaceId by mutableStateOf<String?>(null)
     private var pendingCreatePrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingCompactId by mutableStateOf<String?>(null)
@@ -341,13 +348,14 @@ class ChatController(
     // ---------- connection ----------
 
     /** Prepares a local-only chat. Its first prompt starts the create connection. */
-    fun prepareCreate(workDir: String = "") {
+    fun prepareCreate(workspaceId: String, workspaceDirectory: String) {
         disconnect()
         sessionStats = null
         sessionMetrics = null
         sessionId = ""
-        this.workDir = workDir
-        draftWorkDir = workDir
+        this.workspaceId = workspaceId
+        workDir = workspaceDirectory
+        draftWorkspaceId = workspaceId
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
@@ -362,13 +370,14 @@ class ChatController(
         providerSetupNavigated = false
         lastAction = "create"
         lastSessionId = null
-        lastWorkDir = workDir
+        lastWorkspaceId = workspaceId
+        lastWorkDir = workspaceDirectory
         reloadCapabilities()
     }
 
     /** Retries sessionless model discovery for the current local draft. */
     fun reloadCapabilities() {
-        val draft = draftWorkDir ?: return
+        val draft = draftWorkspaceId ?: return
         if (capabilitiesLoading) return
         capabilitiesJob?.cancel()
         val generation = ++capabilitiesGeneration
@@ -377,17 +386,17 @@ class ChatController(
         capabilitiesJob = scope.launch {
             try {
                 val capabilities = loadCapabilities(draft)
-                if (draftWorkDir != draft || generation != capabilitiesGeneration) return@launch
+                if (draftWorkspaceId != draft || generation != capabilitiesGeneration) return@launch
                 applyDraftCapabilities(capabilities)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (draftWorkDir != draft || generation != capabilitiesGeneration) return@launch
+                if (draftWorkspaceId != draft || generation != capabilitiesGeneration) return@launch
                 val message = failure.message ?: failure::class.simpleName ?: "unknown error"
                 capabilitiesError = message
                 onToast(strings().modelOptionsFailed(message), Toast.Kind.Error)
             } finally {
-                if (draftWorkDir == draft && generation == capabilitiesGeneration) capabilitiesLoading = false
+                if (draftWorkspaceId == draft && generation == capabilitiesGeneration) capabilitiesLoading = false
             }
         }
     }
@@ -439,8 +448,13 @@ class ChatController(
         slashCommands.addAll(commands.distinctBy { it.name })
     }
 
-    fun connect(action: String, sessionId: String?, workDir: String = "") {
-        draftWorkDir = null
+    fun connect(
+        action: String,
+        sessionId: String?,
+        workspaceId: String = "",
+        workspaceDirectory: String = "",
+    ) {
+        draftWorkspaceId = null
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
@@ -449,13 +463,14 @@ class ChatController(
         sessionStatsLoading = false
         sessionStatsRefreshQueued = false
         cancelSessionMetricsRefresh(clear = true)
-        beginConnection(action, sessionId, workDir, clearTimeline = true)
+        beginConnection(action, sessionId, workspaceId, workspaceDirectory, clearTimeline = true)
     }
 
     private fun beginConnection(
         action: String,
         sessionId: String?,
-        workDir: String,
+        workspaceId: String,
+        workspaceDirectory: String,
         clearTimeline: Boolean,
     ) {
         capabilitiesJob?.cancel()
@@ -469,18 +484,19 @@ class ChatController(
         reconnectEnabled = true
         lastAction = action
         lastSessionId = sessionId
-        lastWorkDir = workDir
+        lastWorkspaceId = workspaceId
+        lastWorkDir = workspaceDirectory
         startConnection(clearTimeline)
     }
 
     private fun connectDraft() {
-        val workDir = draftWorkDir ?: return
-        beginConnection("create", null, workDir, clearTimeline = false)
+        val workspaceId = draftWorkspaceId ?: return
+        beginConnection("create", null, workspaceId, workDir, clearTimeline = false)
     }
 
     private fun startConnection(clearTimeline: Boolean) {
         val generation = ++connectionGeneration
-        println("[PiChat] connect action=$lastAction sid=$lastSessionId workDir=$lastWorkDir")
+        println("[PiChat] connect action=$lastAction sid=$lastSessionId workspace=$lastWorkspaceId")
         connectionSetupJob?.cancel()
         runCatching { entryCache.closeReplay() }
         client.disconnect()
@@ -571,7 +587,7 @@ class ChatController(
                     token = token,
                     action = lastAction,
                     sessionId = lastSessionId,
-                    workDir = lastWorkDir,
+                    workspaceId = lastWorkspaceId,
                     initialModel = if (lastAction == "create") currentModel?.qualified.orEmpty() else "",
                     initialThinking = if (lastAction == "create") thinkingLevel else "",
                     entrySince = entryCursor,
@@ -607,6 +623,7 @@ class ChatController(
         if (sessionId.isNotBlank()) {
             lastAction = "attach"
             lastSessionId = sessionId
+            lastWorkspaceId = ""
             lastWorkDir = ""
         }
         startConnection(clearTimeline = false)
@@ -749,7 +766,7 @@ class ChatController(
         sessionMetricsJob = scope.launch {
             try {
                 val resolvedGateway = resolveGateway()
-                val loaded = getGatewaySessionMetrics(resolvedGateway, token, targetSessionId)
+                val loaded = getGatewaySessionMetrics(resolvedGateway, token, workspaceId, targetSessionId)
                 if (generation == sessionMetricsGeneration && sessionId == targetSessionId) {
                     sessionMetrics = loaded
                 }
@@ -1077,19 +1094,21 @@ class ChatController(
                 syncProgress = null
                 val sid = msg.strOrEmpty("session_id")
                 sessionId = sid
-                workDir = msg.strOrEmpty("work_dir")
+                workspaceId = msg.strOrEmpty("workspace_id")
+                workDir = msg.strOrEmpty("workspace_directory")
                 reconnectJob?.cancel()
                 reconnectJob = null
                 reconnectAttempt = 0
                 if (sid.isNotBlank()) {
                     lastAction = "attach"
                     lastSessionId = sid
+                    lastWorkspaceId = ""
                     lastWorkDir = ""
                 }
                 if (created && sid.isNotBlank()) initializeCreatedReplayCache(sid)
-                if (created) draftWorkDir = null
-                println("[PiChat] ready sid=$sid action=${msg.str("action")} workDir=$workDir")
-                onSessionReady(sid, created, workDir)
+                if (created) draftWorkspaceId = null
+                println("[PiChat] ready sid=$sid action=${msg.str("action")} workspace=$workspaceId")
+                onSessionReady(sid, created, workspaceId, workDir)
                 if (created && sessionName.isNotBlank()) {
                     sendCommand { put("type", "set_session_name"); put("name", sessionName) }
                     onSessionNameChanged(sid, sessionName)

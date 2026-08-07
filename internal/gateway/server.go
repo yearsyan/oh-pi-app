@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -33,14 +31,16 @@ var sessionChangingCommands = map[string]struct{}{
 
 const maxSessionNameRunes = 200
 
-const gatewayProtocolVersion = 1
+const gatewayProtocolVersion = 2
 
 const gatewayFeatureSessionProcessStop = "session_process_stop"
+const gatewayFeatureWorkspaces = "workspaces_v2"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
 	cfg          Config
 	manager      *sessionManager
+	workspaces   *workspaceStore
 	capabilities *capabilitiesLoader
 	providers    *providerService
 	upgrader     websocket.Upgrader
@@ -57,6 +57,13 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	workspaces, err := newWorkspaceStore(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := bootstrapWorkspaces(workspaces, store, cfg.WorkDir); err != nil {
+		return nil, fmt.Errorf("initialize workspaces: %w", err)
+	}
 	providerExtension, err := providerauth.Install(cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("install provider authentication extension: %w", err)
@@ -64,7 +71,8 @@ func New(cfg Config) (*Gateway, error) {
 
 	gateway := &Gateway{
 		cfg:          cfg,
-		manager:      newSessionManager(cfg, store),
+		manager:      newSessionManager(cfg, store, workspaces),
+		workspaces:   workspaces,
 		capabilities: newCapabilitiesLoader(cfg),
 		providers:    newProviderService(cfg, providerExtension),
 		upgrader: websocket.Upgrader{
@@ -78,12 +86,11 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/healthz", gateway.handleHealth)
 	mux.HandleFunc("/fs/list", gateway.handleFsList)
 	mux.HandleFunc("/fs/mkdir", gateway.handleFsMkdir)
-	mux.HandleFunc("/api/capabilities", gateway.handleCapabilities)
 	mux.HandleFunc("/api/providers", gateway.handleProviders)
 	mux.HandleFunc("/api/providers/", gateway.handleProvider)
 	mux.HandleFunc("/api/provider-auth", gateway.handleProviderAuth)
-	mux.HandleFunc("/api/sessions", gateway.handleSessions)
-	mux.HandleFunc("/api/sessions/", gateway.handleSession)
+	mux.HandleFunc("/api/workspaces", gateway.handleWorkspaces)
+	mux.HandleFunc("/api/workspaces/", gateway.handleWorkspace)
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
 	filebrowser.New(filebrowser.Config{
 		Authenticate: gateway.authenticated,
@@ -123,217 +130,8 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		Version:  g.cfg.Version,
 		Protocol: gatewayProtocolVersion,
 		OS:       runtime.GOOS,
-		Features: []string{gatewayFeatureSessionProcessStop},
+		Features: []string{gatewayFeatureWorkspaces, gatewayFeatureSessionProcessStop},
 	})
-}
-
-type sessionResponse struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	WorkDir    string `json:"work_dir"`
-	CreatedAt  int64  `json:"created_at"`
-	LastActive int64  `json:"last_active"`
-	Running    bool   `json:"running"`
-	Outputting bool   `json:"outputting"`
-}
-
-type sessionListResponse struct {
-	Sessions []sessionResponse `json:"sessions"`
-}
-
-type updateSessionRequest struct {
-	Name *string `json:"name"`
-}
-
-func (g *Gateway) handleSessions(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet {
-		writer.Header().Set("Allow", http.MethodGet)
-		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
-		return
-	}
-	if !g.authenticated(request) {
-		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
-		return
-	}
-
-	sessions, err := g.manager.list()
-	if err != nil {
-		g.cfg.Logger.Error("list sessions", "error", err)
-		writeHTTPError(writer, http.StatusInternalServerError, "session_list_failed", "could not list sessions")
-		return
-	}
-	response := sessionListResponse{Sessions: make([]sessionResponse, 0, len(sessions))}
-	for _, session := range sessions {
-		response.Sessions = append(response.Sessions, makeSessionResponse(session))
-	}
-	writeJSONResponse(writer, http.StatusOK, response)
-}
-
-func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Request) {
-	tail := strings.TrimPrefix(request.URL.Path, "/api/sessions/")
-	if id, ok := strings.CutSuffix(tail, "/process"); ok && !strings.Contains(id, "/") {
-		g.handleSessionProcess(writer, request, id)
-		return
-	}
-	if id, ok := strings.CutSuffix(tail, "/metrics"); ok && !strings.Contains(id, "/") {
-		g.handleSessionMetrics(writer, request, id)
-		return
-	}
-	if request.Method != http.MethodGet && request.Method != http.MethodPatch && request.Method != http.MethodDelete {
-		writer.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))
-		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET, PATCH, and DELETE are allowed")
-		return
-	}
-	if !g.authenticated(request) {
-		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
-		return
-	}
-
-	id := tail
-	if !validSessionID(id) {
-		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
-		return
-	}
-
-	switch request.Method {
-	case http.MethodGet:
-		session, err := g.manager.get(id)
-		if !g.writeSessionManagerError(writer, "get", id, err) {
-			return
-		}
-		writeJSONResponse(writer, http.StatusOK, makeSessionResponse(session))
-	case http.MethodPatch:
-		request.Body = http.MaxBytesReader(writer, request.Body, 8<<10)
-		decoder := json.NewDecoder(request.Body)
-		decoder.DisallowUnknownFields()
-		var update updateSessionRequest
-		if err := decoder.Decode(&update); err != nil {
-			writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must be one JSON object with a name field")
-			return
-		}
-		if err := ensureJSONEOF(decoder); err != nil {
-			writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must contain exactly one JSON object")
-			return
-		}
-		if update.Name == nil {
-			writeHTTPError(writer, http.StatusBadRequest, "missing_name", "name is required")
-			return
-		}
-		name, err := normalizeSessionName(*update.Name)
-		if err != nil {
-			writeHTTPError(writer, http.StatusBadRequest, "invalid_name", err.Error())
-			return
-		}
-		session, err := g.manager.rename(id, name, true)
-		if !g.writeSessionManagerError(writer, "rename", id, err) {
-			return
-		}
-		writeJSONResponse(writer, http.StatusOK, makeSessionResponse(session))
-	case http.MethodDelete:
-		ctx, cancel := context.WithTimeout(request.Context(), g.cfg.HistoryTimeout)
-		err := g.manager.delete(ctx, id)
-		cancel()
-		if !g.writeSessionManagerError(writer, "delete", id, err) {
-			return
-		}
-		writer.Header().Set("Cache-Control", "no-store")
-		writer.WriteHeader(http.StatusNoContent)
-	}
-}
-
-func (g *Gateway) handleSessionProcess(writer http.ResponseWriter, request *http.Request, id string) {
-	if request.Method != http.MethodDelete {
-		writer.Header().Set("Allow", http.MethodDelete)
-		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only DELETE is allowed")
-		return
-	}
-	if !g.authenticated(request) {
-		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
-		return
-	}
-	if !validSessionID(id) {
-		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(request.Context(), g.cfg.HistoryTimeout)
-	err := g.manager.stop(ctx, id)
-	cancel()
-	if !g.writeSessionManagerError(writer, "stop", id, err) {
-		return
-	}
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (g *Gateway) handleSessionMetrics(writer http.ResponseWriter, request *http.Request, id string) {
-	if request.Method != http.MethodGet {
-		writer.Header().Set("Allow", http.MethodGet)
-		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
-		return
-	}
-	if !g.authenticated(request) {
-		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
-		return
-	}
-	if !validSessionID(id) {
-		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
-		return
-	}
-	metrics, err := g.manager.metrics(id)
-	if errors.Is(err, errSessionNotFound) {
-		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
-		return
-	}
-	if err != nil {
-		g.cfg.Logger.Error("get session metrics", "session_id", id, "error", err)
-		writeHTTPError(writer, http.StatusInternalServerError, "session_metrics_failed", "could not load session metrics")
-		return
-	}
-	writeJSONResponse(writer, http.StatusOK, metrics)
-}
-
-func (g *Gateway) writeSessionManagerError(writer http.ResponseWriter, operation, id string, err error) bool {
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, errSessionNotFound) {
-		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
-		return false
-	}
-	if errors.Is(err, errSessionDeleting) {
-		writeHTTPError(writer, http.StatusConflict, "session_deleting", "session is already being deleted")
-		return false
-	}
-	if errors.Is(err, errSessionOutputting) {
-		writeHTTPError(
-			writer,
-			http.StatusConflict,
-			"session_outputting",
-			"session is outputting; request an abort and wait for it to settle before stopping the pi process",
-		)
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		writeHTTPError(writer, http.StatusGatewayTimeout, "session_stop_timeout", "could not stop session before the timeout")
-		return false
-	}
-	g.cfg.Logger.Error(operation+" session", "session_id", id, "error", err)
-	writeHTTPError(writer, http.StatusInternalServerError, "session_"+operation+"_failed", "could not "+operation+" session")
-	return false
-}
-
-func makeSessionResponse(session managedSession) sessionResponse {
-	meta := session.Metadata
-	return sessionResponse{
-		ID:         meta.ID,
-		Name:       meta.Name,
-		WorkDir:    meta.WorkDir,
-		CreatedAt:  meta.CreatedAt.UnixMilli(),
-		LastActive: meta.UpdatedAt.UnixMilli(),
-		Running:    session.Running,
-		Outputting: session.Outputting,
-	}
 }
 
 func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Request) {
@@ -403,12 +201,20 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	workDir := ""
+	workspaceID := ""
 	if action == "create" {
-		var err error
-		workDir, err = g.resolveWorkDir(request.URL.Query().Get("work_dir"))
-		if err != nil {
-			writeHTTPError(writer, http.StatusBadRequest, "invalid_work_dir", err.Error())
+		workspaceID = strings.TrimSpace(request.URL.Query().Get("workspace_id"))
+		if !validSessionID(workspaceID) {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_workspace_id", "create requires a valid workspace_id")
+			return
+		}
+		if _, err := g.workspaces.load(workspaceID); err != nil {
+			if errors.Is(err, errWorkspaceNotFound) {
+				writeHTTPError(writer, http.StatusNotFound, "workspace_not_found", "workspace does not exist")
+				return
+			}
+			g.cfg.Logger.Error("load workspace", "workspace_id", workspaceID, "error", err)
+			writeHTTPError(writer, http.StatusInternalServerError, "workspace_lookup_failed", "could not inspect workspace")
 			return
 		}
 	}
@@ -436,7 +242,7 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 
 	var session *piSession
 	if action == "create" {
-		session, err = g.manager.create(workDir, initial)
+		session, err = g.manager.create(workspaceID, initial)
 	} else {
 		session, err = g.manager.attach(sessionID)
 	}
@@ -468,11 +274,12 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 	})
 
 	ready, _ := json.Marshal(gatewayEvent{
-		Type:      "ohpi",
-		Event:     "ready",
-		Action:    action,
-		SessionID: session.id,
-		WorkDir:   session.workDir,
+		Type:               "ohpi",
+		Event:              "ready",
+		Action:             action,
+		SessionID:          session.id,
+		WorkspaceID:        session.workspaceID,
+		WorkspaceDirectory: session.workDir,
 	})
 	go client.writePump()
 	readerDone := make(chan struct{})
@@ -594,32 +401,6 @@ func (g *Gateway) readClient(client *wsClient, session *piSession) {
 	}
 }
 
-// resolveWorkDir validates the workspace a client requested for a new
-// session. The workspace is required and must be an absolute path to an
-// existing directory; the result is cleaned and symlink-resolved so the same
-// workspace always has one identity.
-func (g *Gateway) resolveWorkDir(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("work_dir is required")
-	}
-	if !filepath.IsAbs(raw) {
-		return "", fmt.Errorf("work_dir must be an absolute path, got %q", raw)
-	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(raw))
-	if err != nil {
-		return "", fmt.Errorf("resolve work_dir %q: %w", raw, err)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return "", fmt.Errorf("inspect work_dir %q: %w", raw, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("work_dir %q is not a directory", raw)
-	}
-	return resolved, nil
-}
-
 func (g *Gateway) authenticated(request *http.Request) bool {
 	provided := ""
 	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); authorization != "" {
@@ -730,20 +511,21 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 type gatewayEvent struct {
-	Type       string          `json:"type"`
-	Event      string          `json:"event"`
-	Action     string          `json:"action,omitempty"`
-	SessionID  string          `json:"session_id,omitempty"`
-	WorkDir    string          `json:"work_dir,omitempty"`
-	Code       string          `json:"code,omitempty"`
-	Message    string          `json:"message,omitempty"`
-	FromSeq    uint64          `json:"from_seq,omitempty"`
-	ThroughSeq uint64          `json:"through_seq,omitempty"`
-	Seq        uint64          `json:"seq,omitempty"`
-	Payload    json.RawMessage `json:"payload,omitempty"`
-	Reset      *bool           `json:"reset,omitempty"`
-	EntryID    string          `json:"entry_id,omitempty"`
-	TotalBytes uint64          `json:"total_bytes,omitempty"`
+	Type               string          `json:"type"`
+	Event              string          `json:"event"`
+	Action             string          `json:"action,omitempty"`
+	SessionID          string          `json:"session_id,omitempty"`
+	WorkspaceID        string          `json:"workspace_id,omitempty"`
+	WorkspaceDirectory string          `json:"workspace_directory,omitempty"`
+	Code               string          `json:"code,omitempty"`
+	Message            string          `json:"message,omitempty"`
+	FromSeq            uint64          `json:"from_seq,omitempty"`
+	ThroughSeq         uint64          `json:"through_seq,omitempty"`
+	Seq                uint64          `json:"seq,omitempty"`
+	Payload            json.RawMessage `json:"payload,omitempty"`
+	Reset              *bool           `json:"reset,omitempty"`
+	EntryID            string          `json:"entry_id,omitempty"`
+	TotalBytes         uint64          `json:"total_bytes,omitempty"`
 }
 
 func gatewayError(client *wsClient, code, message string) {
