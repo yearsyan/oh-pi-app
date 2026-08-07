@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -84,6 +85,7 @@ fun ChatTopBar(
     onBack: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onStopProcess: (() -> Unit)? = null,
     onBrowseFiles: () -> Unit = {},
 ) {
     var sessionInfoOpen by remember { mutableStateOf(false) }
@@ -131,6 +133,9 @@ fun ChatTopBar(
             OverflowMenu(
                 onRename = onRename,
                 onDelete = onDelete,
+                onStopProcess = onStopProcess,
+                processRunning = controller.conn == ConnState.Ready,
+                processOutputting = controller.isStreaming,
                 onReconnect = { controller.reconnect() },
                 canReconnect = controller.canReconnect,
                 onBrowseFiles = onBrowseFiles,
@@ -454,6 +459,9 @@ private fun WorkingIndicator() {
 private fun OverflowMenu(
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onStopProcess: (() -> Unit)?,
+    processRunning: Boolean,
+    processOutputting: Boolean,
     onReconnect: () -> Unit,
     canReconnect: Boolean,
     onBrowseFiles: () -> Unit,
@@ -488,6 +496,28 @@ private fun OverflowMenu(
                 onClick = { onSessionInfo(); open = false },
                 enabled = sessionInfoEnabled,
             )
+            if (onStopProcess != null && processRunning) {
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(S.stopPiProcess)
+                            if (processOutputting) {
+                                Text(
+                                    S.stopPiProcessOutputtingHint,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(18.dp))
+                    },
+                    onClick = { onStopProcess(); open = false },
+                    enabled = !processOutputting,
+                )
+            }
             DropdownMenuItem(
                 text = { Text(S.delete) },
                 leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },

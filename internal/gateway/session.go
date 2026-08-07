@@ -40,7 +40,6 @@ type piSession struct {
 	stdin        io.WriteCloser
 	ioWG         sync.WaitGroup
 	backgroundWG sync.WaitGroup
-	stopOnce     sync.Once
 	stopping     atomic.Bool
 
 	failureMu sync.Mutex
@@ -173,9 +172,15 @@ func (s *piSession) submit(clientDone <-chan struct{}, command []byte) error {
 		return errors.New("pi session is not running")
 	default:
 	}
+	if s.stopping.Load() {
+		return errors.New("pi session is not running")
+	}
 
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
+	if s.stopping.Load() {
+		return errors.New("pi session is not running")
+	}
 	var sourceToken uint64
 	if source, ok := userSourceFromCommand(command); ok {
 		sourceToken = s.userSources.enqueue(source)
@@ -236,14 +241,41 @@ func (s *piSession) requestStop() {
 }
 
 func (s *piSession) stop(code int, reason string) {
-	s.stopOnce.Do(func() {
-		s.stopping.Store(true)
-		s.stopIdleTimer()
-		s.closeClients(code, reason)
-		if s.stdin != nil {
-			_ = s.stdin.Close()
-		}
-	})
+	if !s.stopping.CompareAndSwap(false, true) {
+		return
+	}
+	s.stopIdleTimer()
+	s.finishStop(code, reason)
+}
+
+// stopIfSettled atomically refuses to stop a process while it is between
+// agent_start and agent_settled. The backend owns this check so a stale client
+// cannot bypass it by calling the process endpoint directly.
+func (s *piSession) stopIfSettled(code int, reason string) bool {
+	s.idleMu.Lock()
+	if !s.settled {
+		s.idleMu.Unlock()
+		return false
+	}
+	if !s.stopping.CompareAndSwap(false, true) {
+		s.idleMu.Unlock()
+		return true
+	}
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+	s.idleMu.Unlock()
+
+	s.finishStop(code, reason)
+	return true
+}
+
+func (s *piSession) finishStop(code int, reason string) {
+	s.closeClients(code, reason)
+	if s.stdin != nil {
+		_ = s.stdin.Close()
+	}
 }
 
 func (s *piSession) forceKill() {

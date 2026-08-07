@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -120,12 +121,16 @@ fun Composer(
                 .padding(top = 36.dp)
                 .background(MaterialTheme.colorScheme.background),
         )
+        // In dark mode surface == background, so a shadow-only card disappears:
+        // trade the shadow for a visible bright outline there.
+        val darkScheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
         Surface(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            shadowElevation = 4.dp,
+            shadowElevation = if (darkScheme) 0.dp else 4.dp,
+            border = if (darkScheme) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),

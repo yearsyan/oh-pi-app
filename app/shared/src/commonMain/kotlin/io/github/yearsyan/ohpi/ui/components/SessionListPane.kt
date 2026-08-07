@@ -58,6 +58,8 @@ import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
 import io.github.yearsyan.ohpi.net.nowMillis
+import io.github.yearsyan.ohpi.theme.piExtras
+import io.github.yearsyan.ohpi.ui.GatewayHostOs
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Chat
@@ -71,6 +73,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 
@@ -91,11 +94,15 @@ fun SessionListPane(
     onOpenSettings: () -> Unit,
     onRenameSession: (SavedSession) -> Unit,
     onDeleteSession: (SavedSession) -> Unit,
+    onStopSessionProcess: (SavedSession) -> Unit,
+    sessionProcessStopSupported: Boolean,
+    hostOs: GatewayHostOs,
     onBrowseFiles: () -> Unit,
     onOpenPortForwards: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
+    var stopCandidate by remember { mutableStateOf<SavedSession?>(null) }
     var collapsedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
     var fullyExpandedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
@@ -122,7 +129,7 @@ fun SessionListPane(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (activeServer != null) {
-                ServerChip(servers, activeServer, onSelectServer, Modifier.weight(1f))
+                ServerChip(servers, activeServer, hostOs, onSelectServer, Modifier.weight(1f))
             } else {
                 Spacer(Modifier.weight(1f))
             }
@@ -222,6 +229,8 @@ fun SessionListPane(
                                     onClick = { onSelectSession(session) },
                                     onRename = { onRenameSession(session) },
                                     onDelete = { deleteCandidate = session },
+                                    onStopProcess = { stopCandidate = session },
+                                    processStopSupported = sessionProcessStopSupported,
                                 )
                             }
                             val hiddenCount = group.sessions.size - visible.size
@@ -261,6 +270,15 @@ fun SessionListPane(
             confirmLabel = S.delete,
             onDismiss = { deleteCandidate = null },
             onConfirm = { onDeleteSession(session) },
+        )
+    }
+    stopCandidate?.let { session ->
+        ConfirmDialog(
+            title = S.stopPiProcessTitle,
+            body = S.stopPiProcessBody,
+            confirmLabel = S.stopPiProcess,
+            onDismiss = { stopCandidate = null },
+            onConfirm = { onStopSessionProcess(session) },
         )
     }
 }
@@ -380,6 +398,7 @@ private fun WorkspaceListToggle(
 private fun ServerChip(
     servers: List<ServerProfile>,
     activeServer: ServerProfile,
+    hostOs: GatewayHostOs,
     onSelectServer: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -394,7 +413,12 @@ private fun ServerChip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                Icons.Filled.Cloud,
+                when (hostOs) {
+                    GatewayHostOs.MacOS -> OsBrandApple
+                    GatewayHostOs.Windows -> OsBrandWindows
+                    GatewayHostOs.Linux -> OsBrandLinux
+                    GatewayHostOs.Unknown -> Icons.Filled.Cloud
+                },
                 contentDescription = null,
                 modifier = Modifier.size(14.dp),
                 tint = MaterialTheme.colorScheme.primary,
@@ -531,6 +555,8 @@ private fun SessionRow(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onStopProcess: () -> Unit,
+    processStopSupported: Boolean,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var actionSheetOpen by remember { mutableStateOf(false) }
@@ -591,6 +617,28 @@ private fun SessionRow(
                         leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
                         onClick = { onRename(); menuOpen = false },
                     )
+                    if (session.running && processStopSupported) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(S.stopPiProcess)
+                                    if (session.outputting) {
+                                        Text(
+                                            S.stopPiProcessOutputtingHint,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                        )
+                                    }
+                                }
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(18.dp))
+                            },
+                            onClick = { onStopProcess(); menuOpen = false },
+                            enabled = !session.outputting,
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(S.delete) },
                         leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
@@ -623,6 +671,21 @@ private fun SessionRow(
                 ) {
                     actionSheetOpen = false
                     onRename()
+                }
+                if (session.running && processStopSupported) {
+                    SheetAction(
+                        icon = { tint ->
+                            Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(19.dp), tint = tint)
+                        },
+                        label = S.stopPiProcess,
+                        supportingText =
+                            S.stopPiProcessOutputtingHint.takeIf { session.outputting },
+                        destructive = true,
+                        enabled = !session.outputting,
+                    ) {
+                        actionSheetOpen = false
+                        onStopProcess()
+                    }
                 }
                 SheetAction(
                     icon = { tint -> Icon(Icons.Filled.Delete, null, Modifier.size(19.dp), tint = tint) },
@@ -661,32 +724,48 @@ private fun SessionRow(
 private fun SheetAction(
     icon: @Composable (Color) -> Unit,
     label: String,
+    supportingText: String? = null,
     destructive: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val tint = if (destructive) MaterialTheme.colorScheme.error
-    else MaterialTheme.colorScheme.onSurface
+    val tint = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        destructive -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { icon(tint) }
         Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = tint,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = tint,
+            )
+            supportingText?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tint,
+                    maxLines = 2,
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun SessionStatus(outputting: Boolean) {
-    val color = if (outputting) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+    // Streaming keeps the teal tertiary; a merely alive process gets success green.
+    // Neither uses primary so the chips never read as grey.
+    val color = if (outputting) MaterialTheme.colorScheme.tertiary else piExtras.success
     Surface(
         shape = RoundedCornerShape(7.dp),
         color = color.copy(alpha = 0.12f),

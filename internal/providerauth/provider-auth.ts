@@ -1,10 +1,14 @@
 import {
+	type ApiKeyCredential,
+	type AssistantMessage,
 	type AuthEvent,
 	type AuthInteraction,
 	type AuthPrompt,
 	type AuthType,
+	type Context,
 	type Model,
 	type Provider,
+	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -28,8 +32,14 @@ type ProviderRuntime = {
 	getModels(providerId: string): readonly Model<any>[];
 	getProviderAuthStatus(providerId: string): AuthStatus;
 	listCredentials(): Promise<readonly CredentialInfo[]>;
+	completeSimple(model: Model<any>, context: Context, options?: SimpleStreamOptions): Promise<AssistantMessage>;
 	login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<unknown>;
 	logout(providerId: string): Promise<void>;
+};
+
+type RecordedPromptAnswer = {
+	type: AuthPrompt["type"];
+	value: string;
 };
 
 type PromptMetadata = {
@@ -111,6 +121,80 @@ function authInteraction(ctx: ExtensionCommandContext): AuthInteraction {
 	};
 }
 
+function recordingAuthInteraction(
+	ctx: ExtensionCommandContext,
+	answers: RecordedPromptAnswer[],
+): AuthInteraction {
+	const interaction = authInteraction(ctx);
+	return {
+		...interaction,
+		prompt: async (prompt) => {
+			const value = await interaction.prompt(prompt);
+			answers.push({ type: prompt.type, value });
+			return value;
+		},
+	};
+}
+
+function replayAuthInteraction(
+	ctx: ExtensionCommandContext,
+	answers: readonly RecordedPromptAnswer[],
+): AuthInteraction {
+	let index = 0;
+	return {
+		signal: ctx.signal,
+		prompt: async (prompt) => {
+			const answer = answers[index++];
+			if (!answer || answer.type !== prompt.type) {
+				throw new Error("provider API-key login changed while validating the credential");
+			}
+			return answer.value;
+		},
+		// The first pass already forwarded informational links and progress.
+		notify: () => {},
+	};
+}
+
+async function validateApiKey(
+	ctx: ExtensionCommandContext,
+	runtime: ProviderRuntime,
+	provider: Provider,
+	credential: ApiKeyCredential,
+): Promise<void> {
+	if (typeof runtime.completeSimple !== "function") {
+		throw new Error("this pi version does not support API-key validation");
+	}
+	const textModels = runtime.getModels(provider.id).filter((model) => model.input.includes("text"));
+	const model = textModels.find((candidate) => !candidate.reasoning) ?? textModels[0];
+	if (!model) throw new Error(`${provider.name} has no text model available for API-key validation`);
+
+	emit(ctx, { event: "validating" });
+	const result = await runtime.completeSimple(
+		model,
+		{
+			messages: [{ role: "user", content: ".", timestamp: Date.now() }],
+		},
+		{
+			// An empty override is intentional for ambient/profile credentials: it
+			// prevents an older stored key from being selected during validation.
+			apiKey: credential.key ?? "",
+			env: credential.env,
+			maxTokens: 1,
+			maxRetries: 0,
+			timeoutMs: 15_000,
+			cacheRetention: "none",
+			signal: ctx.signal,
+		},
+	);
+	if (result.stopReason === "error") {
+		throw new Error(`API key validation failed: ${result.errorMessage?.trim() || "provider rejected the request"}`);
+	}
+	if (result.stopReason === "aborted") {
+		if (ctx.signal.aborted) cancelled();
+		throw new Error(`API key validation failed: ${result.errorMessage?.trim() || "request was aborted"}`);
+	}
+}
+
 function modelSummary(model: Model<any>): Record<string, unknown> {
 	return {
 		id: model.id,
@@ -166,7 +250,17 @@ async function loginProvider(
 	if (authType === "api_key" && !provider.auth.apiKey?.login) {
 		throw new Error(`${provider.name} does not support API-key login`);
 	}
-	await runtime.login(providerID, authType, authInteraction(ctx));
+	if (authType === "api_key") {
+		const answers: RecordedPromptAnswer[] = [];
+		const credential = await provider.auth.apiKey!.login!(recordingAuthInteraction(ctx, answers));
+		await validateApiKey(ctx, runtime, provider, credential);
+		// Persist only after the candidate credential has successfully completed
+		// a minimal provider request. Replaying the deterministic built-in login
+		// keeps storage ownership and cross-process locking inside ModelRuntime.
+		await runtime.login(providerID, authType, replayAuthInteraction(ctx, answers));
+	} else {
+		await runtime.login(providerID, authType, authInteraction(ctx));
+	}
 	emit(ctx, {
 		event: "complete",
 		action: "login",

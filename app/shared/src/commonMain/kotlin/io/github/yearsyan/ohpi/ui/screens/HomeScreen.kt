@@ -52,6 +52,7 @@ import io.github.yearsyan.ohpi.filebrowser.FileBrowserScreen
 import io.github.yearsyan.ohpi.filebrowser.rememberApkOpener
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.ui.AppViewModel
+import io.github.yearsyan.ohpi.ui.GatewayHostOs
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.SessionListPane
 import io.github.yearsyan.ohpi.ui.components.WorkspaceDialog
@@ -350,6 +351,12 @@ private fun MainDestination(
             onBack = onNavigateBack,
             onRename = { name -> vm.renameSession(compactChatId, name) },
             onDelete = { onDeleteSession(compactChatId) },
+            onStopProcess =
+                if (vm.activeGatewayInfo?.supportsSessionProcessStop == true) {
+                    { vm.stopSessionProcess(compactChatId) }
+                } else {
+                    null
+                },
             onBrowseFiles = onBrowseFiles,
             onOpenProviders = onOpenProviders,
         )
@@ -368,6 +375,10 @@ private fun MainDestination(
             onOpenSettings = onOpenSettings,
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
+            onStopSessionProcess = { vm.stopSessionProcess(it.id) },
+            sessionProcessStopSupported =
+                vm.activeGatewayInfo?.supportsSessionProcessStop == true,
+            hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
             onBrowseFiles = { onBrowseFiles("") },
             onOpenPortForwards = onOpenPortForwards,
             modifier = Modifier.fillMaxWidth(),
@@ -402,6 +413,10 @@ private fun WideHome(
             onOpenSettings = onOpenSettings,
             onRenameSession = onRenameSession,
             onDeleteSession = { onDeleteSession(it.id) },
+            onStopSessionProcess = { vm.stopSessionProcess(it.id) },
+            sessionProcessStopSupported =
+                vm.activeGatewayInfo?.supportsSessionProcessStop == true,
+            hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
             onBrowseFiles = { onBrowseFiles("") },
             onOpenPortForwards = onOpenPortForwards,
             modifier = Modifier.width(ListPaneWidth),
@@ -416,6 +431,12 @@ private fun WideHome(
                     onBack = {},
                     onRename = { name -> vm.renameSession(chatId, name) },
                     onDelete = { onDeleteSession(chatId) },
+                    onStopProcess =
+                        if (vm.activeGatewayInfo?.supportsSessionProcessStop == true) {
+                            { vm.stopSessionProcess(chatId) }
+                        } else {
+                            null
+                        },
                     onBrowseFiles = onBrowseFiles,
                     onOpenProviders = onOpenProviders,
                 )

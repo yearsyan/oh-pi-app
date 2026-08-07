@@ -324,6 +324,94 @@ func TestSessionAPIReportsOutputtingStatus(t *testing.T) {
 	}
 }
 
+func TestSessionProcessStopRequiresSettledAndPreservesSession(t *testing.T) {
+	dataDir := t.TempDir()
+	_, server := startTestGateway(t, dataDir)
+	client := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer client.Close()
+	sessionID := readEvent(t, client).string("session_id")
+	processPath := "/api/sessions/" + sessionID + "/process"
+
+	unauthorized := sessionAPIRequest(t, server, http.MethodDelete, processPath, nil, "")
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated stop status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "start-output", "type": "fake_emit",
+		"events": []any{map[string]any{"type": "agent_start"}},
+	})
+	if event := readEvent(t, client); event.string("type") != "agent_start" {
+		t.Fatalf("start event = %#v", event)
+	}
+	if response := readEvent(t, client); response.string("id") != "start-output" {
+		t.Fatalf("start response = %#v", response)
+	}
+
+	blocked := sessionAPIRequest(t, server, http.MethodDelete, processPath, nil, testToken)
+	var blockedError struct {
+		Code string `json:"error"`
+	}
+	decodeHTTPJSON(t, blocked, &blockedError)
+	if blocked.StatusCode != http.StatusConflict || blockedError.Code != "session_outputting" {
+		t.Fatalf(
+			"outputting stop response = status %d code %q, want status %d code session_outputting",
+			blocked.StatusCode,
+			blockedError.Code,
+			http.StatusConflict,
+		)
+	}
+	if current := getSessionList(t, server).Sessions[0]; !current.Running || !current.Outputting {
+		t.Fatalf("session after rejected stop = %#v", current)
+	}
+
+	writeJSON(t, client, map[string]any{
+		"id": "settle-output", "type": "fake_emit",
+		"events": []any{map[string]any{"type": "agent_settled"}},
+	})
+	if event := readEvent(t, client); event.string("type") != "agent_settled" {
+		t.Fatalf("settled event = %#v", event)
+	}
+	if response := readEvent(t, client); response.string("id") != "settle-output" {
+		t.Fatalf("settled response = %#v", response)
+	}
+
+	stopped := sessionAPIRequest(t, server, http.MethodDelete, processPath, nil, testToken)
+	stopped.Body.Close()
+	if stopped.StatusCode != http.StatusNoContent {
+		t.Fatalf("settled stop status = %d, want %d", stopped.StatusCode, http.StatusNoContent)
+	}
+	listed := getSessionList(t, server)
+	if len(listed.Sessions) != 1 || listed.Sessions[0].Running || listed.Sessions[0].Outputting {
+		t.Fatalf("session after process stop = %#v", listed.Sessions)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "sessions", sessionID)); err != nil {
+		t.Fatalf("preserved session directory: %v", err)
+	}
+
+	idempotent := sessionAPIRequest(t, server, http.MethodDelete, processPath, nil, testToken)
+	idempotent.Body.Close()
+	if idempotent.StatusCode != http.StatusNoContent {
+		t.Fatalf("repeated stop status = %d, want %d", idempotent.StatusCode, http.StatusNoContent)
+	}
+
+	attached := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer attached.Close()
+	ready, _, _ := readAttachHistory(t, attached)
+	if ready.string("session_id") != sessionID {
+		t.Fatalf("reattached session = %#v", ready)
+	}
+}
+
 func TestSessionListSurvivesGatewayRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	firstGateway, firstServer := startTestGateway(t, dataDir)

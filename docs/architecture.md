@@ -101,4 +101,5 @@ session 是共享控制域：
 - pi 异常退出时，该 session 的 WebSocket 以 1011 关闭；下一次 attach 会启动新进程并恢复持久化会话。
 - ohpi 收到 `SIGINT` 或 `SIGTERM` 后，先关闭 WebSocket 和子进程 stdin，超时后强制结束仍未退出的子进程。
 - 永久删除 session 时，活动子进程和 WebSocket 会先正常关闭，随后删除整个 session 目录。
+- 手动停止单个 pi 进程时保留整个 session 目录；正在输出的进程必须先收到 `abort` 并到达 `agent_settled`，网关才允许停止。
 - `OHPI_TOKEN` 不会传入 pi 子进程环境。

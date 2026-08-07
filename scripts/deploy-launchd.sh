@@ -180,6 +180,15 @@ case $listen_port in
 esac
 health_url=${OHPI_HEALTH_URL-http://127.0.0.1:$listen_port/healthz}
 
+deploy_version=${OHPI_VERSION-}
+if [ -z "$deploy_version" ]; then
+	deploy_version=$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')
+	deploy_version=${deploy_version#v}
+fi
+case $deploy_version in
+	''|*[!0-9A-Za-z._+-]*) die "OHPI_VERSION contains unsupported characters: $deploy_version" ;;
+esac
+
 deploy_tmp=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/oh-pi-app-deploy.XXXXXX")
 cleanup() {
 	/bin/rm -rf "$deploy_tmp"
@@ -195,7 +204,7 @@ token_source=$deploy_tmp/token
 note "Building production binary"
 (
 	cd "$repo_root"
-	CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$built_binary" ./cmd/ohpi-gateway
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$deploy_version" -o "$built_binary" ./cmd/ohpi-gateway
 )
 
 /usr/bin/install -m 0600 "$template_path" "$rendered_plist"
@@ -284,6 +293,7 @@ note "Deployment complete"
 printf 'Binary:      %s\n' "$binary_path"
 printf 'LaunchAgent: %s\n' "$plist_path"
 printf 'Config:      %s\n' "$config_file"
+printf 'Version:     %s\n' "$deploy_version"
 printf 'PID:         %s\n' "$job_pid"
 printf 'Health:      %s\n' "$health_url"
 printf 'Logs:        %s\n' "$log_dir"

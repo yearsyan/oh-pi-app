@@ -26,6 +26,7 @@ private const val ReleaseRepository = "yearsyan/oh-pi-app"
 private const val PiNpmPackage = "@earendil-works/pi-coding-agent"
 private const val PowerShellStdin =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
+internal const val GATEWAY_FEATURE_SESSION_PROCESS_STOP = "session_process_stop"
 
 internal enum class ManagedHostOs(val releaseName: String) {
     Macos("darwin"),
@@ -80,6 +81,8 @@ internal data class ManagedGatewayHealth(
     val service: String = "",
     val version: String = "",
     val protocol: Int = 0,
+    val os: String = "",
+    val features: List<String> = emptyList(),
 )
 
 internal suspend fun awaitManagedGatewayHealth(gateway: String): ManagedGatewayHealth {

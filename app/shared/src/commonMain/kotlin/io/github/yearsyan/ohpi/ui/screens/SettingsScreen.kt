@@ -87,6 +87,7 @@ import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
 import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ui.AppViewModel
+import io.github.yearsyan.ohpi.ui.GatewayServerInfo
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.longPressHaptic
 import kotlinx.coroutines.CancellationException
@@ -418,6 +419,7 @@ private fun SettingsDetail(
             servers = servers,
             sshKeys = sshKeys,
             activeServerId = activeServerId,
+            gatewayInfo = vm.activeGatewayInfo,
             onBack = onBack,
             onSelectServer = onSelectServer,
             onSaveServer = onSaveServer,
@@ -508,6 +510,7 @@ private fun ServersSettingsDetail(
     servers: List<ServerProfile>,
     sshKeys: List<SshPrivateKey>,
     activeServerId: String,
+    gatewayInfo: GatewayServerInfo?,
     onBack: (() -> Unit)?,
     onSelectServer: (String) -> Unit,
     onSaveServer: (ServerProfile, SshPrivateKey?) -> Unit,
@@ -524,6 +527,7 @@ private fun ServersSettingsDetail(
             ServerRow(
                 server = server,
                 active = server.id == activeServerId,
+                gatewayInfo = gatewayInfo.takeIf { server.id == activeServerId },
                 onSelect = { onSelectServer(server.id) },
                 onEdit = { editing = server },
                 onDelete = { deleting = server },
@@ -858,6 +862,7 @@ private fun settingsSectionSubtitle(
 private fun ServerRow(
     server: ServerProfile,
     active: Boolean,
+    gatewayInfo: GatewayServerInfo?,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -904,6 +909,15 @@ private fun ServerRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                gatewayInfo?.takeIf { it.version.isNotBlank() }?.let { info ->
+                    Text(
+                        S.gatewayVersion(info.version, info.protocol),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             if (active) {
                 Text(

@@ -26,6 +26,7 @@ import io.github.yearsyan.ohpi.net.FileReadResponse
 import io.github.yearsyan.ohpi.net.FsListException
 import io.github.yearsyan.ohpi.net.FsListResponse
 import io.github.yearsyan.ohpi.net.GatewayTransport
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SESSION_PROCESS_STOP
 import io.github.yearsyan.ohpi.net.GatewayProvider
 import io.github.yearsyan.ohpi.net.GatewayProviderAuthMethod
 import io.github.yearsyan.ohpi.net.PiClient
@@ -41,6 +42,7 @@ import io.github.yearsyan.ohpi.net.gatewayTarget
 import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
 import io.github.yearsyan.ohpi.net.downloadGatewayFile
+import io.github.yearsyan.ohpi.net.fetchGatewayHealth
 import io.github.yearsyan.ohpi.net.getGatewayCapabilities
 import io.github.yearsyan.ohpi.net.listGatewayProviders
 import io.github.yearsyan.ohpi.net.listGatewayDirs
@@ -50,6 +52,7 @@ import io.github.yearsyan.ohpi.net.logoutGatewayProvider
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.readGatewayFile
 import io.github.yearsyan.ohpi.net.renameGatewaySession
+import io.github.yearsyan.ohpi.net.stopGatewaySessionProcess
 import io.github.yearsyan.ohpi.net.buildProviderAuthWsUrl
 import io.github.yearsyan.ohpi.net.parseProviderAuthEvent
 import io.github.yearsyan.ohpi.net.providerAuthCancelResponse
@@ -91,6 +94,34 @@ data class ProviderAuthFlowState(
     val error: String = "",
 )
 
+/** Operating system family reported by the connected gateway host. */
+enum class GatewayHostOs {
+    Unknown,
+    MacOS,
+    Windows,
+    Linux,
+}
+
+/** Runtime information advertised by the currently connected gateway. */
+data class GatewayServerInfo(
+    val version: String,
+    val protocol: Int,
+    val os: String = "",
+    val features: Set<String>,
+) {
+    val supportsSessionProcessStop: Boolean
+        get() = GATEWAY_FEATURE_SESSION_PROCESS_STOP in features
+
+    val hostOs: GatewayHostOs
+        get() =
+            when (os.lowercase()) {
+                "darwin", "macos" -> GatewayHostOs.MacOS
+                "windows" -> GatewayHostOs.Windows
+                "linux" -> GatewayHostOs.Linux
+                else -> GatewayHostOs.Unknown
+            }
+}
+
 class AppViewModel(
     private val store: SettingsStore = SettingsStore(),
 ) : ViewModel() {
@@ -105,6 +136,7 @@ class AppViewModel(
     var providers = mutableStateListOf<GatewayProvider>(); private set
 
     // ---- runtime state ----
+    var activeGatewayInfo by mutableStateOf<GatewayServerInfo?>(null); private set
     var activeChatId by mutableStateOf<String?>(null); private set
     var sessionsLoading by mutableStateOf(false); private set
     var providersLoading by mutableStateOf(false); private set
@@ -329,6 +361,7 @@ class AppViewModel(
         providers.clear()
         providersLoading = false
         providerLogoutId = null
+        activeGatewayInfo = null
         loopbackLinkPrompt = null
         rejectPendingHostKey()
     }
@@ -483,6 +516,12 @@ class AppViewModel(
                         userCode = event.userCode,
                     )
             }
+            "validating" ->
+                providerAuthFlow =
+                    current.copy(
+                        status = stringsProvider().providerValidatingKey,
+                        prompt = null,
+                    )
             "progress" -> providerAuthFlow = current.copy(status = event.message, prompt = null)
             "complete" -> {
                 providerAuthFlow =
@@ -612,6 +651,23 @@ class AppViewModel(
             if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
             try {
                 val gateway = transportFor(server).resolveGateway()
+                val health =
+                    try {
+                        fetchGatewayHealth(gateway)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
+                activeGatewayInfo = health?.let {
+                    GatewayServerInfo(
+                        version = it.version,
+                        protocol = it.protocol,
+                        os = it.os,
+                        features = it.features.toSet(),
+                    )
+                }
                 var loaded = listGatewaySessions(gateway, server.token)
 
                 // Releases before the server list API kept titles locally. Migrate
@@ -752,6 +808,46 @@ class AppViewModel(
                         "Could not rename session: ${failure.message ?: "unknown error"}",
                         Toast.Kind.Error,
                     )
+                }
+            }
+        }
+    }
+
+    /** Stops only the live pi runtime; the saved chat remains attachable. */
+    fun stopSessionProcess(id: String) {
+        val session = sessions.firstOrNull { it.id == id } ?: return
+        if (!session.running) return
+        if (session.outputting || controllers[id]?.isStreaming == true) {
+            toast(stringsProvider().stopPiProcessOutputtingHint)
+            return
+        }
+        if (activeGatewayInfo?.supportsSessionProcessStop != true) {
+            toast(stringsProvider().stopPiProcessUnsupported, Toast.Kind.Error)
+            return
+        }
+        val server = activeServer ?: return
+        viewModelScope.launch {
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                stopGatewaySessionProcess(gateway, server.token, id)
+                if (activeServerId != server.id) return@launch
+                controllers[id]?.disconnect()
+                val index = sessions.indexOfFirst { it.id == id }
+                if (index >= 0) {
+                    sessions[index] = sessions[index].copy(running = false, outputting = false)
+                }
+                toast(stringsProvider().piProcessStopped, Toast.Kind.Success)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (activeServerId == server.id) {
+                    toast(
+                        stringsProvider().piProcessStopFailed(
+                            failure.message ?: "unknown error",
+                        ),
+                        Toast.Kind.Error,
+                    )
+                    loadSessionsForActive(clearExisting = false)
                 }
             }
         }

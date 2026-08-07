@@ -138,6 +138,13 @@ internal fun sessionSyncPhaseForEvent(event: String?): SessionSyncPhase? = when 
 
 internal fun shouldFinalizeAssistant(eventType: String): Boolean = eventType == "message_end"
 
+internal fun assistantFailureMessage(message: JsonObject): String? =
+    message
+        .takeIf { it.str("stopReason") == "error" }
+        ?.strOrEmpty("errorMessage")
+        ?.let(::friendlyHttpError)
+        ?.takeIf { it.isNotBlank() }
+
 internal fun clampDraftThinkingLevel(requested: String, available: List<String>): String {
     if (available.isEmpty()) return ""
     if (requested in available) return requested
@@ -977,7 +984,7 @@ class ChatController(
         }
     }
 
-    private fun dispatchMessage(msg: JsonObject) {
+    private fun dispatchMessage(msg: JsonObject, showTransientErrors: Boolean = false) {
         val eventType = msg.str("type")
         when (eventType) {
             "ohpi" -> handleGatewayEvent(msg)
@@ -990,7 +997,7 @@ class ChatController(
             }
             "message_update" -> msg.obj("assistantMessageEvent")?.let { handleDelta(it) }
             "message_end", "turn_end" -> if (shouldFinalizeAssistant(eventType.orEmpty())) {
-                msg.obj("message")?.let { finalizeAssistant(it) }
+                msg.obj("message")?.let { finalizeAssistant(it, showTransientErrors) }
             }
             "tool_execution_start" -> handleToolStart(msg)
             "tool_execution_update" -> handleToolUpdate(msg)
@@ -1269,7 +1276,7 @@ class ChatController(
                 }
             }.onFailure { disableReplayCache() }
         }
-        dispatchMessage(payload)
+        dispatchMessage(payload, showTransientErrors = true)
     }
 
     private fun initializeCreatedReplayCache(createdSessionId: String) {
@@ -1592,7 +1599,7 @@ class ChatController(
         }
     }
 
-    private fun finalizeAssistant(message: JsonObject) {
+    private fun finalizeAssistant(message: JsonObject, showTransientErrors: Boolean) {
         if (message.str("role") != "assistant") return
         val item = latestStreamingAssistant() ?: ensureAssistant(message)
         (message["content"] as? JsonArray)?.forEachIndexed { i, el ->
@@ -1625,6 +1632,13 @@ class ChatController(
         item.stopReason = message.str("stopReason") ?: item.stopReason
         item.streaming = false
         item.ts = message.long("timestamp") ?: nowMillis()
+        assistantFailureMessage(message)?.let { failure ->
+            // Provider failures often end an assistant message without any
+            // content. Remove that empty row and keep the actual reason visible.
+            if (item.blocks.isEmpty()) timeline.remove(item)
+            status(failure, TimelineItem.StatusItem.Tone.Error)
+            if (showTransientErrors) onToast(failure, Toast.Kind.Error)
+        }
     }
 
     private fun handleUserMessageStart(event: JsonObject, message: JsonObject) {

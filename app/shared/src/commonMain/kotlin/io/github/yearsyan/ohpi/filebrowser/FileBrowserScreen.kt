@@ -329,12 +329,14 @@ private fun FileList(controller: FileBrowserController, onOpenApk: (FileEntry) -
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        Icons.Filled.Folder,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Filled.Folder,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Spacer(Modifier.width(12.dp))
                     Text(
                         "..",
@@ -361,22 +363,36 @@ private fun FileRow(entry: FileEntry, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = when {
-                entry.isDir -> Icons.Filled.Folder
-                isApk(entry) -> Icons.Filled.Android
-                isImageFile(entry.name) -> Icons.Filled.Image
-                else -> Icons.AutoMirrored.Filled.InsertDriveFile
-            },
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = when {
-                entry.isDir -> MaterialTheme.colorScheme.primary
-                isApk(entry) -> MaterialTheme.colorScheme.tertiary
-                isImageFile(entry.name) -> MaterialTheme.colorScheme.secondary
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
+        Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+            val typeVisual = if (entry.isDir) null else fileTypeVisual(entry.name)
+            when {
+                entry.isDir -> Icon(
+                    Icons.Filled.Folder,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                isApk(entry) -> Icon(
+                    Icons.Filled.Android,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.tertiary,
+                )
+                isImageFile(entry.name) -> Icon(
+                    Icons.Filled.Image,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.secondary,
+                )
+                typeVisual != null -> FileTypeChip(typeVisual)
+                else -> Icon(
+                    Icons.AutoMirrored.Filled.InsertDriveFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Spacer(Modifier.width(12.dp))
         Text(
             entry.name,

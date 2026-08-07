@@ -6,10 +6,10 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 
 `GET /healthz` 不需要鉴权。其他 HTTP API 都推荐使用 Bearer 请求头，避免 token 出现在 URL 和访问日志中：
 
-健康检查成功时返回网关版本与安装模式兼容协议版本：
+健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"1.10.5","protocol":1}
+{"status":"ok","service":"ohpi-gateway","version":"1.10.5","protocol":1,"os":"darwin","features":["session_process_stop"]}
 ```
 
 ```http
@@ -65,6 +65,17 @@ DELETE /api/sessions/<SESSION_ID>
 名称会去除首尾空白，不能为空，最长 200 个 Unicode 字符。重命名会写入网关元数据，并同步到正在运行的 pi session；以后恢复停止的 session 时也会重新应用该名称。
 
 `DELETE` 是永久操作：活动中的 pi 子进程和 WebSocket 会先被正常关闭，随后整个 `<data-dir>/sessions/<session-id>` 目录（包括 pi JSONL、历史快照和 replay WAL）都会被删除。成功返回 HTTP 204。
+
+### 仅停止 session 的 pi 进程
+
+```http
+DELETE /api/sessions/<SESSION_ID>/process
+Authorization: Bearer <TOKEN>
+```
+
+该操作只停止当前 pi 子进程并断开它的 WebSocket，完整 session 目录和历史都会保留；下一次 attach 会重新启动 pi 并恢复 session。没有运行中进程时也返回 HTTP 204，因此可以安全重试。
+
+当 session 处于 `outputting: true` 时，接口返回 HTTP 409 `session_outputting`，不会直接结束进程。客户端必须先通过 WebSocket 发送 pi 的 `abort`，并等待 `agent_settled`（或列表中的 `outputting` 变为 `false`），之后才能再次调用该接口。支持此端点的网关会在 `/healthz` 的 `features` 中声明 `session_process_stop`。
 
 ### 查询 session 生成性能
 

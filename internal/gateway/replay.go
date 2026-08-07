@@ -164,6 +164,11 @@ func (s *piSession) handleOutput(message []byte) {
 	receivedAt := time.Now()
 	var envelope piOutputEnvelope
 	validJSON := json.Unmarshal(message, &envelope) == nil
+	// Publish the busy state immediately after parsing so a concurrent process
+	// stop cannot slip through after pi has already emitted agent_start.
+	if validJSON && envelope.Type == "agent_start" {
+		s.markAgentStarted()
+	}
 	if validJSON {
 		message = s.annotateUserSource(message, envelope.Type)
 		if envelope.Type == "response" {
@@ -228,10 +233,7 @@ func (s *piSession) handleOutput(message []byte) {
 	var checkpointToken uint64
 	var checkpointSnapshot sessionFileSnapshot
 	var checkpointSnapshotErr error
-	switch envelope.Type {
-	case "agent_start":
-		s.markAgentStarted()
-	case "agent_settled":
+	if envelope.Type == "agent_settled" {
 		checkpointSnapshot, checkpointSnapshotErr = s.locateSessionFileSnapshot()
 		checkpointToken = s.markAgentSettled()
 		if s.onActivity != nil {

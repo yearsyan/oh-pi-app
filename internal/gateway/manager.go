@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-var errSessionDeleting = errors.New("session is being deleted")
+var (
+	errSessionDeleting   = errors.New("session is being deleted")
+	errSessionOutputting = errors.New("session is outputting")
+)
 
 type managedSession struct {
 	Metadata   sessionMetadata
@@ -229,19 +232,8 @@ func (m *sessionManager) delete(ctx context.Context, id string) error {
 
 	if current != nil && !current.isDone() {
 		current.stop(1000, "session deleted")
-		select {
-		case <-current.done:
-		case <-ctx.Done():
-			current.forceKill()
-			timer := time.NewTimer(2 * time.Second)
-			select {
-			case <-current.done:
-				if !timer.Stop() {
-					<-timer.C
-				}
-			case <-timer.C:
-				return ctx.Err()
-			}
+		if err := waitForSessionStop(ctx, current); err != nil {
+			return err
 		}
 	}
 	if err := m.store.delete(id); err != nil {
@@ -253,6 +245,47 @@ func (m *sessionManager) delete(ctx context.Context, id string) error {
 	m.mu.Unlock()
 	deleted = true
 	return nil
+}
+
+// stop ends only the live pi process. Persisted session metadata, history, and
+// replay data remain available, and a later attach starts a fresh pi process.
+func (m *sessionManager) stop(ctx context.Context, id string) error {
+	if _, _, err := m.store.load(id); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	if _, deleting := m.deleting[id]; deleting {
+		m.mu.Unlock()
+		return errSessionDeleting
+	}
+	current := m.sessions[id]
+	m.mu.Unlock()
+
+	if current == nil || current.isDone() {
+		return nil
+	}
+	if !current.stopping.Load() && !current.stopIfSettled(1000, "pi process stopped by user") {
+		return errSessionOutputting
+	}
+	return waitForSessionStop(ctx, current)
+}
+
+func waitForSessionStop(ctx context.Context, session *piSession) error {
+	select {
+	case <-session.done:
+		return nil
+	case <-ctx.Done():
+		session.forceKill()
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-session.done:
+			return nil
+		case <-timer.C:
+			return ctx.Err()
+		}
+	}
 }
 
 func (m *sessionManager) getOrStart(id, dir, workDir string, args []string, newSession bool) (*piSession, bool, error) {

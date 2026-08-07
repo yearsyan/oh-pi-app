@@ -144,6 +144,13 @@ interface Strings {
     val untitledSession: String
     val sessionRunning: String
     val sessionOutputting: String
+    val stopPiProcess: String
+    val stopPiProcessTitle: String
+    val stopPiProcessBody: String
+    val stopPiProcessOutputtingHint: String
+    val stopPiProcessUnsupported: String
+    val piProcessStopped: String
+    val piProcessStopFailed: (String) -> String
 
     // workspaces
     val workspaceDialogTitle: String
@@ -293,6 +300,7 @@ interface Strings {
     val stopManagedGatewayBody: String
     val managedGatewayStopped: String
     val managedGatewayStopFailed: (String) -> String
+    val gatewayVersion: (String, Int) -> String
     val appearanceSection: String
     val themeSystem: String
     val themeLight: String
@@ -336,6 +344,7 @@ interface Strings {
     val providerCancelLogin: String
     val providerDone: String
     val providerAuthenticating: String
+    val providerValidatingKey: String
     val providerLoginSucceeded: (String) -> String
     val providerLogoutSucceeded: (String) -> String
     val providerLogoutFailed: (String) -> String
@@ -537,6 +546,16 @@ object EnStrings : Strings {
     override val untitledSession = "Untitled chat"
     override val sessionRunning = "Running"
     override val sessionOutputting = "Outputting"
+    override val stopPiProcess = "Stop Pi process"
+    override val stopPiProcessTitle = "Stop the Pi process?"
+    override val stopPiProcessBody =
+        "This stops the live Pi process but keeps the chat and its history. Reopening the chat starts Pi again."
+    override val stopPiProcessOutputtingHint =
+        "Stop the current output first, then wait for it to finish."
+    override val stopPiProcessUnsupported =
+        "This gateway version does not support stopping individual Pi processes."
+    override val piProcessStopped = "Pi process stopped"
+    override val piProcessStopFailed = { error: String -> "Could not stop the Pi process: $error" }
 
     override val workspaceDialogTitle = "Choose a workspace"
     override val workspaceLabel = "Workspace"
@@ -683,6 +702,10 @@ object EnStrings : Strings {
     override val stopManagedGatewayBody = "Active chats will disconnect. The app will start the gateway again the next time you connect."
     override val managedGatewayStopped = "Remote gateway stopped"
     override val managedGatewayStopFailed = { error: String -> "Could not stop the remote gateway: $error" }
+    override val gatewayVersion = { version: String, protocol: Int ->
+        val label = if (version == "dev" || version.startsWith("v")) version else "v$version"
+        "Gateway $label · protocol $protocol"
+    }
     override val appearanceSection = "Appearance"
     override val themeSystem = "System"
     override val themeLight = "Light"
@@ -736,6 +759,7 @@ object EnStrings : Strings {
     override val providerCancelLogin = "Cancel login"
     override val providerDone = "Done"
     override val providerAuthenticating = "Authenticating…"
+    override val providerValidatingKey = "Checking the API key with the provider…"
     override val providerLoginSucceeded = { name: String -> "Signed in to $name" }
     override val providerLogoutSucceeded = { name: String -> "Signed out of $name" }
     override val providerLogoutFailed = { error: String -> "Could not sign out: $error" }
@@ -927,6 +951,14 @@ object ZhStrings : Strings {
     override val untitledSession = "未命名会话"
     override val sessionRunning = "运行中"
     override val sessionOutputting = "输出中"
+    override val stopPiProcess = "停止 Pi 进程"
+    override val stopPiProcessTitle = "停止 Pi 进程？"
+    override val stopPiProcessBody =
+        "这只会结束当前运行的 Pi 进程，不会删除会话和历史；重新打开会话时会再次启动。"
+    override val stopPiProcessOutputtingHint = "正在输出，请先在会话中触发停止并等待结束。"
+    override val stopPiProcessUnsupported = "当前网关版本不支持单独停止 Pi 进程。"
+    override val piProcessStopped = "Pi 进程已停止"
+    override val piProcessStopFailed = { error: String -> "停止 Pi 进程失败：$error" }
 
     override val workspaceDialogTitle = "选择工作区"
     override val workspaceLabel = "工作区"
@@ -1071,6 +1103,10 @@ object ZhStrings : Strings {
     override val stopManagedGatewayBody = "当前会话会断开；下次连接时，App 会重新拉起网关。"
     override val managedGatewayStopped = "远程网关已关闭"
     override val managedGatewayStopFailed = { error: String -> "关闭远程网关失败：$error" }
+    override val gatewayVersion = { version: String, protocol: Int ->
+        val label = if (version == "dev" || version.startsWith("v")) version else "v$version"
+        "网关 $label · 协议 $protocol"
+    }
     override val appearanceSection = "外观"
     override val themeSystem = "跟随系统"
     override val themeLight = "浅色"
@@ -1124,6 +1160,7 @@ object ZhStrings : Strings {
     override val providerCancelLogin = "取消登录"
     override val providerDone = "完成"
     override val providerAuthenticating = "正在认证…"
+    override val providerValidatingKey = "正在向 Provider 验证 API Key…"
     override val providerLoginSucceeded = { name: String -> "$name 登录成功" }
     override val providerLogoutSucceeded = { name: String -> "$name 已登出" }
     override val providerLogoutFailed = { error: String -> "登出失败：$error" }

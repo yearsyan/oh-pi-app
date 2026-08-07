@@ -16,6 +16,12 @@ OHPI_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
 ./scripts/deploy-launchd.sh
 ```
 
+脚本默认用当前 Git 描述（例如 `1.10.8` 或 `1.10.8-dirty`）写入网关版本；构建候选版本时可通过 `OHPI_VERSION` 显式指定：
+
+```bash
+OHPI_VERSION="1.10.9" ./scripts/deploy-launchd.sh
+```
+
 首次部署或需要修改配置时，可通过环境变量覆盖默认值：
 
 ```bash

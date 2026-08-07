@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -103,11 +104,13 @@ fun ChatScreen(
     onBack: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    onStopProcess: (() -> Unit)? = null,
     onBrowseFiles: (String) -> Unit = {},
     onOpenProviders: () -> Unit = {},
 ) {
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    var stopProcessOpen by remember { mutableStateOf(false) }
     var composerHeightPx by remember { mutableIntStateOf(0) }
     var scrollToBottomTick by remember { mutableIntStateOf(0) }
     val composerBottomPadding = with(LocalDensity.current) { composerHeightPx.toDp() }
@@ -131,6 +134,7 @@ fun ChatScreen(
             onBack = onBack,
             onRename = { renameOpen = true },
             onDelete = { deleteOpen = true },
+            onStopProcess = onStopProcess?.let { { stopProcessOpen = true } },
             onBrowseFiles = { onBrowseFiles(controller.workDir) },
         )
 
@@ -197,6 +201,15 @@ fun ChatScreen(
             confirmLabel = S.delete,
             onDismiss = { deleteOpen = false },
             onConfirm = onDelete,
+        )
+    }
+    if (stopProcessOpen && onStopProcess != null) {
+        ConfirmDialog(
+            title = S.stopPiProcessTitle,
+            body = S.stopPiProcessBody,
+            confirmLabel = S.stopPiProcess,
+            onDismiss = { stopProcessOpen = false },
+            onConfirm = onStopProcess,
         )
     }
     controller.dialog?.let { req ->
@@ -552,12 +565,14 @@ private fun NoModelComposerBar(
                 .padding(top = 36.dp)
                 .background(MaterialTheme.colorScheme.background),
         )
+        val darkScheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
         Surface(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            shadowElevation = 4.dp,
+            shadowElevation = if (darkScheme) 0.dp else 4.dp,
+            border = if (darkScheme) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),

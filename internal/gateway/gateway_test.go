@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -1520,17 +1521,21 @@ func TestHealthIdentifiesGatewayVersion(t *testing.T) {
 	}
 	defer response.Body.Close()
 	var health struct {
-		Status   string `json:"status"`
-		Service  string `json:"service"`
-		Version  string `json:"version"`
-		Protocol int    `json:"protocol"`
+		Status   string   `json:"status"`
+		Service  string   `json:"service"`
+		Version  string   `json:"version"`
+		Protocol int      `json:"protocol"`
+		OS       string   `json:"os"`
+		Features []string `json:"features"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&health); err != nil {
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK || health.Status != "ok" ||
 		health.Service != "ohpi-gateway" || health.Version != "1.2.3" ||
-		health.Protocol != gatewayProtocolVersion {
+		health.Protocol != gatewayProtocolVersion || health.OS != runtime.GOOS ||
+		len(health.Features) != 1 ||
+		health.Features[0] != gatewayFeatureSessionProcessStop {
 		t.Fatalf("unexpected health response: status=%d body=%+v", response.StatusCode, health)
 	}
 }

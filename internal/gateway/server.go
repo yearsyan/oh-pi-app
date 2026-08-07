@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,8 @@ var sessionChangingCommands = map[string]struct{}{
 const maxSessionNameRunes = 200
 
 const gatewayProtocolVersion = 1
+
+const gatewayFeatureSessionProcessStop = "session_process_stop"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
@@ -108,15 +111,19 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	writeJSONResponse(writer, http.StatusOK, struct {
-		Status   string `json:"status"`
-		Service  string `json:"service"`
-		Version  string `json:"version"`
-		Protocol int    `json:"protocol"`
+		Status   string   `json:"status"`
+		Service  string   `json:"service"`
+		Version  string   `json:"version"`
+		Protocol int      `json:"protocol"`
+		OS       string   `json:"os"`
+		Features []string `json:"features"`
 	}{
 		Status:   "ok",
 		Service:  "ohpi-gateway",
 		Version:  g.cfg.Version,
 		Protocol: gatewayProtocolVersion,
+		OS:       runtime.GOOS,
+		Features: []string{gatewayFeatureSessionProcessStop},
 	})
 }
 
@@ -164,6 +171,10 @@ func (g *Gateway) handleSessions(writer http.ResponseWriter, request *http.Reque
 
 func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Request) {
 	tail := strings.TrimPrefix(request.URL.Path, "/api/sessions/")
+	if id, ok := strings.CutSuffix(tail, "/process"); ok && !strings.Contains(id, "/") {
+		g.handleSessionProcess(writer, request, id)
+		return
+	}
 	if id, ok := strings.CutSuffix(tail, "/metrics"); ok && !strings.Contains(id, "/") {
 		g.handleSessionMetrics(writer, request, id)
 		return
@@ -230,6 +241,31 @@ func (g *Gateway) handleSession(writer http.ResponseWriter, request *http.Reques
 	}
 }
 
+func (g *Gateway) handleSessionProcess(writer http.ResponseWriter, request *http.Request, id string) {
+	if request.Method != http.MethodDelete {
+		writer.Header().Set("Allow", http.MethodDelete)
+		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only DELETE is allowed")
+		return
+	}
+	if !g.authenticated(request) {
+		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
+		return
+	}
+	if !validSessionID(id) {
+		writeHTTPError(writer, http.StatusNotFound, "session_not_found", "session does not exist")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(request.Context(), g.cfg.HistoryTimeout)
+	err := g.manager.stop(ctx, id)
+	cancel()
+	if !g.writeSessionManagerError(writer, "stop", id, err) {
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 func (g *Gateway) handleSessionMetrics(writer http.ResponseWriter, request *http.Request, id string) {
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", http.MethodGet)
@@ -267,6 +303,15 @@ func (g *Gateway) writeSessionManagerError(writer http.ResponseWriter, operation
 	}
 	if errors.Is(err, errSessionDeleting) {
 		writeHTTPError(writer, http.StatusConflict, "session_deleting", "session is already being deleted")
+		return false
+	}
+	if errors.Is(err, errSessionOutputting) {
+		writeHTTPError(
+			writer,
+			http.StatusConflict,
+			"session_outputting",
+			"session is outputting; request an abort and wait for it to settle before stopping the pi process",
+		)
 		return false
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

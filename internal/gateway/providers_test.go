@@ -153,6 +153,24 @@ func TestProviderAuthOutputMapsOAuthEventsAndIgnoresOtherUI(t *testing.T) {
 	}
 }
 
+func TestProviderAuthOutputKeepsKeyValidationOpen(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{"event": "validating"})
+	if err != nil {
+		t.Fatalf("encode validation event: %v", err)
+	}
+	line, err := json.Marshal(map[string]any{
+		"type": "extension_ui_request", "method": "notify",
+		"message": providerEventPrefix + string(payload),
+	})
+	if err != nil {
+		t.Fatalf("encode validation notification: %v", err)
+	}
+	event, terminal, found := providerAuthOutput(line)
+	if !found || terminal || event.Event != "validating" {
+		t.Fatalf("validation event = %#v, terminal=%v, found=%v", event, terminal, found)
+	}
+}
+
 func getAuthenticated(t *testing.T, endpoint string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, endpoint, nil)

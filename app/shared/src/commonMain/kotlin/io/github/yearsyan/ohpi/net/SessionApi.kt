@@ -154,6 +154,15 @@ suspend fun deleteGatewaySession(gateway: String, token: String, sessionId: Stri
     }.requireSuccess()
 }
 
+/** Stops the live pi process while preserving the server-owned session and history. */
+suspend fun stopGatewaySessionProcess(gateway: String, token: String, sessionId: String) {
+    gatewayHttp.delete(
+        "${gatewayHttpBase(gateway)}/api/sessions/${urlEncode(sessionId)}/process",
+    ) {
+        authenticate(token)
+    }.requireSuccess()
+}
+
 private fun io.ktor.client.request.HttpRequestBuilder.authenticate(token: String) {
     if (token.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $token")
 }

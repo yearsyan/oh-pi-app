@@ -14,8 +14,8 @@ import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.syntax.SyntaxColors
 
 // ---- brand palette ----
-private val Indigo = Color(0xFF4F5BD5)
-private val IndigoLight = Color(0xFF8B93FF)
+private val Slate = Color(0xFF54596E)
+private val SlateLight = Color(0xFFB2B7C7)
 private val InkHigh = Color(0xFF1B1B21)
 private val InkMid = Color(0xFF5B5B66)
 private val Paper = Color(0xFFFFFFFF)
@@ -25,14 +25,14 @@ private val NightBg = Color(0xFF0E0E13)
 private val NightSurface = Color(0xFF16161D)
 
 private val LightScheme = lightColorScheme(
-    primary = Indigo,
+    primary = Slate,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE3E5FF),
-    onPrimaryContainer = Color(0xFF1A2080),
-    secondary = Color(0xFF5B5D72),
+    primaryContainer = Color(0xFFDFE1E8),
+    onPrimaryContainer = Color(0xFF1F2129),
+    secondary = Color(0xFF5B5D68),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE0E1F0),
-    onSecondaryContainer = Color(0xFF191A2C),
+    secondaryContainer = Color(0xFFE0E1E8),
+    onSecondaryContainer = Color(0xFF191A20),
     tertiary = Color(0xFF006874),
     tertiaryContainer = Color(0xFF97F0FF),
     background = Paper,
@@ -52,14 +52,14 @@ private val LightScheme = lightColorScheme(
 )
 
 private val DarkScheme = darkColorScheme(
-    primary = IndigoLight,
-    onPrimary = Color(0xFF141A66),
-    primaryContainer = Color(0xFF333FA8),
-    onPrimaryContainer = Color(0xFFE3E5FF),
-    secondary = Color(0xFFC4C5DD),
-    onSecondary = Color(0xFF2E2F42),
-    secondaryContainer = Color(0xFF444559),
-    onSecondaryContainer = Color(0xFFE0E1F0),
+    primary = SlateLight,
+    onPrimary = Color(0xFF23252E),
+    primaryContainer = Color(0xFF3E414E),
+    onPrimaryContainer = Color(0xFFE0E2EA),
+    secondary = Color(0xFFC4C5CF),
+    onSecondary = Color(0xFF2E2F38),
+    secondaryContainer = Color(0xFF44454E),
+    onSecondaryContainer = Color(0xFFE0E1E8),
     tertiary = Color(0xFF4FD8EB),
     tertiaryContainer = Color(0xFF004F58),
     background = NightBg,
@@ -73,7 +73,7 @@ private val DarkScheme = darkColorScheme(
     surfaceContainer = Color(0xFF18181F),
     surfaceContainerHigh = Color(0xFF1E1E26),
     surfaceContainerHighest = Color(0xFF25252E),
-    outline = Color(0xFF3A3A46),
+    outline = Color(0xFF4E4E5C),
     outlineVariant = Color(0xFF26262E),
     error = Color(0xFFFFB4AB),
 )
@@ -91,7 +91,7 @@ data class PiExtras(
 )
 
 private val LightExtras = PiExtras(
-    userBubble = Color(0xFFE8EAFF),
+    userBubble = Color(0xFFE5E6EB),
     onUserBubble = Color(0xFF1B1B21),
     codeBackground = Color(0xFFEEEFF6),
     onCode = Color(0xFF2A2A35),
@@ -108,8 +108,8 @@ private val LightExtras = PiExtras(
 )
 
 private val DarkExtras = PiExtras(
-    userBubble = Color(0xFF333FA8),
-    onUserBubble = Color(0xFFEDEFFF),
+    userBubble = Color(0xFF3E414E),
+    onUserBubble = Color(0xFFE7E8EE),
     codeBackground = Color(0xFF1A1A22),
     onCode = Color(0xFFD7D7E2),
     success = Color(0xFF7BDAA3),
