@@ -38,8 +38,8 @@ fun ToastHost(toasts: List<Toast>) {
                     Surface(
                         color = when (toast.kind) {
                             Toast.Kind.Error -> MaterialTheme.colorScheme.errorContainer
-                            Toast.Kind.Success -> MaterialTheme.colorScheme.tertiaryContainer
-                            Toast.Kind.Info -> MaterialTheme.colorScheme.inverseSurface
+                            // Snackbar-style inverse surface adapts to light/dark automatically.
+                            Toast.Kind.Success, Toast.Kind.Info -> MaterialTheme.colorScheme.inverseSurface
                         },
                         shape = RoundedCornerShape(20.dp),
                         shadowElevation = 6.dp,
@@ -50,8 +50,7 @@ fun ToastHost(toasts: List<Toast>) {
                             style = MaterialTheme.typography.labelLarge,
                             color = when (toast.kind) {
                                 Toast.Kind.Error -> MaterialTheme.colorScheme.onErrorContainer
-                                Toast.Kind.Success -> MaterialTheme.colorScheme.onTertiaryContainer
-                                Toast.Kind.Info -> MaterialTheme.colorScheme.inverseOnSurface
+                                Toast.Kind.Success, Toast.Kind.Info -> MaterialTheme.colorScheme.inverseOnSurface
                             },
                         )
                     }

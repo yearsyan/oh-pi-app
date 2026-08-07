@@ -18,6 +18,7 @@ import io.github.yearsyan.ohpi.net.buildWsUrl
 import io.github.yearsyan.ohpi.net.contentText
 import io.github.yearsyan.ohpi.net.friendlyHttpError
 import io.github.yearsyan.ohpi.net.getGatewaySessionMetrics
+import io.github.yearsyan.ohpi.net.isTransientNetworkError
 import io.github.yearsyan.ohpi.net.long
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.obj
@@ -41,6 +42,8 @@ import kotlin.random.Random
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
+/** Failed silent retries tolerated before one toast reports a stubborn link. */
+internal const val TransientReconnectAttemptsBeforeToast = 3
 private const val RateWindowMillis = 500L
 private const val ProvisionalTitleMaxChars = 30
 private val OrderedThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -649,6 +652,17 @@ class ChatController(
         startConnection(clearTimeline = false)
     }
 
+    /**
+     * Reconnects a session whose socket dropped while the app was away. No-op
+     * for intentional disconnects and when a reconnect is already scheduled or
+     * the connection is live.
+     */
+    fun reconnectIfDisconnected() {
+        if (!reconnectEnabled) return
+        if (conn == ConnState.Ready || conn == ConnState.Connecting) return
+        reconnect()
+    }
+
     fun disconnect() {
         reconnectEnabled = false
         reconnectJob?.cancel()
@@ -735,7 +749,15 @@ class ChatController(
             if (reconnectEnabled) onToast(message, Toast.Kind.Error)
             return
         }
-        if (reconnectAttempt == 0) onToast(message, Toast.Kind.Error)
+        // Expected environmental drops (device slept, app suspended, network
+        // roamed) retry silently; only a stubborn link earns one toast.
+        val shouldToast =
+            if (isTransientNetworkError(message)) {
+                reconnectAttempt == TransientReconnectAttemptsBeforeToast
+            } else {
+                reconnectAttempt == 0
+            }
+        if (shouldToast) onToast(message, Toast.Kind.Error)
         println("[PiChat] connection failure: $message; scheduling reconnect")
         scheduleReconnect()
     }

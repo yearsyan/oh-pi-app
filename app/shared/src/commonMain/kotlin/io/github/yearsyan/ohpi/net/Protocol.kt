@@ -91,6 +91,34 @@ fun friendlyHttpError(raw: String): String {
 
 fun nowMillis(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
+private val transientNetworkErrorHints =
+    listOf(
+        // NSPOSIXErrorDomain 53 / java.net.SocketException (ECONNABORTED)
+        "software caused connection abort",
+        // NSPOSIXErrorDomain 54 / "Connection reset by peer" (ECONNRESET)
+        "connection reset",
+        // NSPOSIXErrorDomain 32 (EPIPE)
+        "broken pipe",
+        // NSURLErrorNetworkConnectionLost (-1005)
+        "network connection was lost",
+        // NSURLErrorNotConnectedToInternet (-1009)
+        "appears to be offline",
+        // OkHttp after the process was frozen
+        "socket closed",
+        "socket is closed",
+    )
+
+/**
+ * Whether a transport failure text describes an expected environmental
+ * disconnect (device slept, app suspended, network roamed) instead of a
+ * server problem worth surfacing immediately. Such failures are retried
+ * silently; the user is only told when the retries keep failing.
+ */
+fun isTransientNetworkError(message: String): Boolean {
+    val text = message.lowercase()
+    return transientNetworkErrorHints.any { it in text }
+}
+
 /** Normalizes a user-entered gateway address into a ws(s) base URL. */
 fun normalizeGatewayUrl(raw: String): String {
     var url = raw.trim().trimEnd('/')

@@ -640,16 +640,22 @@ class AppViewModel(
         }
     }
 
-    /** Restarts a session load after an iOS system alert returns focus to the app. */
+    /**
+     * Restarts work interrupted while the app was away: a session load cut off
+     * by an iOS system alert, and any chat socket the system or gateway
+     * aborted while the app was suspended.
+     */
     fun onAppActive() {
-        val interruptedGeneration = interruptedSessionRefreshGeneration ?: return
+        val interruptedGeneration = interruptedSessionRefreshGeneration
         interruptedSessionRefreshGeneration = null
         if (
+            interruptedGeneration != null &&
             interruptedGeneration == sessionRefreshGeneration &&
             activeServer != null
         ) {
             loadSessionsForActive(clearExisting = false)
         }
+        controllers.values.forEach { it.reconnectIfDisconnected() }
     }
 
     private fun loadSessionsForActive(clearExisting: Boolean = true, minIndicatorMs: Long = 0) {

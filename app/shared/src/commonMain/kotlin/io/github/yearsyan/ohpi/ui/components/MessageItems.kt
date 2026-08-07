@@ -16,18 +16,24 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +52,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -76,12 +84,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
 
@@ -121,8 +131,12 @@ private fun AgentProcessBlock(
     onDetailsToggled: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var sheetContent by remember { mutableStateOf<ProcessSheetContent?>(null) }
     val showDetails = expanded
     val strings = S
+    // A block with a single detail (one thinking or one tool call) skips the
+    // inline list entirely: tapping the header opens the detail sheet directly.
+    val singleDetail = details.singleOrNull()
     // streaming shows the live latest activity; a completed block collapses
     // into an aggregated summary (思考 2 次，写入 1 个文件，…)
     val summary =
@@ -155,8 +169,16 @@ private fun AgentProcessBlock(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        onDetailsToggled()
-                        expanded = !expanded
+                        when (singleDetail) {
+                            is AssistantProcessDetail.Thinking ->
+                                sheetContent = ProcessSheetContent.Thinking(singleDetail.block)
+                            is AssistantProcessDetail.Tool ->
+                                sheetContent = ProcessSheetContent.Tool(singleDetail.tool)
+                            null -> {
+                                onDetailsToggled()
+                                expanded = !expanded
+                            }
+                        }
                     }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -171,7 +193,10 @@ private fun AgentProcessBlock(
                 modifier = Modifier.weight(1f),
             )
             Icon(
-                Icons.Filled.KeyboardArrowDown,
+                // Single-detail blocks open a sheet (navigate); multi-detail blocks
+                // expand inline (drop-down).
+                if (singleDetail != null) Icons.Filled.KeyboardArrowRight
+                else Icons.Filled.KeyboardArrowDown,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier =
@@ -182,19 +207,74 @@ private fun AgentProcessBlock(
             )
         }
         AnimatedVisibility(showDetails) {
-            Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+            Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp)) {
                 details.forEachIndexed { index, detail ->
                     if (index > 0) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 10.dp),
+                            modifier = Modifier.padding(vertical = 2.dp),
                             color = MaterialTheme.colorScheme.outlineVariant,
                         )
                     }
                     when (detail) {
-                        is AssistantProcessDetail.Thinking -> ThinkingDetail(detail.block)
-                        is AssistantProcessDetail.Tool -> ToolDetail(detail.tool)
+                        is AssistantProcessDetail.Thinking ->
+                            ThinkingRow(
+                                detail.block,
+                                onClick = {
+                                    sheetContent =
+                                        ProcessSheetContent.Thinking(detail.block)
+                                },
+                            )
+                        is AssistantProcessDetail.Tool ->
+                            ToolRow(
+                                detail.tool,
+                                onClick = {
+                                    sheetContent = ProcessSheetContent.Tool(detail.tool)
+                                },
+                            )
                     }
                 }
+            }
+        }
+    }
+    sheetContent?.let { content ->
+        ProcessDetailSheet(content = content, onDismiss = { sheetContent = null })
+    }
+}
+
+/** Payload of the process-detail bottom sheet: full thinking text or a full tool call. */
+private sealed interface ProcessSheetContent {
+    data class Thinking(val block: AssistantBlock) : ProcessSheetContent
+
+    data class Tool(val tool: ToolCallView) : ProcessSheetContent
+}
+
+/** Bottom sheet showing the full thinking content or the full tool call detail. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProcessDetailSheet(
+    content: ProcessSheetContent,
+    onDismiss: () -> Unit,
+) {
+    // Cap the sheet content at 80% of the window height; taller content scrolls
+    // inside. The constraint goes on the content, not on ModalBottomSheet itself:
+    // constraining the sheet modifier breaks its bottom anchoring.
+    // (LocalConfiguration is unavailable in commonMain, so derive it from the window.)
+    val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = windowHeight * 0.8f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            when (content) {
+                is ProcessSheetContent.Thinking -> ThinkingDetail(content.block)
+                is ProcessSheetContent.Tool -> ToolDetail(content.tool)
             }
         }
     }
@@ -315,6 +395,64 @@ private fun SweepingText(
     )
 }
 
+/** Compact expanded-row for a thinking detail: brain icon, label, one preview line; tap opens the sheet. */
+@Composable
+private fun ThinkingRow(
+    block: AssistantBlock,
+    onClick: () -> Unit,
+) {
+    val preview = block.text.trim().replace(Regex("\\s+"), " ")
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.Psychology,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            S.thinking,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            preview,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            fontStyle = FontStyle.Italic,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Compact expanded-row for a tool call: one header line only; tap opens the sheet. */
+@Composable
+private fun ToolRow(
+    tool: ToolCallView,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 6.dp),
+    ) {
+        ToolHeader(tool)
+    }
+}
+
+/** Full thinking content shown in the bottom sheet. */
 @Composable
 private fun ThinkingDetail(block: AssistantBlock) {
     Text(
@@ -333,8 +471,36 @@ private fun ThinkingDetail(block: AssistantBlock) {
     }
 }
 
+/** Full tool call detail (header + input + output) shown in the bottom sheet. */
 @Composable
 private fun ToolDetail(tool: ToolCallView) {
+    val action = toolAction(tool.name, tool.args)
+    // File tools: the header drops the inline target and the full path goes into
+    // a wrapping block — long paths don't fit on the single ellipsized header line.
+    val isFileTool =
+        action.kind == ToolActionKind.Read ||
+            action.kind == ToolActionKind.Write ||
+            action.kind == ToolActionKind.Edit
+    Column(Modifier.fillMaxWidth()) {
+        ToolHeader(tool, showTarget = !isFileTool)
+        if (isFileTool) {
+            Spacer(Modifier.height(8.dp))
+            ToolCodeBlock(action.target)
+        }
+        ToolInputSection(tool)
+        if (tool.output.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            ToolSectionLabel(S.toolOutput)
+            ToolCodeBlock(tool.output)
+        }
+    }
+}
+
+@Composable
+private fun ToolHeader(
+    tool: ToolCallView,
+    showTarget: Boolean = true,
+) {
     val strings = S
     val action = toolAction(tool.name, tool.args)
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -346,14 +512,33 @@ private fun ToolDetail(tool: ToolCallView) {
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            friendlyToolAction(strings, action),
+            friendlyToolVerb(strings, action),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
             maxLines = 1,
         )
+        if (showTarget && action.target.isNotBlank()) {
+            Spacer(Modifier.width(8.dp))
+            // Same light italic style as the thinking preview, so all detail
+            // text in the expanded process list reads uniformly.
+            Text(
+                action.target,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         ToolStateBadge(tool)
     }
+}
+
+@Composable
+private fun ToolInputSection(tool: ToolCallView) {
     when (val input = toolInputView(tool.name, tool.args)) {
         is ToolInputView.Command -> {
             Spacer(Modifier.height(8.dp))
@@ -374,15 +559,22 @@ private fun ToolDetail(tool: ToolCallView) {
         }
         ToolInputView.Hidden -> Unit
     }
-    if (tool.output.isNotBlank()) {
-        Spacer(Modifier.height(8.dp))
-        ToolSectionLabel(S.toolOutput)
-        ToolCodeBlock(tool.output)
-    }
 }
 
 private fun friendlyToolAction(strings: Strings, tool: ToolCallView): String =
     friendlyToolAction(strings, toolAction(tool.name, tool.args))
+
+/** Verb-only label for the detail row; the target is styled separately. */
+private fun friendlyToolVerb(strings: Strings, action: ToolAction): String =
+    when (action.kind) {
+        ToolActionKind.Execute -> strings.toolVerbExecuted
+        ToolActionKind.Read -> strings.toolVerbRead
+        ToolActionKind.Write -> strings.toolVerbWrote
+        ToolActionKind.Edit -> strings.toolVerbEdited
+        ToolActionKind.Search -> strings.toolVerbSearched
+        ToolActionKind.List -> strings.toolVerbListed
+        ToolActionKind.Call -> strings.toolVerbCalled
+    }
 
 /** Full path in the expanded detail: "Edited /path/to/MessageItems.kt". */
 private fun friendlyToolAction(strings: Strings, action: ToolAction): String =

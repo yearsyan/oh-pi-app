@@ -175,6 +175,7 @@ interface Strings {
     // file browser
     val browseFiles: String
     val filesEmptyFolder: String
+    val fileSelectHint: String
     val retry: String
     val folderLoadFailed: (String) -> String
     val fileOpenFailed: (String) -> String
@@ -223,6 +224,14 @@ interface Strings {
     val toolSearched: (String) -> String
     val toolListed: (String) -> String
     val toolCalled: (String) -> String
+    /** Verb-only labels so the detail row can style the target separately. */
+    val toolVerbExecuted: String
+    val toolVerbRead: String
+    val toolVerbWrote: String
+    val toolVerbEdited: String
+    val toolVerbSearched: String
+    val toolVerbListed: String
+    val toolVerbCalled: String
     val connected: String
     val connecting: String
     val restoringSession: String
@@ -586,6 +595,7 @@ object EnStrings : Strings {
 
     override val browseFiles = "Browse files"
     override val filesEmptyFolder = "This folder is empty"
+    override val fileSelectHint = "Select a file to preview it here"
     override val retry = "Retry"
     override val folderLoadFailed = { error: String -> "Could not open folder: $error" }
     override val fileOpenFailed = { error: String -> "Could not open file: $error" }
@@ -635,6 +645,13 @@ object EnStrings : Strings {
     override val toolSearched = { target: String -> "Searched for $target" }
     override val toolListed = { target: String -> "Listed $target" }
     override val toolCalled = { target: String -> "Used $target" }
+    override val toolVerbExecuted = "Ran"
+    override val toolVerbRead = "Read"
+    override val toolVerbWrote = "Wrote"
+    override val toolVerbEdited = "Edited"
+    override val toolVerbSearched = "Searched for"
+    override val toolVerbListed = "Listed"
+    override val toolVerbCalled = "Used"
     override val connected = "Online"
     override val connecting = "Connecting"
     override val restoringSession = "Restoring session"
@@ -996,6 +1013,7 @@ object ZhStrings : Strings {
 
     override val browseFiles = "浏览文件"
     override val filesEmptyFolder = "此文件夹为空"
+    override val fileSelectHint = "选择文件后在此处预览"
     override val retry = "重试"
     override val folderLoadFailed = { error: String -> "无法打开文件夹：$error" }
     override val fileOpenFailed = { error: String -> "无法打开文件：$error" }
@@ -1043,6 +1061,13 @@ object ZhStrings : Strings {
     override val toolSearched = { target: String -> "搜索 $target" }
     override val toolListed = { target: String -> "查看 $target" }
     override val toolCalled = { target: String -> "调用 $target" }
+    override val toolVerbExecuted = "执行"
+    override val toolVerbRead = "读取"
+    override val toolVerbWrote = "写入"
+    override val toolVerbEdited = "编辑"
+    override val toolVerbSearched = "搜索"
+    override val toolVerbListed = "查看"
+    override val toolVerbCalled = "调用"
     override val connected = "在线"
     override val connecting = "连接中"
     override val restoringSession = "正在恢复会话"

@@ -353,21 +353,25 @@ private fun QueuedPromptRow(item: QueuedPromptItem) {
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
-            if (item.text.isNotBlank()) {
-                Text(
-                    item.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (item.imageCount > 0) {
-                Text(
-                    S.imageAttachment(item.imageCount),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
+            // While submitting, the draft is still visible in the input field
+            // below, so repeating the text here would render it twice on screen.
+            if (item.state == QueuedPromptState.AwaitingConsumption) {
+                if (item.text.isNotBlank()) {
+                    Text(
+                        item.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (item.imageCount > 0) {
+                    Text(
+                        S.imageAttachment(item.imageCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
         }
     }
