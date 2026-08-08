@@ -377,6 +377,7 @@ private fun MainDestination(
                 },
             onBrowseFiles = onBrowseFiles,
             onOpenProviders = onOpenProviders,
+            onLoadToolImage = vm::downloadFile,
         )
 
         else -> SessionListPane(
@@ -462,6 +463,7 @@ private fun WideHome(
                         },
                     onBrowseFiles = onBrowseFiles,
                     onOpenProviders = onOpenProviders,
+                    onLoadToolImage = vm::downloadFile,
                 )
             } else {
                 WideEmptyState(onNewChat = onRequestNewChat)

@@ -53,7 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.font.FontFamily
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -462,7 +462,7 @@ private fun ProviderModelRow(model: GatewayProviderModel) {
                 Text(
                     model.id,
                     style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = rememberCodeFontFamily(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -540,7 +540,7 @@ private fun ProviderAuthDialog(
                         Text(
                             flow.userCode,
                             style = MaterialTheme.typography.headlineSmall,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = rememberCodeFontFamily(),
                             fontWeight = FontWeight.Bold,
                         )
                     }

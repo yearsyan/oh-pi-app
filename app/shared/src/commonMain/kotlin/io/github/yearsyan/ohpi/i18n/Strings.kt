@@ -195,6 +195,9 @@ interface Strings {
     val imageAttachment: (Int) -> String
     val imageTooLarge: String
     val imageReadFailed: String
+    val saveToAlbum: String
+    val imageSavedToAlbum: String
+    val imageSaveFailed: String
     val compactCommandDescription: String
     val commandSourceBuiltIn: String
     val commandSourceExtension: String
@@ -217,6 +220,7 @@ interface Strings {
     val toolRunning: String
     val toolInput: String
     val toolOutput: String
+    val toolViewImage: String
     val toolExecuted: (String) -> String
     val toolRead: (String) -> String
     val toolWrote: (String) -> String
@@ -371,6 +375,7 @@ interface Strings {
     val licenseApache20: String
     val licenseMit: String
     val licenseLgpl21: String
+    val licenseOfl11: String
     val licensesFrameworks: String
     val licensesNative: String
     val licensesThisApp: String
@@ -614,6 +619,9 @@ object EnStrings : Strings {
     override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
     override val imageTooLarge = "The image must be smaller than 8 MB"
     override val imageReadFailed = "Could not read this image"
+    override val saveToAlbum = "Save to Photos"
+    override val imageSavedToAlbum = "Saved to Photos"
+    override val imageSaveFailed = "Could not save the image"
     override val compactCommandDescription = "Compact conversation context; optional instructions may follow"
     override val commandSourceBuiltIn = "Built-in"
     override val commandSourceExtension = "Extension"
@@ -638,6 +646,7 @@ object EnStrings : Strings {
     override val toolRunning = "Running"
     override val toolInput = "Input"
     override val toolOutput = "Output"
+    override val toolViewImage = "View image"
     override val toolExecuted = { target: String -> "Ran $target" }
     override val toolRead = { target: String -> "Read $target" }
     override val toolWrote = { target: String -> "Wrote $target" }
@@ -802,6 +811,7 @@ object EnStrings : Strings {
     override val licenseApache20 = "Apache License 2.0"
     override val licenseMit = "MIT License"
     override val licenseLgpl21 = "GNU LGPL v2.1 or later"
+    override val licenseOfl11 = "SIL Open Font License 1.1"
     override val licensesFrameworks = "Frameworks & libraries"
     override val licensesNative = "Native libraries"
     override val licensesThisApp = "This app"
@@ -1032,6 +1042,9 @@ object ZhStrings : Strings {
     override val imageAttachment = { count: Int -> "图片 × $count" }
     override val imageTooLarge = "图片不能超过 8 MB"
     override val imageReadFailed = "无法读取这张图片"
+    override val saveToAlbum = "保存到相册"
+    override val imageSavedToAlbum = "已保存到相册"
+    override val imageSaveFailed = "保存图片失败"
     override val compactCommandDescription = "压缩会话上下文；可在后面附加压缩要求"
     override val commandSourceBuiltIn = "内置"
     override val commandSourceExtension = "扩展"
@@ -1054,6 +1067,7 @@ object ZhStrings : Strings {
     override val toolRunning = "运行中"
     override val toolInput = "输入"
     override val toolOutput = "输出"
+    override val toolViewImage = "查看图片"
     override val toolExecuted = { target: String -> "执行 $target" }
     override val toolRead = { target: String -> "读取 $target" }
     override val toolWrote = { target: String -> "写入 $target" }
@@ -1218,6 +1232,7 @@ object ZhStrings : Strings {
     override val licenseApache20 = "Apache 许可证 2.0"
     override val licenseMit = "MIT 许可证"
     override val licenseLgpl21 = "GNU LGPL v2.1 及之后版本"
+    override val licenseOfl11 = "SIL 开放字体许可 1.1"
     override val licensesFrameworks = "框架与库"
     override val licensesNative = "原生库"
     override val licensesThisApp = "本应用"

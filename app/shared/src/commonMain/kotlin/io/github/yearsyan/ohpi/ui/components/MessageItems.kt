@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -55,7 +57,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,7 +80,11 @@ import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.markdown.MarkdownView
 import io.github.yearsyan.ohpi.theme.piExtras
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import org.jetbrains.compose.resources.decodeToImageBitmap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -90,6 +95,7 @@ import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Search
@@ -108,16 +114,19 @@ fun UserMessageRow(item: TimelineItem.UserItem) {
         ) {
             UserImageGallery(item.images)
             if (item.text.isNotBlank()) {
-                Surface(
-                    color = piExtras.userBubble,
-                    shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
-                ) {
-                    Text(
-                        item.text,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
-                        color = piExtras.onUserBubble,
-                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
-                    )
+                // Long-press starts text selection, mirroring the assistant side.
+                SelectionContainer {
+                    Surface(
+                        color = piExtras.userBubble,
+                        shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
+                    ) {
+                        Text(
+                            item.text,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
+                            color = piExtras.onUserBubble,
+                            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                        )
+                    }
                 }
             }
         }
@@ -129,6 +138,7 @@ private fun AgentProcessBlock(
     details: List<AssistantProcessDetail>,
     isStreaming: Boolean,
     onDetailsToggled: () -> Unit,
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var sheetContent by remember { mutableStateOf<ProcessSheetContent?>(null) }
@@ -136,7 +146,16 @@ private fun AgentProcessBlock(
     val strings = S
     // A block with a single detail (one thinking or one tool call) skips the
     // inline list entirely: tapping the header opens the detail sheet directly.
+    // A blank thinking (e.g. encrypted reasoning from GPT models) has nothing
+    // to show, so neither the header nor the row is interactive.
     val singleDetail = details.singleOrNull()
+    val singleSheetDetail =
+        when (singleDetail) {
+            is AssistantProcessDetail.Thinking ->
+                singleDetail.takeIf { it.block.text.isNotBlank() }
+            else -> singleDetail
+        }
+    val headerInteractive = singleDetail == null || singleSheetDetail != null
     // streaming shows the live latest activity; a completed block collapses
     // into an aggregated summary (思考 2 次，写入 1 个文件，…)
     val summary =
@@ -168,18 +187,26 @@ private fun AgentProcessBlock(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        when (singleDetail) {
-                            is AssistantProcessDetail.Thinking ->
-                                sheetContent = ProcessSheetContent.Thinking(singleDetail.block)
-                            is AssistantProcessDetail.Tool ->
-                                sheetContent = ProcessSheetContent.Tool(singleDetail.tool)
-                            null -> {
-                                onDetailsToggled()
-                                expanded = !expanded
+                    .then(
+                        if (headerInteractive) {
+                            Modifier.clickable {
+                                when {
+                                    singleSheetDetail is AssistantProcessDetail.Thinking ->
+                                        sheetContent =
+                                            ProcessSheetContent.Thinking(singleSheetDetail.block)
+                                    singleSheetDetail is AssistantProcessDetail.Tool ->
+                                        sheetContent =
+                                            ProcessSheetContent.Tool(singleSheetDetail.tool)
+                                    singleDetail == null -> {
+                                        onDetailsToggled()
+                                        expanded = !expanded
+                                    }
+                                }
                             }
-                        }
-                    }
+                        } else {
+                            Modifier
+                        },
+                    )
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -192,19 +219,21 @@ private fun AgentProcessBlock(
                 fontStyle = FontStyle.Italic,
                 modifier = Modifier.weight(1f),
             )
-            Icon(
-                // Single-detail blocks open a sheet (navigate); multi-detail blocks
-                // expand inline (drop-down).
-                if (singleDetail != null) Icons.Filled.KeyboardArrowRight
-                else Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier =
-                    Modifier
-                        .size(16.dp)
-                        .alpha(0.7f)
-                        .graphicsLayer { rotationZ = if (showDetails) 180f else 0f },
-            )
+            if (headerInteractive) {
+                Icon(
+                    // Single-detail blocks open a sheet (navigate); multi-detail blocks
+                    // expand inline (drop-down).
+                    if (singleSheetDetail != null) Icons.Filled.KeyboardArrowRight
+                    else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier
+                            .size(16.dp)
+                            .alpha(0.7f)
+                            .graphicsLayer { rotationZ = if (showDetails) 180f else 0f },
+                )
+            }
         }
         AnimatedVisibility(showDetails) {
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp)) {
@@ -237,7 +266,11 @@ private fun AgentProcessBlock(
         }
     }
     sheetContent?.let { content ->
-        ProcessDetailSheet(content = content, onDismiss = { sheetContent = null })
+        ProcessDetailSheet(
+            content = content,
+            onDismiss = { sheetContent = null },
+            onLoadToolImage = onLoadToolImage,
+        )
     }
 }
 
@@ -254,6 +287,7 @@ private sealed interface ProcessSheetContent {
 private fun ProcessDetailSheet(
     content: ProcessSheetContent,
     onDismiss: () -> Unit,
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     // Cap the sheet content at 80% of the window height; taller content scrolls
     // inside. The constraint goes on the content, not on ModalBottomSheet itself:
@@ -274,7 +308,7 @@ private fun ProcessDetailSheet(
         ) {
             when (content) {
                 is ProcessSheetContent.Thinking -> ThinkingDetail(content.block)
-                is ProcessSheetContent.Tool -> ToolDetail(content.tool)
+                is ProcessSheetContent.Tool -> ToolDetail(content.tool, onLoadToolImage)
             }
         }
     }
@@ -402,11 +436,13 @@ private fun ThinkingRow(
     onClick: () -> Unit,
 ) {
     val preview = block.text.trim().replace(Regex("\\s+"), " ")
+    // Blank thinking (e.g. encrypted reasoning) has no detail to show in a sheet.
+    val hasContent = block.text.isNotBlank()
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .then(if (hasContent) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -452,7 +488,7 @@ private fun ToolRow(
     }
 }
 
-/** Full thinking content shown in the bottom sheet. */
+/** Full thinking content shown in the bottom sheet; thinking is markdown, like visible text. */
 @Composable
 private fun ThinkingDetail(block: AssistantBlock) {
     Text(
@@ -461,19 +497,19 @@ private fun ThinkingDetail(block: AssistantBlock) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (block.text.isNotBlank()) {
-        Text(
+        MarkdownView(
             block.text,
             modifier = Modifier.padding(top = 4.dp),
-            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
-            fontStyle = FontStyle.Italic,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 /** Full tool call detail (header + input + output) shown in the bottom sheet. */
 @Composable
-private fun ToolDetail(tool: ToolCallView) {
+private fun ToolDetail(
+    tool: ToolCallView,
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
+) {
     val action = toolAction(tool.name, tool.args)
     // File tools: the header drops the inline target and the full path goes into
     // a wrapping block — long paths don't fit on the single ellipsized header line.
@@ -481,11 +517,16 @@ private fun ToolDetail(tool: ToolCallView) {
         action.kind == ToolActionKind.Read ||
             action.kind == ToolActionKind.Write ||
             action.kind == ToolActionKind.Edit
+    val imageTarget = readImageTarget(tool, action)
     Column(Modifier.fillMaxWidth()) {
         ToolHeader(tool, showTarget = !isFileTool)
         if (isFileTool) {
             Spacer(Modifier.height(8.dp))
             ToolCodeBlock(action.target)
+        }
+        if (imageTarget != null && onLoadToolImage != null) {
+            Spacer(Modifier.height(8.dp))
+            ToolImageEntry(imageTarget, onLoadToolImage)
         }
         ToolInputSection(tool)
         if (tool.output.isNotBlank()) {
@@ -494,6 +535,98 @@ private fun ToolDetail(tool: ToolCallView) {
             ToolCodeBlock(tool.output)
         }
     }
+}
+
+/** Image extensions decodable by the fullscreen viewer (gif/ico render as still frames). */
+private val ReadImageExtensions = setOf("png", "jpg", "jpeg", "webp", "bmp", "gif", "ico")
+
+/**
+ * Target path of a read tool call that read an image, or null. The path wins
+ * when it carries a known image extension; otherwise the read tool's own
+ * output header ("Read image file [image/…]") is the signal — pi emits it
+ * even for extension-less paths.
+ */
+private fun readImageTarget(tool: ToolCallView, action: ToolAction): String? {
+    if (action.kind != ToolActionKind.Read) return null
+    val extension = action.target.substringAfterLast('.', "").lowercase()
+    if (extension in ReadImageExtensions) return action.target
+    return action.target.takeIf { tool.output.startsWith("Read image file [image/") }
+}
+
+/** Clickable row in a read-image detail sheet opening the fullscreen viewer. */
+@Composable
+private fun ToolImageEntry(
+    path: String,
+    onLoadImage: suspend (String) -> ByteArray,
+) {
+    var previewOpen by remember { mutableStateOf(false) }
+    Surface(
+        onClick = { previewOpen = true },
+        color = piExtras.codeBackground,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Outlined.Image,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = piExtras.onCode,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                S.toolViewImage,
+                style = MaterialTheme.typography.bodySmall,
+                color = piExtras.onCode,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp).alpha(0.7f),
+                tint = piExtras.onCode,
+            )
+        }
+    }
+    if (previewOpen) {
+        ToolReadImageDialog(
+            path = path,
+            onLoadImage = onLoadImage,
+            onDismiss = { previewOpen = false },
+        )
+    }
+}
+
+/**
+ * Fullscreen viewer for a gateway-side image read by the read tool. The raw
+ * bytes come from the gateway download endpoint (the text read endpoint
+ * rejects binaries) and decode off the main thread.
+ */
+@Composable
+private fun ToolReadImageDialog(
+    path: String,
+    onLoadImage: suspend (String) -> ByteArray,
+    onDismiss: () -> Unit,
+) {
+    val state by produceState<ImagePreviewState>(ImagePreviewState.Loading, path) {
+        value =
+            runCatching {
+                val bytes = onLoadImage(path)
+                ImagePreviewState.Ready(
+                    withContext(Dispatchers.Default) { bytes.decodeToImageBitmap() },
+                    bytes,
+                )
+            }.getOrElse { ImagePreviewState.Failed(it.message) }
+    }
+    ImagePreviewDialog(
+        state = state,
+        onDismiss = onDismiss,
+        title = fileNameOf(path),
+        subtitle = path,
+    )
 }
 
 @Composable
@@ -702,7 +835,7 @@ private fun ToolCodeBlock(text: String) {
             text,
             modifier = Modifier.padding(8.dp),
             style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = rememberCodeFontFamily(),
                 fontSize = 11.5.sp,
                 lineHeight = 16.sp,
             ),
@@ -758,7 +891,7 @@ private fun DiffLines(
         shown.joinToString("\n") { "$prefix $it" } + if (lines.size > shown.size) "\n…" else "",
         style =
             MaterialTheme.typography.bodySmall.copy(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = rememberCodeFontFamily(),
                 fontSize = 11.5.sp,
                 lineHeight = 16.sp,
             ),
@@ -775,10 +908,11 @@ private fun BashCommandBlock(command: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            val codeFont = rememberCodeFontFamily()
             Text(
                 "$",
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = codeFont,
                     fontSize = 11.5.sp,
                     lineHeight = 16.sp,
                 ),
@@ -788,7 +922,7 @@ private fun BashCommandBlock(command: String) {
             Text(
                 command,
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = codeFont,
                     fontSize = 11.5.sp,
                     lineHeight = 16.sp,
                 ),
@@ -804,6 +938,7 @@ fun AssistantRunRow(
     items: List<TimelineItem>,
     isStreaming: Boolean,
     onProcessDetailsToggled: () -> Unit = {},
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     val chunks = chunkAssistantRun(items)
     Row(
@@ -821,6 +956,7 @@ fun AssistantRunRow(
                             details = chunk.details,
                             isStreaming = isStreaming && index == chunks.lastIndex,
                             onDetailsToggled = onProcessDetailsToggled,
+                            onLoadToolImage = onLoadToolImage,
                         )
                     is AssistantRenderChunk.Text -> MarkdownView(chunk.block.text)
                 }

@@ -7,22 +7,34 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +51,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -47,7 +59,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.github.yearsyan.ohpi.i18n.S
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 /** Load/decode state consumed by [ImagePreviewDialog]. */
 internal sealed interface ImagePreviewState {
@@ -55,7 +69,11 @@ internal sealed interface ImagePreviewState {
 
     data class Failed(val message: String? = null) : ImagePreviewState
 
-    data class Ready(val bitmap: ImageBitmap) : ImagePreviewState
+    /**
+     * [sourceBytes] are the undecoded payload, when the caller has them, so the
+     * viewer can save the image losslessly to the system photo album.
+     */
+    data class Ready(val bitmap: ImageBitmap, val sourceBytes: ByteArray? = null) : ImagePreviewState
 }
 
 private const val MinZoom = 1f
@@ -70,8 +88,11 @@ private val Backdrop = Color.Black.copy(alpha = 0.94f)
 /**
  * Shared full-screen image viewer. The dialog window draws edge-to-edge behind
  * the system bars. Gestures: pinch to zoom and pan, double-tap to toggle
- * between 1x and [DoubleTapZoom], single tap to dismiss.
+ * between 1x and [DoubleTapZoom], single tap to dismiss. Long-press opens a
+ * bottom sheet with a save-to-album action when the undecoded source bytes are
+ * available.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ImagePreviewDialog(
     state: ImagePreviewState,
@@ -91,6 +112,36 @@ internal fun ImagePreviewDialog(
         var viewSize by remember { mutableStateOf(IntSize.Zero) }
         var animJob by remember { mutableStateOf<Job?>(null) }
         val zoomable = state is ImagePreviewState.Ready
+        val savableBytes = (state as? ImagePreviewState.Ready)?.sourceBytes
+        var saveSheetOpen by remember { mutableStateOf(false) }
+        var saveFeedback by remember { mutableStateOf<String?>(null) }
+        var saving by remember { mutableStateOf(false) }
+        val strings = S
+
+        fun startSave() {
+            val bytes = savableBytes ?: return
+            if (saving) return
+            saving = true
+            scope.launch {
+                val mime = imageMimeOf(bytes)
+                val name =
+                    "ohpi-${Clock.System.now().toEpochMilliseconds()}.${imageExtensionOf(mime)}"
+                saveFeedback =
+                    when (saveImageToAlbum(bytes, name, mime)) {
+                        AlbumSaveResult.Success -> strings.imageSavedToAlbum
+                        AlbumSaveResult.Cancelled -> null
+                        is AlbumSaveResult.Failure -> strings.imageSaveFailed
+                    }
+                saving = false
+            }
+        }
+
+        LaunchedEffect(saveFeedback) {
+            if (saveFeedback != null) {
+                delay(2600)
+                saveFeedback = null
+            }
+        }
 
         fun center() = Offset(viewSize.width / 2f, viewSize.height / 2f)
 
@@ -125,6 +176,12 @@ internal fun ImagePreviewDialog(
                     .pointerInput(onDismiss, zoomable) {
                         detectTapGestures(
                             onTap = { onDismiss() },
+                            onLongPress =
+                                if (savableBytes != null) {
+                                    { saveSheetOpen = true }
+                                } else {
+                                    null
+                                },
                             onDoubleTap =
                                 if (zoomable) {
                                     { tap ->
@@ -228,6 +285,24 @@ internal fun ImagePreviewDialog(
                             ),
                     )
             }
+            saveFeedback?.let { feedback ->
+                Surface(
+                    color = Color(0xCC2A2A35),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .safeDrawingPadding()
+                            .padding(bottom = 56.dp),
+                ) {
+                    Text(
+                        feedback,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
             if (title != null) {
                 Column(
                     Modifier
@@ -239,7 +314,7 @@ internal fun ImagePreviewDialog(
                         title,
                         style =
                             MaterialTheme.typography.titleSmall.copy(
-                                fontFamily = FontFamily.Monospace
+                                fontFamily = rememberCodeFontFamily()
                             ),
                         color = Color.White,
                         maxLines = 1,
@@ -255,6 +330,30 @@ internal fun ImagePreviewDialog(
                         )
                     }
                 }
+            }
+        }
+        if (saveSheetOpen && savableBytes != null) {
+            ModalBottomSheet(onDismissRequest = { saveSheetOpen = false }) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                saveSheetOpen = false
+                                startSave()
+                            }
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Text(strings.saveToAlbum, style = MaterialTheme.typography.bodyLarge)
+                }
+                Spacer(Modifier.height(28.dp))
             }
         }
     }

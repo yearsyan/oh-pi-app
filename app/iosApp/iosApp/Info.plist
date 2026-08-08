@@ -8,6 +8,8 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pi connects to your configured ohpi or SSH server on the local network.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Pi saves images from chats to your photo library when you choose Save.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

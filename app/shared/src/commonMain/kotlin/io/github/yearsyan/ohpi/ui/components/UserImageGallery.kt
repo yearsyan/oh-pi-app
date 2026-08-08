@@ -138,7 +138,8 @@ private fun rememberDecodedTimelineImage(image: TimelineImage) =
         value =
             withContext(Dispatchers.Default) {
                 runCatching {
-                    ImagePreviewState.Ready(Base64.decode(image.data).decodeToImageBitmap())
+                    val bytes = Base64.decode(image.data)
+                    ImagePreviewState.Ready(bytes.decodeToImageBitmap(), bytes)
                 }.getOrElse { ImagePreviewState.Failed() }
             }
     }

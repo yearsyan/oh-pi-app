@@ -107,6 +107,7 @@ fun ChatScreen(
     onStopProcess: (() -> Unit)? = null,
     onBrowseFiles: (String) -> Unit = {},
     onOpenProviders: () -> Unit = {},
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
@@ -162,6 +163,7 @@ fun ChatScreen(
                             bottomPadding = composerBottomPadding,
                             scrollToBottomTick = scrollToBottomTick,
                             modifier = Modifier.fillMaxSize(),
+                            onLoadToolImage = onLoadToolImage,
                         )
                 }
             }
@@ -287,6 +289,7 @@ internal fun MessageList(
     bottomPadding: Dp,
     scrollToBottomTick: Int,
     modifier: Modifier = Modifier,
+    onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     // Each conversation gets its own list state: entering or switching to a
     // session starts at the tail instead of inheriting the previous
@@ -402,6 +405,7 @@ internal fun MessageList(
                                 group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
                                     (caretUnderLastGroup && group.key == lastGroupKey),
                             onProcessDetailsToggled = { userScrolledAway = true },
+                            onLoadToolImage = onLoadToolImage,
                         )
                     is TimelineRenderGroup.Single -> {
                         when (val item = group.item) {

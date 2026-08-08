@@ -56,7 +56,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,6 +66,7 @@ import io.github.yearsyan.ohpi.net.FileListResponse
 import io.github.yearsyan.ohpi.net.FileReadResponse
 import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import io.github.yearsyan.ohpi.ui.components.ImagePreviewDialog
 import io.github.yearsyan.ohpi.ui.components.ImagePreviewState
 import kotlinx.coroutines.CancellationException
@@ -542,7 +542,7 @@ private fun ImagePreviewPane(preview: FilePreview, onClose: () -> Unit) {
             Text(
                 preview.name,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                style = MaterialTheme.typography.titleMedium.copy(fontFamily = rememberCodeFontFamily()),
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -584,7 +584,7 @@ private fun FilePreviewDetail(
             Column(Modifier.weight(1f)) {
                 Text(
                     preview.name,
-                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = rememberCodeFontFamily()),
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -670,7 +670,7 @@ private fun FilePreviewDetail(
                             .padding(horizontal = 20.dp, vertical = 14.dp),
                     ) {
                         val style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = rememberCodeFontFamily(),
                         )
                         val text = highlighted
                         if (text != null) Text(text, style = style)

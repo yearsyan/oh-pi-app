@@ -35,7 +35,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 
 private const val InlineCodeTag = "inline-code"
 
@@ -175,6 +175,7 @@ private fun parseBlocks(markdown: String): List<MdBlock> {
 fun inlineMarkdown(text: String, base: SpanStyle = SpanStyle()): AnnotatedString {
     val codeColor = MaterialTheme.colorScheme.primary
     val linkColor = MaterialTheme.colorScheme.tertiary
+    val codeFont = rememberCodeFontFamily()
     return buildAnnotatedString {
         var i = 0
         var bold = false
@@ -204,7 +205,7 @@ fun inlineMarkdown(text: String, base: SpanStyle = SpanStyle()): AnnotatedString
                         pushStringAnnotation(InlineCodeTag, "")
                         withStyle(
                             SpanStyle(
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = codeFont,
                                 fontSize = 12.5.sp,
                                 color = codeColor,
                             ),
@@ -312,7 +313,10 @@ private fun DrawScope.drawInlineCodeBackgrounds(
     val textLength = layout.layoutInput.text.length
     if (textLength == 0) return
 
-    val horizontalPadding = 3.dp.toPx()
+    // A bit more room on the trailing edge: glyph advance leaves the last
+    // character visually flush against the background otherwise.
+    val startPadding = 3.dp.toPx()
+    val endPadding = 6.dp.toPx()
     val verticalInset = 1.dp.toPx()
     val cornerRadius = CornerRadius(4.dp.toPx())
     for (range in text.getStringAnnotations(InlineCodeTag, 0, text.length)) {
@@ -330,8 +334,8 @@ private fun DrawScope.drawInlineCodeBackgrounds(
 
             val firstBox = layout.getBoundingBox(segmentStart)
             val lastBox = layout.getBoundingBox(segmentEnd - 1)
-            val left = (minOf(firstBox.left, lastBox.left) - horizontalPadding).coerceAtLeast(0f)
-            val right = (maxOf(firstBox.right, lastBox.right) + horizontalPadding).coerceAtMost(size.width)
+            val left = (minOf(firstBox.left, lastBox.left) - startPadding).coerceAtLeast(0f)
+            val right = (maxOf(firstBox.right, lastBox.right) + endPadding).coerceAtMost(size.width)
             val top = layout.getLineTop(line) + verticalInset
             val bottom = layout.getLineBottom(line) - verticalInset
             if (right <= left || bottom <= top) continue
@@ -355,6 +359,7 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
     val blocks = remember(markdown) { parseBlocks(markdown) }
     val codeBg = piExtras.codeBackground
     val onCode = piExtras.onCode
+    val codeFont = rememberCodeFontFamily()
     SelectionContainer(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (block in blocks) {
@@ -385,7 +390,7 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
                             codeText,
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                             style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = codeFont,
                                 fontSize = 12.5.sp,
                                 lineHeight = 18.sp,
                             ),

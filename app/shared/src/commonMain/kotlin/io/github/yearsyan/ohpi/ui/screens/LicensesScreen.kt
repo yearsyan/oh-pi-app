@@ -233,4 +233,5 @@ private fun licenseLabel(license: OssLicense): String = when (license) {
     OssLicense.Apache2 -> S.licenseApache20
     OssLicense.Mit -> S.licenseMit
     OssLicense.Lgpl21OrLater -> S.licenseLgpl21
+    OssLicense.Ofl11 -> S.licenseOfl11
 }

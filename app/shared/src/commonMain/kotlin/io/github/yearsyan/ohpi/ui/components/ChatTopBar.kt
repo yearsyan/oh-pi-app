@@ -55,7 +55,6 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -67,6 +66,7 @@ import io.github.yearsyan.ohpi.data.ConnState
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.GatewaySessionMetrics
 import io.github.yearsyan.ohpi.theme.piExtras
+import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -609,7 +609,7 @@ private fun InfoField(label: String, value: String) {
             SelectionContainer(Modifier.weight(1f)) {
                 Text(
                     value,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = rememberCodeFontFamily()),
                 )
             }
             CopyButton(value)
@@ -630,7 +630,7 @@ private fun CopyableCode(text: String) {
         SelectionContainer(Modifier.weight(1f)) {
             Text(
                 text,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = rememberCodeFontFamily()),
             )
         }
         CopyButton(text)
