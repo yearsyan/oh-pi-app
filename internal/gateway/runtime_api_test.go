@@ -111,14 +111,15 @@ func TestRuntimeConfigAPIUpdatesConfigAndRequestsRestart(t *testing.T) {
 func TestRuntimeConfigAPIClearsEnvironmentSourceAndRejectsInvalidValues(t *testing.T) {
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "config.json")
-	environmentFile := filepath.Join(directory, ".zshrc")
+	environmentFile := filepath.Join(directory, ".profile")
 	if err := os.WriteFile(environmentFile, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	shell := requirePOSIXShell(t)
 	values := map[string]string{
 		runtimeConfigTitleModelKey: "auto",
 		runtimeConfigEnvFileKey:    environmentFile,
-		runtimeConfigEnvShellKey:   "/bin/zsh",
+		runtimeConfigEnvShellKey:   shell,
 	}
 	if err := writeRuntimeConfigValues(configPath, values); err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestRuntimeConfigAPIClearsEnvironmentSourceAndRejectsInvalidValues(t *testi
 		RuntimeConfigPath:  configPath,
 		TitleModel:         "auto",
 		PiEnvironmentFile:  environmentFile,
-		PiEnvironmentShell: "/bin/zsh",
+		PiEnvironmentShell: shell,
 		Logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

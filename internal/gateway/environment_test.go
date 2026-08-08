@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -64,20 +65,34 @@ func TestPiEnvironmentFileIsSourcedOnceForChildEnvironment(t *testing.T) {
 }
 
 func TestResolvePiEnvironmentSourceInfersShell(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires POSIX shell paths")
-	}
-	path := filepath.Join(t.TempDir(), ".zshrc")
+	shell := requirePOSIXShell(t)
+	path := filepath.Join(t.TempDir(), ".profile")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	resolvedFile, shell, err := resolvePiEnvironmentSource(path, "", []string{"PATH=/usr/bin:/bin"})
+	resolvedFile, resolvedShell, err := resolvePiEnvironmentSource(path, "", []string{"SHELL=" + shell})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolvedFile != path || shell != "/bin/zsh" {
-		t.Fatalf("resolved source = (%q, %q), want (%q, /bin/zsh)", resolvedFile, shell, path)
+	if resolvedFile != path || resolvedShell != shell {
+		t.Fatalf("resolved source = (%q, %q), want (%q, %q)", resolvedFile, resolvedShell, path, shell)
 	}
+}
+
+func requirePOSIXShell(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("POSIX shell is unavailable: %v", err)
+	}
+	shell, err = filepath.Abs(shell)
+	if err != nil {
+		t.Fatalf("resolve POSIX shell path: %v", err)
+	}
+	return shell
 }
 
 func TestParseNULChildEnvironmentRejectsEmptyOutput(t *testing.T) {
