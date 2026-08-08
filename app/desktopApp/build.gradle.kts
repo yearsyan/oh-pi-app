@@ -105,7 +105,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "io.github.yearsyan.ohpi"
-            packageVersion = "2.1.0"
+            packageVersion = "2.1.1"
             vendor = "Oh Pi App"
         }
     }
