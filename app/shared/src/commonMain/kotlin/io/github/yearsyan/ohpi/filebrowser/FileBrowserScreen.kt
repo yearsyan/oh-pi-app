@@ -3,6 +3,7 @@ package io.github.yearsyan.ohpi.filebrowser
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -64,6 +65,7 @@ import io.github.yearsyan.ohpi.markdown.MarkdownView
 import io.github.yearsyan.ohpi.net.FileEntry
 import io.github.yearsyan.ohpi.net.FileListResponse
 import io.github.yearsyan.ohpi.net.FileReadResponse
+import io.github.yearsyan.ohpi.syntax.MAX_HIGHLIGHT_LENGTH
 import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
@@ -476,9 +478,6 @@ private fun FileRow(entry: FileEntry, selected: Boolean = false, onClick: () -> 
     }
 }
 
-/** Above this size preview text stays plain; highlighting is not worth the cost. */
-private const val MaxHighlightLength = 256 * 1024
-
 /**
  * Right-hand detail pane of the two-pane layout: an empty hint until a file is
  * selected, then the text/markdown detail or image viewer inline.
@@ -657,7 +656,7 @@ private fun FilePreviewDetail(
                         spec,
                         syntaxColors,
                     ) {
-                        if (spec != null && preview.content.length <= MaxHighlightLength) {
+                        if (spec != null && preview.content.length <= MAX_HIGHLIGHT_LENGTH) {
                             value = withContext(Dispatchers.Default) {
                                 Syntax.highlight(preview.content, spec, syntaxColors)
                             }
@@ -666,15 +665,20 @@ private fun FilePreviewDetail(
                     SelectionContainer(
                         Modifier
                             .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                            .verticalScroll(rememberScrollState()),
                     ) {
                         val style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = rememberCodeFontFamily(),
                         )
-                        val text = highlighted
-                        if (text != null) Text(text, style = style)
-                        else Text(preview.content, style = style)
+                        Text(
+                            text = highlighted ?: AnnotatedString(preview.content),
+                            modifier = Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                            style = style,
+                            color = syntaxColors.plain,
+                            softWrap = false,
+                        )
                     }
                 }
         }

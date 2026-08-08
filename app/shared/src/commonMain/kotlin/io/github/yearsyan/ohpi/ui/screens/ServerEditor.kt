@@ -14,9 +14,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,6 +46,8 @@ import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.buildGatewayUrl
 import io.github.yearsyan.ohpi.net.parseGatewayAddress
+import io.github.yearsyan.ohpi.ui.components.AppDropdownMenu
+import io.github.yearsyan.ohpi.ui.components.AppMenuItem
 import kotlin.random.Random
 
 /** Default ohpi gateway port used for new server profiles on all platforms. */
@@ -56,6 +55,7 @@ internal const val DefaultGatewayPort = 18080
 
 /** Fixed SSH-mode backend address on iOS: ohpi as seen by the SSH server itself. */
 private const val FixedLoopbackHost = "127.0.0.1"
+private const val ImportSshKeyMenuId = "__import_ssh_key__"
 
 /** The outcome of a successfully validated server editor: a profile plus any new managed key. */
 internal data class ServerEditorResult(
@@ -448,14 +448,39 @@ internal fun SshKeyPickerFields(
 ) {
     val creatingNew = keySelection.effectiveCreatingNew(keys)
     if (keys.isNotEmpty()) {
-        var expanded by remember { mutableStateOf(false) }
         val selectedName =
             if (creatingNew) S.sshKeyCreateNew
             else keys.firstOrNull { it.id == keySelection.selectedKeyId }?.name
                 ?: S.sshKeySelectPlaceholder
-        Box(Modifier.fillMaxWidth()) {
+        AppDropdownMenu(
+            items =
+                buildList {
+                    keys.forEach { key ->
+                        add(AppMenuItem(id = key.id, title = key.name))
+                    }
+                    add(
+                        AppMenuItem(
+                            id = ImportSshKeyMenuId,
+                            title = S.sshKeyCreateNew,
+                            startsSection = true,
+                        ),
+                    )
+                },
+            onItemClick = { id ->
+                if (id == ImportSshKeyMenuId) {
+                    keySelection.creatingNew = true
+                    keySelection.selectedKeyId = ""
+                } else if (keys.any { it.id == id }) {
+                    keySelection.selectedKeyId = id
+                    keySelection.creatingNew = false
+                }
+                onFieldEdited()
+            },
+            modifier = Modifier.fillMaxWidth(),
+            accessibilityLabel = selectedName,
+        ) { openMenu ->
             OutlinedButton(
-                onClick = { expanded = true },
+                onClick = openMenu,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(
@@ -475,29 +500,6 @@ internal fun SshKeyPickerFields(
                         },
                 )
                 Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                keys.forEach { key ->
-                    DropdownMenuItem(
-                        text = { Text(key.name) },
-                        onClick = {
-                            keySelection.selectedKeyId = key.id
-                            keySelection.creatingNew = false
-                            expanded = false
-                            onFieldEdited()
-                        },
-                    )
-                }
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text(S.sshKeyCreateNew) },
-                    onClick = {
-                        keySelection.creatingNew = true
-                        keySelection.selectedKeyId = ""
-                        expanded = false
-                        onFieldEdited()
-                    },
-                )
             }
         }
         Spacer(Modifier.height(10.dp))

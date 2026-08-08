@@ -16,6 +16,7 @@ object Languages {
             "const", "inline", "reified", "out", "typealias", "where", "get", "set",
             "actual", "expect",
         ),
+        multilineStringDelimiters = listOf("\"\"\"" to "\"\"\""),
         annotationChar = '@',
     )
 
@@ -32,6 +33,7 @@ object Languages {
             "native", "strictfp", "public", "private", "protected", "instanceof",
             "var", "sealed", "permits", "yield",
         ),
+        multilineStringDelimiters = listOf("\"\"\"" to "\"\"\""),
         annotationChar = '@',
     )
 
@@ -44,6 +46,7 @@ object Languages {
             "for", "range", "if", "else", "return", "break", "continue", "fallthrough",
             "goto", "iota", "nil", "true", "false", "make", "new", "append", "len", "cap",
         ),
+        multilineStringDelimiters = listOf("`" to "`"),
         langAliases = listOf("golang"),
     )
 
@@ -59,6 +62,10 @@ object Languages {
         ),
         lineComments = listOf("#"),
         blockComments = emptyList(),
+        multilineStringDelimiters = listOf(
+            "\"\"\"" to "\"\"\"",
+            "'''" to "'''",
+        ),
         annotationChar = '@',
         langAliases = listOf("py"),
     )
@@ -74,6 +81,7 @@ object Languages {
             "extends", "static", "get", "set", "async", "await", "yield", "import",
             "export", "from", "void",
         ),
+        multilineStringDelimiters = listOf("`" to "`"),
         langAliases = listOf("js"),
     )
 
@@ -152,6 +160,9 @@ object Languages {
         ),
         lineComments = listOf("#"),
         blockComments = emptyList(),
+        // Unlike most programming-language literals, shell quotes may continue
+        // across physical lines (common in `python -c` and long tool commands).
+        multilineStringDelimiters = listOf("\"" to "\"", "'" to "'"),
         langAliases = listOf("bash", "zsh"),
     )
 
@@ -207,8 +218,122 @@ object Languages {
         annotationChar = '@',
     )
 
+    private val dart = LanguageSpec(
+        name = "dart",
+        extensions = listOf("dart"),
+        keywords = setOf(
+            "abstract", "as", "assert", "async", "await", "break", "case", "catch",
+            "class", "const", "continue", "default", "deferred", "do", "dynamic",
+            "else", "enum", "export", "extends", "extension", "external", "factory",
+            "false", "final", "finally", "for", "function", "get", "hide", "if",
+            "implements", "import", "in", "interface", "is", "late", "library",
+            "mixin", "new", "null", "on", "operator", "part", "required", "rethrow",
+            "return", "sealed", "set", "show", "static", "super", "switch", "sync",
+            "this", "throw", "true", "try", "typedef", "var", "void", "when", "while",
+            "with", "yield",
+        ),
+        annotationChar = '@',
+    )
+
+    private val csharp = LanguageSpec(
+        name = "csharp",
+        extensions = listOf("cs", "csx"),
+        keywords = setOf(
+            "abstract", "as", "async", "await", "base", "bool", "break", "byte",
+            "case", "catch", "char", "checked", "class", "const", "continue", "decimal",
+            "default", "delegate", "do", "double", "else", "enum", "event", "explicit",
+            "extern", "false", "finally", "fixed", "float", "for", "foreach", "goto",
+            "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long",
+            "namespace", "new", "null", "object", "operator", "out", "override", "params",
+            "private", "protected", "public", "readonly", "record", "ref", "return",
+            "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string",
+            "struct", "switch", "this", "throw", "true", "try", "typeof", "uint",
+            "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void",
+            "volatile", "while",
+        ),
+        annotationChar = '@',
+        langAliases = listOf("c#", "cs"),
+    )
+
+    private val coffeeScript = LanguageSpec(
+        name = "coffeescript",
+        extensions = listOf("coffee", "litcoffee"),
+        keywords = setOf(
+            "and", "break", "by", "catch", "class", "continue", "delete", "do", "else",
+            "extends", "false", "finally", "for", "if", "in", "instanceof", "is", "isnt",
+            "loop", "new", "no", "not", "null", "of", "off", "on", "or", "return",
+            "super", "switch", "then", "this", "throw", "true", "try", "typeof", "unless",
+            "until", "when", "while", "yes",
+        ),
+        lineComments = listOf("#"),
+        blockComments = listOf("###" to "###"),
+        multilineStringDelimiters = listOf(
+            "\"\"\"" to "\"\"\"",
+            "'''" to "'''",
+        ),
+        langAliases = listOf("coffee"),
+    )
+
+    private val perl = LanguageSpec(
+        name = "perl",
+        extensions = listOf("pl", "pm", "t"),
+        keywords = setOf(
+            "continue", "do", "else", "elsif", "eval", "for", "foreach", "given", "goto",
+            "if", "last", "local", "my", "next", "no", "package", "redo", "require",
+            "return", "state", "sub", "unless", "until", "use", "when", "while",
+        ),
+        lineComments = listOf("#"),
+        blockComments = emptyList(),
+    )
+
+    private val ruby = LanguageSpec(
+        name = "ruby",
+        extensions = listOf("rb", "rake", "gemspec"),
+        keywords = setOf(
+            "alias", "and", "begin", "break", "case", "class", "def", "defined", "do",
+            "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next",
+            "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then",
+            "true", "undef", "unless", "until", "when", "while", "yield",
+        ),
+        lineComments = listOf("#"),
+        blockComments = listOf("=begin" to "=end"),
+    )
+
+    private val swift = LanguageSpec(
+        name = "swift",
+        extensions = listOf("swift"),
+        keywords = setOf(
+            "associatedtype", "break", "case", "catch", "class", "continue", "default",
+            "defer", "deinit", "do", "else", "enum", "extension", "fallthrough", "false",
+            "fileprivate", "for", "func", "guard", "if", "import", "in", "init", "inout",
+            "internal", "is", "let", "nil", "open", "operator", "private", "protocol", "public",
+            "repeat", "rethrows", "return", "self", "static", "struct", "subscript", "super",
+            "switch", "throw", "throws", "true", "try", "typealias", "var", "where", "while",
+        ),
+        multilineStringDelimiters = listOf("\"\"\"" to "\"\"\""),
+        annotationChar = '@',
+    )
+
+    private val php = LanguageSpec(
+        name = "php",
+        extensions = listOf("php", "php3", "php4", "php5", "phtml"),
+        keywords = setOf(
+            "abstract", "and", "array", "as", "break", "callable", "case", "catch", "class",
+            "clone", "const", "continue", "declare", "default", "do", "echo", "else", "elseif",
+            "empty", "enddeclare", "endfor", "endforeach", "endif", "endswitch", "endwhile",
+            "enum", "eval", "exit", "extends", "final", "finally", "fn", "for", "foreach",
+            "function", "global", "goto", "if", "implements", "include", "include_once",
+            "instanceof", "insteadof", "interface", "isset", "list", "match", "namespace", "new",
+            "null", "or", "print", "private", "protected", "public", "readonly", "require",
+            "require_once", "return", "static", "switch", "throw", "trait", "true", "try",
+            "unset", "use", "var", "while", "xor", "yield",
+        ),
+        lineComments = listOf("//", "#"),
+    )
+
     val all: List<LanguageSpec> = listOf(
         kotlin, java, go, python, javascript, typescript, rust, c, cpp,
-        json, shell, sql, yaml, toml, xml, css,
+        json, shell, sql, yaml, toml, xml, css, dart, csharp, coffeeScript,
+        perl, ruby, swift, php,
     )
 }

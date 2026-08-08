@@ -138,6 +138,9 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.websockets)
             implementation(libs.multiplatform.settings)
+            implementation(libs.markdown.renderer)
+            implementation(libs.markdown.renderer.m3)
+            implementation(libs.highlights)
             implementation("com.squareup.okio:okio:3.4.0")
         }
         jvmMain.dependencies {

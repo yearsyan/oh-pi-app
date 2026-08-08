@@ -99,6 +99,7 @@ private val LightExtras = PiExtras(
     warning = Color(0xFF9A6A00),
     // GitHub-light inspired palette, readable on the light code background.
     syntax = SyntaxColors(
+        plain = Color(0xFF2A2A35),
         keyword = Color(0xFFCF222E),
         string = Color(0xFF0A3069),
         comment = Color(0xFF6E7781),
@@ -116,6 +117,7 @@ private val DarkExtras = PiExtras(
     warning = Color(0xFFE8C468),
     // GitHub-dark inspired palette, readable on the dark code background.
     syntax = SyntaxColors(
+        plain = Color(0xFFD7D7E2),
         keyword = Color(0xFFFF7B72),
         string = Color(0xFFA5D6FF),
         comment = Color(0xFF8B949E),

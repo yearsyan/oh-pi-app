@@ -28,8 +28,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,13 +67,7 @@ import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Refresh
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -494,61 +486,64 @@ private fun OverflowMenu(
     onSessionInfo: () -> Unit,
     sessionInfoEnabled: Boolean,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = null)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(S.browseFiles) },
-                leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
-                onClick = { onBrowseFiles(); open = false },
+    val items =
+        buildList {
+            add(AppMenuItem(id = "browse", title = S.browseFiles, icon = AppMenuIcon.Folder))
+            add(
+                AppMenuItem(
+                    id = "reconnect",
+                    title = S.reconnect,
+                    icon = AppMenuIcon.Refresh,
+                    enabled = canReconnect,
+                ),
             )
-            DropdownMenuItem(
-                text = { Text(S.reconnect) },
-                leadingIcon = { Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)) },
-                onClick = { onReconnect(); open = false },
-                enabled = canReconnect,
-            )
-            DropdownMenuItem(
-                text = { Text(S.rename) },
-                leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                onClick = { onRename(); open = false },
-            )
-            DropdownMenuItem(
-                text = { Text(S.sessionInfo) },
-                leadingIcon = { Icon(Icons.Filled.Info, null, Modifier.size(18.dp)) },
-                onClick = { onSessionInfo(); open = false },
-                enabled = sessionInfoEnabled,
+            add(AppMenuItem(id = "rename", title = S.rename, icon = AppMenuIcon.Edit))
+            add(
+                AppMenuItem(
+                    id = "info",
+                    title = S.sessionInfo,
+                    icon = AppMenuIcon.Info,
+                    enabled = sessionInfoEnabled,
+                ),
             )
             if (onStopProcess != null && processRunning) {
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(S.stopPiProcess)
-                            if (processOutputting) {
-                                Text(
-                                    S.stopPiProcessOutputtingHint,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                )
-                            }
-                        }
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(18.dp))
-                    },
-                    onClick = { onStopProcess(); open = false },
-                    enabled = !processOutputting,
+                add(
+                    AppMenuItem(
+                        id = "stop",
+                        title = S.stopPiProcess,
+                        subtitle = S.stopPiProcessOutputtingHint.takeIf { processOutputting },
+                        subtitleMaxLines = 2,
+                        icon = AppMenuIcon.Stop,
+                        enabled = !processOutputting,
+                        destructive = true,
+                    ),
                 )
             }
-            DropdownMenuItem(
-                text = { Text(S.delete) },
-                leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                onClick = { onDelete(); open = false },
+            add(
+                AppMenuItem(
+                    id = "delete",
+                    title = S.delete,
+                    icon = AppMenuIcon.Delete,
+                    destructive = true,
+                ),
             )
+        }
+    AppDropdownMenu(
+        items = items,
+        onItemClick = { id ->
+            when (id) {
+                "browse" -> onBrowseFiles()
+                "reconnect" -> onReconnect()
+                "rename" -> onRename()
+                "info" -> onSessionInfo()
+                "stop" -> onStopProcess?.invoke()
+                "delete" -> onDelete()
+            }
+        },
+        accessibilityLabel = S.moreActions,
+    ) { openMenu ->
+        IconButton(onClick = openMenu) {
+            Icon(Icons.Filled.MoreVert, contentDescription = S.moreActions)
         }
     }
 }

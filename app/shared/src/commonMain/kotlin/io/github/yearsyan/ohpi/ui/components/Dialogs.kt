@@ -23,8 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,7 +37,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -121,7 +118,6 @@ fun WorkspaceDialog(
                 ?: workspaces.firstOrNull()?.id.orEmpty(),
         )
     }
-    var menuOpen by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
     var addError by remember { mutableStateOf("") }
@@ -134,62 +130,40 @@ fun WorkspaceDialog(
         text = {
             Column(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) {
-                        OutlinedTextField(
-                            value = selected?.displayName.orEmpty(),
-                            onValueChange = {},
-                            readOnly = true,
-                            singleLine = true,
-                            label = { Text(S.workspaceLabel) },
-                            supportingText = selected?.let {
-                                { Text(it.directory, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            },
-                            trailingIcon = {
-                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        // The read-only field consumes touches; overlay a tap target.
-                        Box(Modifier.matchParentSize().clickable { menuOpen = true })
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false },
-                        ) {
-                            options.forEach { workspace ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Column(Modifier.weight(1f)) {
-                                                Text(
-                                                    workspace.displayName,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                                Text(
-                                                    workspace.directory,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                            }
-                                            if (workspace.id == selectedId) {
-                                                Icon(
-                                                    Icons.Filled.Check,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(16.dp),
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        selectedId = workspace.id
-                                        menuOpen = false
-                                    },
+                    AppDropdownMenu(
+                        items =
+                            options.map { workspace ->
+                                AppMenuItem(
+                                    id = workspace.id,
+                                    title = workspace.displayName,
+                                    subtitle = workspace.directory,
+                                    titleMaxLines = 1,
+                                    subtitleMaxLines = 1,
+                                    checkable = true,
+                                    selected = workspace.id == selectedId,
                                 )
-                            }
+                            },
+                        onItemClick = { selectedId = it },
+                        modifier = Modifier.weight(1f),
+                        accessibilityLabel = S.workspaceLabel,
+                    ) { openMenu ->
+                        Box(Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = selected?.displayName.orEmpty(),
+                                onValueChange = {},
+                                readOnly = true,
+                                singleLine = true,
+                                label = { Text(S.workspaceLabel) },
+                                supportingText = selected?.let {
+                                    { Text(it.directory, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                },
+                                trailingIcon = {
+                                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            // The read-only field consumes touches; overlay a tap target.
+                            Box(Modifier.matchParentSize().clickable(onClick = openMenu))
                         }
                     }
                     IconButton(onClick = { showPicker = true }, enabled = !adding) {

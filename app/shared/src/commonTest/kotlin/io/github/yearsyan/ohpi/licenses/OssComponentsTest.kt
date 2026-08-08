@@ -18,6 +18,9 @@ class OssComponentsTest {
         assertEquals("1.13.0", versions["AndroidX Activity Compose"])
         assertEquals("2.11.0-beta01", versions["AndroidX Lifecycle for Compose Multiplatform"])
         assertEquals("2.9.2", versions["AndroidX Navigation for Compose Multiplatform"])
+        assertEquals("0.41.0", versions["Kotlin Multiplatform Markdown Renderer"])
+        assertEquals("0.7.3", versions["JetBrains Markdown"])
+        assertEquals("1.1.0", versions["Highlights"])
     }
 
     @Test

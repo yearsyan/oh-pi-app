@@ -26,8 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,7 +66,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -440,13 +437,27 @@ private fun ServerChip(
     onSelectServer: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
+    AppDropdownMenu(
+        items =
+            servers.map { server ->
+                AppMenuItem(
+                    id = server.id,
+                    title = server.displayName,
+                    subtitle = gatewayAddressLabel(server.url),
+                    checkable = true,
+                    selected = server.id == activeServer.id,
+                )
+            },
+        onItemClick = onSelectServer,
+        modifier = modifier,
+        enabled = servers.size > 1,
+        accessibilityLabel = activeServer.displayName,
+    ) { openMenu ->
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .clickable(enabled = servers.size > 1) { open = true }
+                .clickable(enabled = servers.size > 1, onClick = openMenu)
                 .padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -475,36 +486,6 @@ private fun ServerChip(
                     contentDescription = null,
                     modifier = Modifier.size(14.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            servers.forEach { server ->
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(server.displayName, style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    gatewayAddressLabel(server.url),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (server.id == activeServer.id) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    },
-                    onClick = {
-                        onSelectServer(server.id)
-                        open = false
-                    },
                 )
             }
         }
@@ -596,7 +577,6 @@ private fun SessionRow(
     onStopProcess: () -> Unit,
     processStopSupported: Boolean,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     var actionSheetOpen by remember { mutableStateOf(false) }
     val ios = getPlatform().isIos
     val bg = if (active) MaterialTheme.colorScheme.surfaceContainerHigh
@@ -640,47 +620,48 @@ private fun SessionRow(
             )
         }
         if (!ios) {
-            Box {
-                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = null,
-                        modifier = Modifier.size(17.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(S.rename) },
-                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                        onClick = { onRename(); menuOpen = false },
-                    )
+            val menuItems =
+                buildList {
+                    add(AppMenuItem(id = "rename", title = S.rename, icon = AppMenuIcon.Edit))
                     if (session.running && processStopSupported) {
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(S.stopPiProcess)
-                                    if (session.outputting) {
-                                        Text(
-                                            S.stopPiProcessOutputtingHint,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 2,
-                                        )
-                                    }
-                                }
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Filled.PowerSettingsNew, null, Modifier.size(18.dp))
-                            },
-                            onClick = { onStopProcess(); menuOpen = false },
-                            enabled = !session.outputting,
+                        add(
+                            AppMenuItem(
+                                id = "stop",
+                                title = S.stopPiProcess,
+                                subtitle = S.stopPiProcessOutputtingHint.takeIf { session.outputting },
+                                subtitleMaxLines = 2,
+                                icon = AppMenuIcon.Stop,
+                                enabled = !session.outputting,
+                                destructive = true,
+                            ),
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text(S.delete) },
-                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                        onClick = { onDelete(); menuOpen = false },
+                    add(
+                        AppMenuItem(
+                            id = "delete",
+                            title = S.delete,
+                            icon = AppMenuIcon.Delete,
+                            destructive = true,
+                        ),
+                    )
+                }
+            AppDropdownMenu(
+                items = menuItems,
+                onItemClick = { id ->
+                    when (id) {
+                        "rename" -> onRename()
+                        "stop" -> onStopProcess()
+                        "delete" -> onDelete()
+                    }
+                },
+                accessibilityLabel = S.moreActions,
+            ) { openMenu ->
+                IconButton(onClick = openMenu, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = S.moreActions,
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

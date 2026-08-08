@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +81,8 @@ import io.github.yearsyan.ohpi.chat.toolInputView
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.markdown.MarkdownView
+import io.github.yearsyan.ohpi.syntax.MAX_HIGHLIGHT_LENGTH
+import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import kotlinx.coroutines.Dispatchers
@@ -902,12 +906,31 @@ private fun DiffLines(
 /** Terminal-style block for shell commands: green "$" prompt plus the command text. */
 @Composable
 private fun BashCommandBlock(command: String) {
+    val extras = piExtras
+    val shellSpec = remember { requireNotNull(Syntax.specForLangName("bash")) }
+    val highlighted by produceState(
+        initialValue = AnnotatedString(command),
+        key1 = command,
+        key2 = shellSpec,
+        key3 = extras.syntax,
+    ) {
+        if (command.length <= MAX_HIGHLIGHT_LENGTH) {
+            value = withContext(Dispatchers.Default) {
+                Syntax.highlight(command, shellSpec, extras.syntax)
+            }
+        }
+    }
     Surface(
-        color = piExtras.codeBackground,
+        color = extras.codeBackground,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Row(
+            modifier =
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
             val codeFont = rememberCodeFontFamily()
             Text(
                 "$",
@@ -920,14 +943,15 @@ private fun BashCommandBlock(command: String) {
             )
             Spacer(Modifier.width(7.dp))
             Text(
-                command,
+                highlighted,
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = codeFont,
                     fontSize = 11.5.sp,
                     lineHeight = 16.sp,
                 ),
-                color = piExtras.onCode,
+                color = extras.syntax.plain,
                 maxLines = 40,
+                softWrap = false,
             )
         }
     }

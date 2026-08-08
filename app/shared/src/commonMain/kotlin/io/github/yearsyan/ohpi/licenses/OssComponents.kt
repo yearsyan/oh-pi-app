@@ -139,6 +139,27 @@ internal val OSS_COMPONENTS: List<OssComponent> = listOf(
         category = OssCategory.Framework,
     ),
     OssComponent(
+        name = "Kotlin Multiplatform Markdown Renderer",
+        version = "0.41.0",
+        copyright = "Mike Penz & contributors",
+        license = OssLicense.Apache2,
+        category = OssCategory.Framework,
+    ),
+    OssComponent(
+        name = "JetBrains Markdown",
+        version = "0.7.3",
+        copyright = "JetBrains s.r.o.",
+        license = OssLicense.Apache2,
+        category = OssCategory.Framework,
+    ),
+    OssComponent(
+        name = "Highlights",
+        version = "1.1.0",
+        copyright = "Tomasz Kądziołka & contributors",
+        license = OssLicense.Apache2,
+        category = OssCategory.Framework,
+    ),
+    OssComponent(
         name = "Java Native Access (JNA)",
         version = "5.18.1",
         copyright = "Timothy Wall & JNA contributors",

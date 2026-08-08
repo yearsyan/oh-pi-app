@@ -8,6 +8,15 @@ import kotlin.test.assertTrue
 
 class SyntaxHighlightTest {
 
+    private val colors = SyntaxColors(
+        plain = androidx.compose.ui.graphics.Color.Black,
+        keyword = androidx.compose.ui.graphics.Color.Red,
+        string = androidx.compose.ui.graphics.Color.Green,
+        comment = androidx.compose.ui.graphics.Color.Gray,
+        number = androidx.compose.ui.graphics.Color.Blue,
+        annotation = androidx.compose.ui.graphics.Color.Magenta,
+    )
+
     private fun spec(name: String): LanguageSpec =
         requireNotNull(Syntax.specForLangName(name)) { "missing spec for $name" }
 
@@ -28,6 +37,12 @@ class SyntaxHighlightTest {
         assertEquals("go", Syntax.specForLangName("golang")?.name)
         assertEquals("cpp", Syntax.specForLangName("c++")?.name)
         assertEquals("python", Syntax.specForLangName("py")?.name)
+        assertEquals("javascript", Syntax.specForLangName("js linenums")?.name)
+        assertEquals("typescript", Syntax.specForLangName("{.ts}")?.name)
+        assertEquals("csharp", Syntax.specForLangName("c#")?.name)
+        assertEquals("swift", Syntax.specForFileName("Client.swift")?.name)
+        assertEquals("ruby", Syntax.specForFileName("build.gemspec")?.name)
+        assertEquals("php", Syntax.specForFileName("index.PHP")?.name)
         assertNull(Syntax.specForLangName(""))
         assertNull(Syntax.specForLangName("not-a-language"))
     }
@@ -109,6 +124,48 @@ class SyntaxHighlightTest {
     }
 
     @Test
+    fun highlightedShellCommandStylesControlFlowStringsNumbersAndComments() {
+        val code = """
+            if [ -n "${'$'}TOKEN" ]; then
+              printf '%s\n' "ready # literal"
+              sleep 2
+            fi # done
+        """.trimIndent()
+        val result = Syntax.highlight(code, spec("bash"), colors)
+
+        fun textWithColor(color: androidx.compose.ui.graphics.Color): List<String> =
+            result.spanStyles
+                .filter { it.item.color == color }
+                .map { code.substring(it.start, it.end) }
+
+        val keywords = textWithColor(colors.keyword)
+        assertTrue("if" in keywords && "then" in keywords && "fi" in keywords)
+        assertEquals(
+            listOf("\"${'$'}TOKEN\"", "'%s\\n'", "\"ready # literal\""),
+            textWithColor(colors.string),
+        )
+        assertTrue("2" in textWithColor(colors.number))
+        assertEquals(listOf("# done"), textWithColor(colors.comment))
+    }
+
+    @Test
+    fun shellQuotesCanSpanLinesWithoutColoringTheFollowingPipeline() {
+        val code = "python3 -c \"print('value')\nprint(2)\" 2>/dev/null | head -1"
+
+        assertEquals(
+            listOf("\"print('value')\nprint(2)\""),
+            tokensOf(code, "bash", TokenType.String),
+        )
+        assertEquals(listOf("2", "1"), tokensOf(code, "bash", TokenType.Number))
+
+        val result = Syntax.highlight(code, spec("bash"), colors)
+        val strings = result.spanStyles
+            .filter { it.item.color == colors.string }
+            .map { code.substring(it.start, it.end) }
+        assertEquals(listOf("\"print('value')\nprint(2)\""), strings)
+    }
+
+    @Test
     fun markupHighlightsTagNamesStringsAndComments() {
         val code = "<!-- head --><div class=\"box\">text</div>"
         val tokens = Syntax.tokenize(code, spec("html"))
@@ -150,17 +207,41 @@ class SyntaxHighlightTest {
 
     @Test
     fun highlightProducesStylesCoveringTokens() {
-        val colors = SyntaxColors(
-            keyword = androidx.compose.ui.graphics.Color.Red,
-            string = androidx.compose.ui.graphics.Color.Green,
-            comment = androidx.compose.ui.graphics.Color.Gray,
-            number = androidx.compose.ui.graphics.Color.Blue,
-            annotation = androidx.compose.ui.graphics.Color.Magenta,
-        )
         val code = "fun f() = 1 // tail"
         val result = Syntax.highlight(code, spec("kotlin"), colors)
         assertEquals(code, result.text)
-        assertEquals(Syntax.tokenize(code, spec("kotlin")).size, result.spanStyles.size)
         assertNotNull(result.spanStyles.firstOrNull())
+        assertTrue(Syntax.usesHighlightEngine(spec("kotlin")))
+        assertTrue(!Syntax.usesHighlightEngine(spec("yaml")))
+    }
+
+    @Test
+    fun engineDoesNotTreatUrlOrFragmentInsideStringAsComment() {
+        val code = """
+            const url = "https://example.test/#anchor"
+            return url
+        """.trimIndent()
+        val result = Syntax.highlight(code, spec("javascript"), colors)
+
+        val strings = result.spanStyles
+            .filter { it.item.color == colors.string }
+            .map { code.substring(it.start, it.end) }
+        assertEquals(listOf("\"https://example.test/#anchor\""), strings)
+        assertTrue(result.spanStyles.none { it.item.color == colors.comment })
+        assertTrue(
+            result.spanStyles.any {
+                it.item.color == colors.keyword && code.substring(it.start, it.end) == "return"
+            },
+        )
+    }
+
+    @Test
+    fun multilinePythonStringProtectsCommentMarkers() {
+        val code = "message = \"\"\"first\n# still a string\nsecond\"\"\"\nreturn message"
+        val result = Syntax.highlight(code, spec("python"), colors)
+
+        val stringRange = result.spanStyles.single { it.item.color == colors.string }
+        assertEquals("\"\"\"first\n# still a string\nsecond\"\"\"", code.substring(stringRange.start, stringRange.end))
+        assertTrue(result.spanStyles.none { it.item.color == colors.comment })
     }
 }

@@ -135,6 +135,7 @@ interface Strings {
     val noSessionsHint: String
     val rename: String
     val delete: String
+    val moreActions: String
     val renameDialogTitle: String
     val sessionNameLabel: String
     val cancel: String
@@ -582,6 +583,7 @@ object EnStrings : Strings {
     override val noSessionsHint = "Start a new chat to talk with your agent."
     override val rename = "Rename"
     override val delete = "Delete"
+    override val moreActions = "More actions"
     override val renameDialogTitle = "Rename chat"
     override val sessionNameLabel = "Chat name"
     override val cancel = "Cancel"
@@ -1032,6 +1034,7 @@ object ZhStrings : Strings {
     override val noSessionsHint = "开始一个新会话，与智能体对话吧。"
     override val rename = "重命名"
     override val delete = "删除"
+    override val moreActions = "更多操作"
     override val renameDialogTitle = "重命名会话"
     override val sessionNameLabel = "会话名称"
     override val cancel = "取消"
