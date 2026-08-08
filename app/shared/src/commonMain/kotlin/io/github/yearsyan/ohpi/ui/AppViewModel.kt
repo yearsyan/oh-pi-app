@@ -27,6 +27,8 @@ import io.github.yearsyan.ohpi.net.FileReadResponse
 import io.github.yearsyan.ohpi.net.FsListException
 import io.github.yearsyan.ohpi.net.FsListResponse
 import io.github.yearsyan.ohpi.net.GatewayTransport
+import io.github.yearsyan.ohpi.net.GatewayRuntimeConfig
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_RUNTIME_CONFIG
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SESSION_PROCESS_STOP
 import io.github.yearsyan.ohpi.net.GatewayProvider
 import io.github.yearsyan.ohpi.net.GatewayProviderAuthMethod
@@ -45,6 +47,7 @@ import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
 import io.github.yearsyan.ohpi.net.downloadGatewayFile
 import io.github.yearsyan.ohpi.net.fetchGatewayHealth
+import io.github.yearsyan.ohpi.net.getGatewayRuntimeConfig
 import io.github.yearsyan.ohpi.net.getGatewayCapabilities
 import io.github.yearsyan.ohpi.net.listGatewayProviders
 import io.github.yearsyan.ohpi.net.listGatewayDirs
@@ -56,7 +59,10 @@ import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.readGatewayFile
 import io.github.yearsyan.ohpi.net.renameGatewaySession
 import io.github.yearsyan.ohpi.net.stopGatewaySessionProcess
+import io.github.yearsyan.ohpi.net.requestGatewayRuntimeRestart
+import io.github.yearsyan.ohpi.net.updateGatewayRuntimeConfig
 import io.github.yearsyan.ohpi.net.updateGatewayWorkspace
+import io.github.yearsyan.ohpi.net.awaitManagedGatewayHealth
 import io.github.yearsyan.ohpi.net.buildProviderAuthWsUrl
 import io.github.yearsyan.ohpi.net.parseProviderAuthEvent
 import io.github.yearsyan.ohpi.net.providerAuthCancelResponse
@@ -115,6 +121,9 @@ data class GatewayServerInfo(
 ) {
     val supportsSessionProcessStop: Boolean
         get() = GATEWAY_FEATURE_SESSION_PROCESS_STOP in features
+
+    val supportsRuntimeConfig: Boolean
+        get() = GATEWAY_FEATURE_RUNTIME_CONFIG in features
 
     val hostOs: GatewayHostOs
         get() =
@@ -357,6 +366,53 @@ class AppViewModel(
                 }
             }
         }
+    }
+
+    /** Loads restart-scoped settings from the active gateway. */
+    suspend fun loadGatewayRuntimeConfig(): GatewayRuntimeConfig {
+        val server = activeServer ?: error("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return getGatewayRuntimeConfig(gateway, server.token)
+    }
+
+    /** Persists restart-scoped settings on the active gateway. */
+    suspend fun saveGatewayRuntimeConfig(
+        titleModel: String,
+        piEnvironmentFile: String,
+        piEnvironmentShell: String,
+    ): GatewayRuntimeConfig {
+        val server = activeServer ?: error("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return updateGatewayRuntimeConfig(
+            gateway = gateway,
+            token = server.token,
+            titleModel = titleModel,
+            piEnvironmentFile = piEnvironmentFile,
+            piEnvironmentShell = piEnvironmentShell,
+        )
+    }
+
+    /** Requests a graceful restart, waits for the supervisor, then reconnects. */
+    suspend fun restartGatewayRuntime(): GatewayRuntimeConfig {
+        val server = activeServer ?: error("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        requestGatewayRuntimeRestart(gateway, server.token)
+        if (activeServerId != server.id) error("active server changed")
+
+        resetActiveConnections()
+        activeChatId = null
+        delay(250)
+        val restartedGateway = transportFor(server).resolveGateway()
+        val health = awaitManagedGatewayHealth(restartedGateway)
+        if (activeServerId != server.id) error("active server changed")
+        activeGatewayInfo = GatewayServerInfo(
+            version = health.version,
+            protocol = health.protocol,
+            os = health.os,
+            features = health.features.toSet(),
+        )
+        loadSessionsForActive(clearExisting = false)
+        return getGatewayRuntimeConfig(restartedGateway, server.token)
     }
 
     private fun disconnectAll() {

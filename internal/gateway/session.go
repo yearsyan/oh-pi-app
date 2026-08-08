@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,7 +22,7 @@ type piSession struct {
 	workspaceID string
 	command     string
 	args        []string
-	piPath      string
+	environment []string
 	workDir     string
 	maxEvent    int64
 	idleAfter   time.Duration
@@ -82,7 +81,7 @@ type piSessionConfig struct {
 	WorkspaceID    string
 	Command        string
 	Args           []string
-	PiPath         string
+	Environment    []string
 	WorkDir        string
 	MaxEventBytes  int64
 	InputQueueSize int
@@ -102,7 +101,7 @@ func newPiSession(cfg piSessionConfig) *piSession {
 		workspaceID:     cfg.WorkspaceID,
 		command:         cfg.Command,
 		args:            append([]string(nil), cfg.Args...),
-		piPath:          cfg.PiPath,
+		environment:     append([]string(nil), cfg.Environment...),
 		workDir:         cfg.WorkDir,
 		maxEvent:        cfg.MaxEventBytes,
 		idleAfter:       cfg.SessionIdle,
@@ -134,7 +133,7 @@ func (s *piSession) start() error {
 
 	s.cmd = newPiProcess(s.command, args...)
 	s.cmd.Dir = s.workDir
-	s.cmd.Env = childEnvironment(s.piPath)
+	s.cmd.Env = append([]string(nil), s.environment...)
 
 	stdin, err := s.cmd.StdinPipe()
 	if err != nil {
@@ -426,22 +425,4 @@ func splitLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		return len(data), data, nil
 	}
 	return 0, nil, nil
-}
-
-func childEnvironment(piPath string) []string {
-	environment := make([]string, 0, len(os.Environ()))
-	for _, entry := range os.Environ() {
-		name, _, _ := strings.Cut(entry, "=")
-		if strings.EqualFold(name, "OHPI_TOKEN") ||
-			strings.EqualFold(name, "OHPI_TOKEN_FILE") ||
-			strings.EqualFold(name, "OHPI_PI_ENV_PATH") ||
-			(piPath != "" && strings.EqualFold(name, "PATH")) {
-			continue
-		}
-		environment = append(environment, entry)
-	}
-	if piPath != "" {
-		environment = append(environment, "PATH="+piPath)
-	}
-	return environment
 }

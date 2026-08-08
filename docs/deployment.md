@@ -59,11 +59,13 @@ curl http://127.0.0.1:18080/healthz
   "OHPI_WORK_DIR": "/path/to/project",
   "OHPI_TITLE_MODEL": "auto",
   "OHPI_PI_COMMAND": "/absolute/path/to/pi",
-  "OHPI_PI_ENV_PATH": "/absolute/path/to/node/bin:/usr/local/bin:/usr/bin:/bin"
+  "OHPI_PI_ENV_PATH": "/absolute/path/to/node/bin:/usr/local/bin:/usr/bin:/bin",
+  "OHPI_PI_ENV_FILE": "~/.zshrc",
+  "OHPI_PI_ENV_SHELL": "/bin/zsh"
 }
 ```
 
-配置文件只接受上面六个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
+配置文件只接受上面八个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。`OHPI_PI_ENV_FILE` 和 `OHPI_PI_ENV_SHELL` 可一起省略，以禁用 shell 环境加载。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
@@ -77,6 +79,8 @@ curl http://127.0.0.1:18080/healthz
 | `--title-model` | `OHPI_TITLE_MODEL` | `auto` | 首条请求提交后并行生成标题；见下文模型选择 |
 | `--pi` | `OHPI_PI_COMMAND` | `pi` | pi 可执行文件 |
 | `--pi-env-path` | `OHPI_PI_ENV_PATH` | 继承网关 `PATH` | 只提供给 pi 子进程的 `PATH`；适用于 fnm、nvm 等 Node 安装 |
+| `--pi-env-file` | `OHPI_PI_ENV_FILE` | 无 | 网关启动时 source 一次，并把其中导出的变量提供给全部 pi 子进程；支持 `~` |
+| `--pi-env-shell` | `OHPI_PI_ENV_SHELL` | 按文件名或 `$SHELL` 推断 | source 环境文件所用 shell，例如 `/bin/zsh` 或 `/bin/bash` |
 | `--pi-arg` | 无 | 无 | 额外 pi 参数，可重复 |
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
 | `--max-message-bytes` | 无 | `134217728` | 单条 WS 命令和 pi 事件上限 |
@@ -96,6 +100,21 @@ curl http://127.0.0.1:18080/healthz
 ```
 
 `--mode`、`--session*`、`--continue`、`--resume`、`--fork` 和 `--no-session` 由网关管理，不能通过 `--pi-arg` 覆盖。
+
+### 复用 shell 环境
+
+LaunchAgent、systemd user service 和计划任务不会像交互式终端一样自动读取 `.zshrc` 或 `.bashrc`。配置 `OHPI_PI_ENV_FILE` 后，网关会在初始化时启动一次交互式 shell，显式 source 该文件，捕获导出的环境，然后由会话、能力探测和 Provider 管理进程共同复用。它不会为每个 pi 进程重复执行 rc 文件，也不要求在 plist 或 launcher 外再套一层 shell：
+
+```json
+{
+  "OHPI_PI_ENV_FILE": "~/.zshrc",
+  "OHPI_PI_ENV_SHELL": "/bin/zsh"
+}
+```
+
+文件名为 `.zshrc`、`.bashrc` 或 `.bash_profile` 时可以省略 shell。`OHPI_PI_ENV_PATH` 如果同时存在，会在 source 完成后覆盖 rc 文件导出的 `PATH`。`OHPI_TOKEN`、`OHPI_TOKEN_FILE` 和环境加载配置本身始终从 pi 子进程环境中移除。
+
+完整的个人 rc 文件可以使用，但其中所有 `export` 的非网关变量都会进入 pi；更严格的生产部署可以改用一个只导出 `PATH`、`JAVA_HOME`、`ANDROID_HOME` 等必要变量的专用文件。rc 文件是在网关用户权限下执行的，因此运行配置 API 只应开放给持有网关 token 的可信客户端。
 
 ### 会话标题模型
 
@@ -121,3 +140,4 @@ ohpi 会把内嵌的 pi extension 安装到 `<data-dir>/runtime/ohpi-session-tit
 - 默认只允许无 `Origin` 的非浏览器客户端和同源浏览器连接。跨域前端需要显式配置 `--allow-origin=https://app.example.com`。
 - 共享同一个 session 的客户端拥有同等控制权，也会看到彼此的输入、模型响应和工具输出。只把同一个 session ID 发给互相信任的客户端。
 - token 文件权限应限制为 `0600`。`OHPI_TOKEN` 不会传入 pi 子进程环境。
+- 运行配置 API 可以指定下次启动时执行的 shell 文件；网关 token 因而应视为远程代码执行级凭据，不能与不可信用户共享。

@@ -19,6 +19,8 @@ import (
 
 var version = "dev"
 
+const restartExitCode = 75
+
 type stringList []string
 
 func (values *stringList) String() string {
@@ -48,6 +50,8 @@ func run() int {
 	titleModel := flag.String("title-model", "auto", "session title model: auto, active, off, or provider/model-id")
 	piCommand := flag.String("pi", envOr("OHPI_PI_COMMAND", "pi"), "pi executable")
 	piEnvironmentPath := flag.String("pi-env-path", os.Getenv("OHPI_PI_ENV_PATH"), "PATH supplied to pi child processes")
+	piEnvironmentFile := flag.String("pi-env-file", os.Getenv("OHPI_PI_ENV_FILE"), "shell file sourced for pi child process environment")
+	piEnvironmentShell := flag.String("pi-env-shell", os.Getenv("OHPI_PI_ENV_SHELL"), "shell used to source --pi-env-file")
 	maxMessage := flag.Int64("max-message-bytes", 128<<20, "maximum WebSocket command and pi event size")
 	sessionIdle := flag.Duration("session-idle-timeout", 5*time.Minute, "stop a settled pi session after this idle period")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
@@ -76,6 +80,8 @@ func run() int {
 	*titleModel = resolveRuntimeConfigValue(*titleModel, explicitFlags["title-model"], "OHPI_TITLE_MODEL", fileConfig)
 	*piCommand = resolveRuntimeConfigValue(*piCommand, explicitFlags["pi"], "OHPI_PI_COMMAND", fileConfig)
 	*piEnvironmentPath = resolveRuntimeConfigValue(*piEnvironmentPath, explicitFlags["pi-env-path"], "OHPI_PI_ENV_PATH", fileConfig)
+	*piEnvironmentFile = resolveRuntimeConfigValue(*piEnvironmentFile, explicitFlags["pi-env-file"], "OHPI_PI_ENV_FILE", fileConfig)
+	*piEnvironmentShell = resolveRuntimeConfigValue(*piEnvironmentShell, explicitFlags["pi-env-shell"], "OHPI_PI_ENV_SHELL", fileConfig)
 	*titleModel, err = normalizeTitleModel(*titleModel)
 	if err != nil {
 		logger.Error("configure title model", "error", err)
@@ -107,18 +113,29 @@ func run() int {
 		)
 	}
 
+	restartRequest := make(chan struct{}, 1)
 	app, err := gateway.New(gateway.Config{
-		Token:             *token,
-		Version:           version,
-		DataDir:           *dataDir,
-		WorkDir:           *workDir,
-		PiCommand:         *piCommand,
-		PiEnvironmentPath: *piEnvironmentPath,
-		PiArgs:            piArgs,
-		AllowedOrigins:    allowedOrigins,
-		MaxMessageBytes:   *maxMessage,
-		SessionIdle:       *sessionIdle,
-		Logger:            logger,
+		Token:              *token,
+		Version:            version,
+		DataDir:            *dataDir,
+		WorkDir:            *workDir,
+		PiCommand:          *piCommand,
+		PiEnvironmentPath:  *piEnvironmentPath,
+		PiEnvironmentFile:  *piEnvironmentFile,
+		PiEnvironmentShell: *piEnvironmentShell,
+		PiArgs:             piArgs,
+		RuntimeConfigPath:  *configFile,
+		TitleModel:         *titleModel,
+		RequestRestart: func() {
+			select {
+			case restartRequest <- struct{}{}:
+			default:
+			}
+		},
+		AllowedOrigins:  allowedOrigins,
+		MaxMessageBytes: *maxMessage,
+		SessionIdle:     *sessionIdle,
+		Logger:          logger,
 	})
 	if err != nil {
 		logger.Error("configure ohpi-gateway", "error", err)
@@ -142,9 +159,13 @@ func run() int {
 	}()
 
 	exitCode := 0
+	restartRequested := false
 	select {
 	case <-signalContext.Done():
 		logger.Info("shutdown requested")
+	case <-restartRequest:
+		restartRequested = true
+		logger.Info("restart requested")
 	case err := <-serveResult:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server stopped", "error", err)
@@ -165,6 +186,9 @@ func run() int {
 		exitCode = 1
 	}
 	cancelHTTP()
+	if restartRequested && exitCode == 0 {
+		exitCode = restartExitCode
+	}
 	return exitCode
 }
 

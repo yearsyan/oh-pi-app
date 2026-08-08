@@ -27,6 +27,7 @@ private const val PiNpmPackage = "@earendil-works/pi-coding-agent"
 private const val PowerShellStdin =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
 internal const val GATEWAY_FEATURE_SESSION_PROCESS_STOP = "session_process_stop"
+internal const val GATEWAY_FEATURE_RUNTIME_CONFIG = "runtime_config_v1"
 
 internal enum class ManagedHostOs(val releaseName: String) {
     Macos("darwin"),

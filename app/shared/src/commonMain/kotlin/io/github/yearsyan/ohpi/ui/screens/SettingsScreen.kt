@@ -56,9 +56,11 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,6 +87,7 @@ import io.github.yearsyan.ohpi.data.ThemeMode
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
+import io.github.yearsyan.ohpi.net.GatewayRuntimeConfig
 import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.GatewayServerInfo
@@ -103,6 +106,7 @@ private val SettingsListPaneWidth = 320.dp
 /** Top-level settings destinations shown in the master list; each opens a detail page. */
 enum class SettingsSection {
     Servers,
+    Gateway,
     SshKeys,
     Providers,
     Appearance,
@@ -428,6 +432,11 @@ private fun SettingsDetail(
             onAddServer = onAddServer,
         )
 
+        SettingsSection.Gateway -> GatewayRuntimeSettingsDetail(
+            vm = vm,
+            onBack = onBack,
+        )
+
         SettingsSection.SshKeys -> SshKeysSettingsDetail(
             sshKeys = sshKeys,
             servers = servers,
@@ -574,6 +583,254 @@ private fun ServersSettingsDetail(
             onConfirm = {
                 stopping = null
                 onStopManagedGateway()
+            },
+        )
+    }
+}
+
+private enum class GatewayEnvironmentPreset { None, Zsh, Bash, Custom }
+
+private fun gatewayEnvironmentPreset(file: String, shell: String): GatewayEnvironmentPreset {
+    if (file.isBlank()) return GatewayEnvironmentPreset.None
+    val normalizedFile = file.lowercase()
+    val normalizedShell = shell.lowercase()
+    if ((normalizedFile == "~/.zshrc" || normalizedFile.endsWith("/.zshrc")) &&
+        (normalizedShell.isBlank() || normalizedShell.endsWith("/zsh"))
+    ) {
+        return GatewayEnvironmentPreset.Zsh
+    }
+    if ((normalizedFile == "~/.bashrc" || normalizedFile.endsWith("/.bashrc")) &&
+        (normalizedShell.isBlank() || normalizedShell.endsWith("/bash"))
+    ) {
+        return GatewayEnvironmentPreset.Bash
+    }
+    return GatewayEnvironmentPreset.Custom
+}
+
+@Composable
+private fun GatewayRuntimeSettingsDetail(
+    vm: AppViewModel,
+    onBack: (() -> Unit)?,
+) {
+    val strings = S
+    val scope = rememberCoroutineScope()
+    val serverId = vm.activeServer?.id
+    val gatewayInfo = vm.activeGatewayInfo
+    val supported = gatewayInfo?.supportsRuntimeConfig == true
+    var config by remember(serverId) { mutableStateOf<GatewayRuntimeConfig?>(null) }
+    var loading by remember(serverId) { mutableStateOf(false) }
+    var busy by remember(serverId) { mutableStateOf(false) }
+    var error by remember(serverId) { mutableStateOf<String?>(null) }
+    var status by remember(serverId) { mutableStateOf<String?>(null) }
+    var reloadKey by remember(serverId) { mutableStateOf(0) }
+    var titleModel by remember(serverId) { mutableStateOf("auto") }
+    var environmentPreset by remember(serverId) { mutableStateOf(GatewayEnvironmentPreset.None) }
+    var customEnvironmentFile by remember(serverId) { mutableStateOf("") }
+    var customEnvironmentShell by remember(serverId) { mutableStateOf("") }
+    var confirmRestart by remember(serverId) { mutableStateOf(false) }
+
+    fun applyConfig(value: GatewayRuntimeConfig) {
+        config = value
+        titleModel = value.titleModel
+        customEnvironmentFile = value.piEnvironmentFile
+        customEnvironmentShell = value.piEnvironmentShell
+        environmentPreset = gatewayEnvironmentPreset(value.piEnvironmentFile, value.piEnvironmentShell)
+    }
+
+    LaunchedEffect(serverId, supported, reloadKey) {
+        if (serverId == null || !supported) return@LaunchedEffect
+        loading = true
+        error = null
+        try {
+            applyConfig(vm.loadGatewayRuntimeConfig())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            error = strings.gatewayRuntimeFailed(failure.message ?: "unknown error")
+        } finally {
+            loading = false
+        }
+    }
+
+    fun save(restart: Boolean) {
+        val (environmentFile, environmentShell) = when (environmentPreset) {
+            GatewayEnvironmentPreset.None -> "" to ""
+            GatewayEnvironmentPreset.Zsh -> "~/.zshrc" to "/bin/zsh"
+            GatewayEnvironmentPreset.Bash -> "~/.bashrc" to "/bin/bash"
+            GatewayEnvironmentPreset.Custom ->
+                customEnvironmentFile.trim() to customEnvironmentShell.trim()
+        }
+        scope.launch {
+            busy = true
+            error = null
+            status = null
+            try {
+                var updated = vm.saveGatewayRuntimeConfig(
+                    titleModel = titleModel.trim(),
+                    piEnvironmentFile = environmentFile,
+                    piEnvironmentShell = environmentShell,
+                )
+                if (restart) {
+                    updated = vm.restartGatewayRuntime()
+                }
+                applyConfig(updated)
+                status = if (restart) strings.gatewayRuntimeRestarted else strings.gatewayRuntimeSaved
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                error = strings.gatewayRuntimeFailed(failure.message ?: "unknown error")
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    SettingsDetailScaffold(title = S.gatewayRuntimeSection, onBack = onBack) {
+        when {
+            serverId == null -> Text(
+                S.gatewayRuntimeUnavailable,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            gatewayInfo != null && !supported -> Text(
+                S.gatewayRuntimeUnsupported,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(S.gatewayRuntimeLoading)
+            }
+
+            config == null -> {
+                Text(
+                    error ?: S.gatewayRuntimeUnavailable,
+                    color = if (error == null) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+                if (supported) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { reloadKey++ }) { Text(S.retry) }
+                }
+            }
+
+            else -> {
+                Text(
+                    S.gatewayEnvironmentSource,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                val presets = listOf(
+                    GatewayEnvironmentPreset.None to S.gatewayEnvironmentNone,
+                    GatewayEnvironmentPreset.Zsh to "zsh",
+                    GatewayEnvironmentPreset.Bash to "bash",
+                    GatewayEnvironmentPreset.Custom to S.gatewayEnvironmentCustom,
+                )
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    presets.forEachIndexed { index, (preset, label) ->
+                        SegmentedButton(
+                            selected = environmentPreset == preset,
+                            onClick = { environmentPreset = preset },
+                            enabled = !busy,
+                            shape = SegmentedButtonDefaults.itemShape(index, presets.size),
+                        ) { Text(label, maxLines = 1) }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    S.gatewayEnvironmentHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (environmentPreset == GatewayEnvironmentPreset.Custom) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = customEnvironmentFile,
+                        onValueChange = { customEnvironmentFile = it },
+                        label = { Text(S.gatewayEnvironmentFile) },
+                        enabled = !busy,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customEnvironmentShell,
+                        onValueChange = { customEnvironmentShell = it },
+                        label = { Text(S.gatewayEnvironmentShell) },
+                        enabled = !busy,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Spacer(Modifier.height(22.dp))
+                OutlinedTextField(
+                    value = titleModel,
+                    onValueChange = { titleModel = it },
+                    label = { Text(S.gatewayTitleModel) },
+                    supportingText = { Text(S.gatewayTitleModelHint) },
+                    enabled = !busy,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                config?.takeIf { it.restartRequired }?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        S.gatewayRuntimeRestartRequired,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                status?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                }
+
+                val customSourceValid =
+                    environmentPreset != GatewayEnvironmentPreset.Custom || customEnvironmentFile.isNotBlank()
+                val canSave = !busy && titleModel.isNotBlank() && customSourceValid
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { save(restart = false) },
+                        enabled = canSave,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(S.gatewayRuntimeSave) }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = { confirmRestart = true },
+                        enabled = canSave && config?.restartSupported == true,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(S.gatewayRuntimeSaveAndRestart) }
+                }
+                if (busy) {
+                    Spacer(Modifier.height(12.dp))
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+    }
+
+    if (confirmRestart) {
+        ConfirmDialog(
+            title = S.gatewayRuntimeRestartTitle,
+            body = S.gatewayRuntimeRestartBody,
+            confirmLabel = S.gatewayRuntimeRestartConfirm,
+            onDismiss = { confirmRestart = false },
+            onConfirm = {
+                confirmRestart = false
+                save(restart = true)
             },
         )
     }
@@ -811,6 +1068,7 @@ private fun AboutContent() {
 
 private fun settingsSectionIcon(section: SettingsSection): ImageVector = when (section) {
     SettingsSection.Servers -> Icons.Filled.Cloud
+    SettingsSection.Gateway -> Icons.Filled.Settings
     SettingsSection.SshKeys -> Icons.Filled.Key
     SettingsSection.Providers -> Icons.Filled.Psychology
     SettingsSection.Appearance -> Icons.Filled.Palette
@@ -822,6 +1080,7 @@ private fun settingsSectionIcon(section: SettingsSection): ImageVector = when (s
 private fun settingsSectionTitle(section: SettingsSection, strings: Strings): String =
     when (section) {
         SettingsSection.Servers -> strings.serversSection
+        SettingsSection.Gateway -> strings.gatewayRuntimeSection
         SettingsSection.SshKeys -> strings.sshKeysSection
         SettingsSection.Providers -> strings.providersSection
         SettingsSection.Appearance -> strings.appearanceSection
@@ -839,6 +1098,7 @@ private fun settingsSectionSubtitle(
     language: AppLanguage,
 ): String? = when (section) {
     SettingsSection.Servers -> activeServer?.displayName
+    SettingsSection.Gateway -> strings.gatewayRuntimeDescription
     SettingsSection.SshKeys -> strings.sshKeyCount(sshKeyCount)
     SettingsSection.Providers -> strings.providerSettingsDescription
     SettingsSection.Appearance -> when (themeMode) {

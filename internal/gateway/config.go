@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,7 +26,22 @@ type Config struct {
 	PiCommand string
 	// PiEnvironmentPath overrides PATH only for pi child processes.
 	PiEnvironmentPath string
-	PiArgs            []string
+	// PiEnvironmentFile is sourced once when the gateway starts. Only exported
+	// variables are copied into pi child processes.
+	PiEnvironmentFile string
+	// PiEnvironmentShell selects the shell used to source PiEnvironmentFile.
+	// When empty, the gateway infers zsh or bash from the file name and falls
+	// back to the user's login shell.
+	PiEnvironmentShell string
+	PiArgs             []string
+	// RuntimeConfigPath enables the authenticated runtime configuration API.
+	RuntimeConfigPath string
+	// TitleModel is the effective title model exposed by the runtime
+	// configuration API.
+	TitleModel string
+	// RequestRestart asks the process supervisor to restart the gateway by
+	// causing the current process to exit after a graceful shutdown.
+	RequestRestart func()
 	// ProviderPiArgs are prepended only to short-lived provider-management
 	// probes. Production leaves this empty; tests use it to launch the helper
 	// process through the Go test binary without leaking session extensions or
@@ -42,6 +56,8 @@ type Config struct {
 	SessionIdle     time.Duration
 	HistoryTimeout  time.Duration
 	Logger          *slog.Logger
+
+	piEnvironment []string
 }
 
 func (c Config) withDefaults() (Config, error) {
@@ -109,6 +125,17 @@ func (c Config) withDefaults() (Config, error) {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
+	if c.TitleModel == "" {
+		c.TitleModel = "auto"
+	}
+	if strings.TrimSpace(c.PiEnvironmentFile) == "" && strings.TrimSpace(c.PiEnvironmentShell) != "" {
+		return Config{}, fmt.Errorf("pi environment shell requires an environment file")
+	}
+	var err error
+	c.TitleModel, err = normalizeRuntimeTitleModel(c.TitleModel)
+	if err != nil {
+		return Config{}, fmt.Errorf("configure title model: %w", err)
+	}
 
 	for _, arg := range c.PiArgs {
 		if isReservedPiArg(arg) {
@@ -116,7 +143,12 @@ func (c Config) withDefaults() (Config, error) {
 		}
 	}
 
-	piPath, err := exec.LookPath(c.PiCommand)
+	c.piEnvironment, err = loadPiEnvironment(c)
+	if err != nil {
+		return Config{}, err
+	}
+
+	piPath, err := lookPathInEnvironment(c.PiCommand, c.piEnvironment)
 	if err != nil {
 		return Config{}, fmt.Errorf("find pi executable %q: %w", c.PiCommand, err)
 	}
@@ -137,6 +169,16 @@ func (c Config) withDefaults() (Config, error) {
 	c.DataDir, err = filepath.Abs(c.DataDir)
 	if err != nil {
 		return Config{}, fmt.Errorf("resolve data directory: %w", err)
+	}
+	if c.RuntimeConfigPath != "" {
+		c.RuntimeConfigPath, err = expandUserPath(c.RuntimeConfigPath)
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve runtime configuration path: %w", err)
+		}
+		c.RuntimeConfigPath, err = filepath.Abs(c.RuntimeConfigPath)
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve runtime configuration path: %w", err)
+		}
 	}
 	return c, nil
 }

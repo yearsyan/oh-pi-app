@@ -225,7 +225,7 @@ func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabil
 	args = append(args, "--mode", "rpc", "--no-session")
 	command := newPiProcessContext(ctx, cfg.PiCommand, args...)
 	command.Dir = workDir
-	command.Env = childEnvironment(cfg.PiEnvironmentPath)
+	command.Env = cfg.childEnvironment()
 
 	stdin, err := command.StdinPipe()
 	if err != nil {

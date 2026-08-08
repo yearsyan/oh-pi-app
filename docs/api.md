@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.0.0","protocol":2,"os":"darwin","features":["workspaces_v2","session_process_stop"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.1.0","protocol":2,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
 ```
 
 ```http
@@ -17,6 +17,46 @@ Authorization: Bearer <TOKEN>
 ```
 
 WebSocket 连接通过 `token` query 参数鉴权。生产环境务必使用 `wss://` 并关闭或脱敏反向代理的 query 日志。
+
+## 网关运行配置与重启
+
+带有 `runtime_config_v1` feature 的网关允许可信客户端读取和修改下次启动生效的配置：
+
+```http
+GET /api/runtime-config
+Authorization: Bearer <TOKEN>
+```
+
+```json
+{
+  "title_model": "auto",
+  "pi_env_file": "~/.zshrc",
+  "pi_env_shell": "/bin/zsh",
+  "restart_required": false,
+  "restart_supported": true
+}
+```
+
+`PATCH` 可以提交其中任意配置字段；空的 `pi_env_file` 会同时移除 shell 配置并禁用环境加载。网关会验证 title model、环境文件和 shell，原配置文件中的监听地址、数据目录等其他字段保持不变：
+
+```http
+PATCH /api/runtime-config
+Authorization: Bearer <TOKEN>
+Content-Type: application/json
+
+{"title_model":"active","pi_env_file":"~/.bashrc","pi_env_shell":"/bin/bash"}
+```
+
+保存不会打断当前会话。响应中的 `restart_required` 为 `true` 时可请求优雅重启：
+
+```http
+POST /api/runtime-restart
+Authorization: Bearer <TOKEN>
+```
+
+接口返回 HTTP 202 后，网关停止 pi 子进程和 HTTP 服务并以非零重启码退出；LaunchAgent、systemd user service 或 App 安装的计划任务会重新拉起它。未由进程管理器托管时，进程只会退出，不会自行派生替代进程。重启进行中 `/healthz` 返回 HTTP 503，直到新进程就绪。
+
+环境文件以网关用户权限执行，因此这些接口应视为远程代码执行级管理能力，只允许持有私密 Bearer token 的可信客户端访问。
 
 ## 工作空间与会话 HTTP API
 

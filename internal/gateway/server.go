@@ -35,16 +35,18 @@ const gatewayProtocolVersion = 2
 
 const gatewayFeatureSessionProcessStop = "session_process_stop"
 const gatewayFeatureWorkspaces = "workspaces_v2"
+const gatewayFeatureRuntimeConfig = "runtime_config_v1"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
-	cfg          Config
-	manager      *sessionManager
-	workspaces   *workspaceStore
-	capabilities *capabilitiesLoader
-	providers    *providerService
-	upgrader     websocket.Upgrader
-	handler      http.Handler
+	cfg           Config
+	manager       *sessionManager
+	workspaces    *workspaceStore
+	capabilities  *capabilitiesLoader
+	providers     *providerService
+	runtimeConfig *runtimeConfigService
+	upgrader      websocket.Upgrader
+	handler       http.Handler
 }
 
 // New constructs a gateway and initializes its persistent session store.
@@ -70,11 +72,12 @@ func New(cfg Config) (*Gateway, error) {
 	}
 
 	gateway := &Gateway{
-		cfg:          cfg,
-		manager:      newSessionManager(cfg, store, workspaces),
-		workspaces:   workspaces,
-		capabilities: newCapabilitiesLoader(cfg),
-		providers:    newProviderService(cfg, providerExtension),
+		cfg:           cfg,
+		manager:       newSessionManager(cfg, store, workspaces),
+		workspaces:    workspaces,
+		capabilities:  newCapabilitiesLoader(cfg),
+		providers:     newProviderService(cfg, providerExtension),
+		runtimeConfig: newRuntimeConfigService(cfg),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -91,6 +94,10 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/api/provider-auth", gateway.handleProviderAuth)
 	mux.HandleFunc("/api/workspaces", gateway.handleWorkspaces)
 	mux.HandleFunc("/api/workspaces/", gateway.handleWorkspace)
+	if gateway.runtimeConfig != nil {
+		mux.HandleFunc("/api/runtime-config", gateway.handleRuntimeConfig)
+		mux.HandleFunc("/api/runtime-restart", gateway.handleRuntimeRestart)
+	}
 	mux.HandleFunc("/ws", gateway.handleWebSocket)
 	filebrowser.New(filebrowser.Config{
 		Authenticate: gateway.authenticated,
@@ -117,6 +124,15 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET is allowed")
 		return
 	}
+	if g.runtimeConfig != nil && g.runtimeConfig.restarting.Load() {
+		writer.Header().Set("Retry-After", "1")
+		writeHTTPError(writer, http.StatusServiceUnavailable, "restarting", "gateway restart is in progress")
+		return
+	}
+	features := []string{gatewayFeatureWorkspaces, gatewayFeatureSessionProcessStop}
+	if g.runtimeConfig != nil {
+		features = append(features, gatewayFeatureRuntimeConfig)
+	}
 	writeJSONResponse(writer, http.StatusOK, struct {
 		Status   string   `json:"status"`
 		Service  string   `json:"service"`
@@ -130,7 +146,7 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		Version:  g.cfg.Version,
 		Protocol: gatewayProtocolVersion,
 		OS:       runtime.GOOS,
-		Features: []string{gatewayFeatureWorkspaces, gatewayFeatureSessionProcessStop},
+		Features: features,
 	})
 }
 

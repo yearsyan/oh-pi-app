@@ -380,7 +380,7 @@ func (m *sessionManager) getOrStart(
 			WorkspaceID:    workspaceID,
 			Command:        m.cfg.PiCommand,
 			Args:           args,
-			PiPath:         m.cfg.PiEnvironmentPath,
+			Environment:    m.cfg.childEnvironment(),
 			WorkDir:        workDir,
 			MaxEventBytes:  m.cfg.MaxMessageBytes,
 			InputQueueSize: m.cfg.InputQueueSize,

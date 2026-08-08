@@ -15,7 +15,9 @@ func TestLoadRuntimeConfig(t *testing.T) {
   "OHPI_WORK_DIR": "/tmp/project folder",
   "OHPI_TITLE_MODEL": "openai/gpt-5-nano",
   "OHPI_PI_COMMAND": "/opt/pi/bin/pi",
-  "OHPI_PI_ENV_PATH": "/opt/pi/bin:/usr/bin:/bin"
+  "OHPI_PI_ENV_PATH": "/opt/pi/bin:/usr/bin:/bin",
+  "OHPI_PI_ENV_FILE": "~/.zshrc",
+  "OHPI_PI_ENV_SHELL": "/bin/zsh"
 }`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -26,12 +28,14 @@ func TestLoadRuntimeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := runtimeConfig{
-		"OHPI_LISTEN":      "0.0.0.0:18080",
-		"OHPI_DATA_DIR":    "/tmp/ohpi state",
-		"OHPI_WORK_DIR":    "/tmp/project folder",
-		"OHPI_TITLE_MODEL": "openai/gpt-5-nano",
-		"OHPI_PI_COMMAND":  "/opt/pi/bin/pi",
-		"OHPI_PI_ENV_PATH": "/opt/pi/bin:/usr/bin:/bin",
+		"OHPI_LISTEN":       "0.0.0.0:18080",
+		"OHPI_DATA_DIR":     "/tmp/ohpi state",
+		"OHPI_WORK_DIR":     "/tmp/project folder",
+		"OHPI_TITLE_MODEL":  "openai/gpt-5-nano",
+		"OHPI_PI_COMMAND":   "/opt/pi/bin/pi",
+		"OHPI_PI_ENV_PATH":  "/opt/pi/bin:/usr/bin:/bin",
+		"OHPI_PI_ENV_FILE":  "~/.zshrc",
+		"OHPI_PI_ENV_SHELL": "/bin/zsh",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("loaded %d values, want %d", len(got), len(want))

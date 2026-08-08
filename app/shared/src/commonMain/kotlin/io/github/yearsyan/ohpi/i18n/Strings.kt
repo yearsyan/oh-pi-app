@@ -323,6 +323,28 @@ interface Strings {
     val managedGatewayStopped: String
     val managedGatewayStopFailed: (String) -> String
     val gatewayVersion: (String, Int) -> String
+    val gatewayRuntimeSection: String
+    val gatewayRuntimeDescription: String
+    val gatewayRuntimeUnavailable: String
+    val gatewayRuntimeUnsupported: String
+    val gatewayRuntimeLoading: String
+    val gatewayEnvironmentSource: String
+    val gatewayEnvironmentNone: String
+    val gatewayEnvironmentCustom: String
+    val gatewayEnvironmentFile: String
+    val gatewayEnvironmentShell: String
+    val gatewayEnvironmentHint: String
+    val gatewayTitleModel: String
+    val gatewayTitleModelHint: String
+    val gatewayRuntimeSave: String
+    val gatewayRuntimeSaveAndRestart: String
+    val gatewayRuntimeRestartRequired: String
+    val gatewayRuntimeSaved: String
+    val gatewayRuntimeRestarted: String
+    val gatewayRuntimeFailed: (String) -> String
+    val gatewayRuntimeRestartTitle: String
+    val gatewayRuntimeRestartBody: String
+    val gatewayRuntimeRestartConfirm: String
     val appearanceSection: String
     val themeSystem: String
     val themeLight: String
@@ -751,6 +773,28 @@ object EnStrings : Strings {
         val label = if (version == "dev" || version.startsWith("v")) version else "v$version"
         "Gateway $label · protocol $protocol"
     }
+    override val gatewayRuntimeSection = "Gateway runtime"
+    override val gatewayRuntimeDescription = "Shell environment, title model, and restart"
+    override val gatewayRuntimeUnavailable = "Connect to a server before editing gateway runtime settings."
+    override val gatewayRuntimeUnsupported = "This gateway does not support runtime settings. Upgrade the gateway first."
+    override val gatewayRuntimeLoading = "Loading gateway settings…"
+    override val gatewayEnvironmentSource = "pi environment"
+    override val gatewayEnvironmentNone = "None"
+    override val gatewayEnvironmentCustom = "Custom"
+    override val gatewayEnvironmentFile = "File to source"
+    override val gatewayEnvironmentShell = "Shell"
+    override val gatewayEnvironmentHint = "The gateway sources this file once at startup and passes only exported variables to pi."
+    override val gatewayTitleModel = "Title model"
+    override val gatewayTitleModelHint = "auto, active, off, or provider/model-id"
+    override val gatewayRuntimeSave = "Save"
+    override val gatewayRuntimeSaveAndRestart = "Save & restart"
+    override val gatewayRuntimeRestartRequired = "Restart the gateway to apply these settings."
+    override val gatewayRuntimeSaved = "Gateway settings saved"
+    override val gatewayRuntimeRestarted = "Gateway restarted with the new settings"
+    override val gatewayRuntimeFailed = { error: String -> "Could not update gateway settings: $error" }
+    override val gatewayRuntimeRestartTitle = "Save and restart the gateway?"
+    override val gatewayRuntimeRestartBody = "Active chats and pi processes will disconnect while the supervised gateway restarts."
+    override val gatewayRuntimeRestartConfirm = "Save & restart"
     override val appearanceSection = "Appearance"
     override val themeSystem = "System"
     override val themeLight = "Light"
@@ -1174,6 +1218,28 @@ object ZhStrings : Strings {
         val label = if (version == "dev" || version.startsWith("v")) version else "v$version"
         "网关 $label · 协议 $protocol"
     }
+    override val gatewayRuntimeSection = "网关运行环境"
+    override val gatewayRuntimeDescription = "Shell 环境、标题模型与重启"
+    override val gatewayRuntimeUnavailable = "请先连接服务器，再编辑网关运行配置。"
+    override val gatewayRuntimeUnsupported = "当前网关不支持运行配置接口，请先升级网关。"
+    override val gatewayRuntimeLoading = "正在读取网关配置…"
+    override val gatewayEnvironmentSource = "pi 环境"
+    override val gatewayEnvironmentNone = "不加载"
+    override val gatewayEnvironmentCustom = "自定义"
+    override val gatewayEnvironmentFile = "要 source 的文件"
+    override val gatewayEnvironmentShell = "Shell"
+    override val gatewayEnvironmentHint = "网关启动时只 source 一次，并把其中导出的环境变量传给所有 pi 进程。"
+    override val gatewayTitleModel = "标题模型"
+    override val gatewayTitleModelHint = "auto、active、off 或 provider/model-id"
+    override val gatewayRuntimeSave = "保存"
+    override val gatewayRuntimeSaveAndRestart = "保存并重启"
+    override val gatewayRuntimeRestartRequired = "需要重启网关才能应用这些配置。"
+    override val gatewayRuntimeSaved = "网关配置已保存"
+    override val gatewayRuntimeRestarted = "网关已使用新配置重启"
+    override val gatewayRuntimeFailed = { error: String -> "更新网关配置失败：$error" }
+    override val gatewayRuntimeRestartTitle = "保存并重启网关？"
+    override val gatewayRuntimeRestartBody = "托管网关重启期间，当前聊天和 pi 进程会断开。"
+    override val gatewayRuntimeRestartConfirm = "保存并重启"
     override val appearanceSection = "外观"
     override val themeSystem = "跟随系统"
     override val themeLight = "浅色"
