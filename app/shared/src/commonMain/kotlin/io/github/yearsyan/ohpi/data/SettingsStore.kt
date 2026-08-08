@@ -61,6 +61,11 @@ class SettingsStore(private val settings: Settings = createSettings()) {
             .let { v -> AppLanguage.entries.firstOrNull { it.name == v } ?: AppLanguage.System }
         set(value) = settings.putString(KEY_LANGUAGE, value.name)
 
+    /** Wide-layout session list collapsed to a slim rail. */
+    var sidebarCollapsed: Boolean
+        get() = settings.getBoolean(KEY_SIDEBAR_COLLAPSED, false)
+        set(value) = settings.putBoolean(KEY_SIDEBAR_COLLAPSED, value)
+
     var lastSessionId: String
         get() = settings.getString(KEY_LAST_SESSION, "")
         set(value) = settings.putString(KEY_LAST_SESSION, value)
@@ -92,6 +97,7 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         private const val KEY_ACTIVE_SERVER = "active_server"
         private const val KEY_THEME = "theme_mode"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_SIDEBAR_COLLAPSED = "sidebar_collapsed"
         private const val KEY_LAST_SESSION = "last_session"
         private const val KEY_SESSIONS = "sessions_" // pre-server-list releases
         private const val KEY_LAST_WORKSPACE_ID = "last_workspace_id_"

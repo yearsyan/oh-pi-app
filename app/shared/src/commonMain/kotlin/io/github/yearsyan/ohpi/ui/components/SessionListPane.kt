@@ -64,6 +64,7 @@ import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.ui.GatewayHostOs
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Add
@@ -101,6 +102,7 @@ fun SessionListPane(
     onBrowseFiles: () -> Unit,
     onOpenPortForwards: () -> Unit,
     modifier: Modifier = Modifier,
+    onCollapse: (() -> Unit)? = null,
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
     var stopCandidate by remember { mutableStateOf<SavedSession?>(null) }
@@ -118,6 +120,14 @@ fun SessionListPane(
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.weight(1f))
+            if (onCollapse != null) {
+                IconButton(onClick = onCollapse) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = S.collapseSidebar,
+                    )
+                }
+            }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Filled.Settings, contentDescription = S.settingsTitle)
             }

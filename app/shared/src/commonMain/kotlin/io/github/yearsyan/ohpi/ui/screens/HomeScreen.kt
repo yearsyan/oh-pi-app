@@ -3,17 +3,21 @@ package io.github.yearsyan.ohpi.ui.screens
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,7 +26,13 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,6 +46,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -62,6 +74,7 @@ import kotlinx.serialization.Serializable
 
 private val WideBreakpoint = 840.dp
 private val ListPaneWidth = 300.dp
+private val ListRailWidth = 64.dp
 
 // Navigation resolves serializers from KType at runtime. These route classes
 // must not be private because the JVM serializer needs to access object fields.
@@ -421,30 +434,49 @@ private fun WideHome(
     onOpenPortForwards: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
-        SessionListPane(
-            workspaces = vm.workspaces,
-            servers = vm.servers,
-            activeServer = vm.activeServer,
-            activeChatId = vm.activeChatId,
-            wide = true,
-            sessionsLoading = vm.sessionsLoading,
-            onRefresh = vm::refreshSessions,
-            onNewChat = onRequestNewChat,
-            onSelectSession = { vm.selectChatWide(it.id) },
-            onSelectServer = onSelectServer,
-            onOpenSettings = onOpenSettings,
-            onRenameSession = onRenameSession,
-            onDeleteSession = { onDeleteSession(it.id) },
-            onStopSessionProcess = { vm.stopSessionProcess(it.id) },
-            onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
-            onEditWorkspace = onEditWorkspace,
-            sessionProcessStopSupported =
-                vm.activeGatewayInfo?.supportsSessionProcessStop == true,
-            hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
-            onBrowseFiles = { onBrowseFiles("") },
-            onOpenPortForwards = onOpenPortForwards,
-            modifier = Modifier.width(ListPaneWidth),
+        // Sidebar animates between the full list pane and a slim rail.
+        val collapsed = vm.sidebarCollapsed
+        val sidebarWidth by animateDpAsState(
+            targetValue = if (collapsed) ListRailWidth else ListPaneWidth,
+            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+            label = "sidebarWidth",
         )
+        Box(Modifier.width(sidebarWidth).fillMaxHeight().clipToBounds()) {
+            if (collapsed) {
+                SessionListRail(
+                    onExpand = { vm.updateSidebarCollapsed(false) },
+                    onNewChat = onRequestNewChat,
+                    onOpenSettings = onOpenSettings,
+                    modifier = Modifier.width(ListRailWidth),
+                )
+            } else {
+                SessionListPane(
+                    workspaces = vm.workspaces,
+                    servers = vm.servers,
+                    activeServer = vm.activeServer,
+                    activeChatId = vm.activeChatId,
+                    wide = true,
+                    sessionsLoading = vm.sessionsLoading,
+                    onRefresh = vm::refreshSessions,
+                    onNewChat = onRequestNewChat,
+                    onSelectSession = { vm.selectChatWide(it.id) },
+                    onSelectServer = onSelectServer,
+                    onOpenSettings = onOpenSettings,
+                    onRenameSession = onRenameSession,
+                    onDeleteSession = { onDeleteSession(it.id) },
+                    onStopSessionProcess = { vm.stopSessionProcess(it.id) },
+                    onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
+                    onEditWorkspace = onEditWorkspace,
+                    sessionProcessStopSupported =
+                        vm.activeGatewayInfo?.supportsSessionProcessStop == true,
+                    hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
+                    onBrowseFiles = { onBrowseFiles("") },
+                    onOpenPortForwards = onOpenPortForwards,
+                    modifier = Modifier.width(ListPaneWidth),
+                    onCollapse = { vm.updateSidebarCollapsed(true) },
+                )
+            }
+        }
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Box(Modifier.weight(1f)) {
             val chatId = vm.activeChatId
@@ -469,6 +501,50 @@ private fun WideHome(
                 WideEmptyState(onNewChat = onRequestNewChat)
             }
         }
+    }
+}
+
+/** Slim rail shown when the wide-layout session list sidebar is collapsed. */
+@Composable
+private fun SessionListRail(
+    onExpand: () -> Unit,
+    onNewChat: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(12.dp))
+        IconButton(onClick = onExpand) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = S.expandSidebar,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        // new chat
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable(onClick = onNewChat),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = S.newChat,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onOpenSettings) {
+            Icon(Icons.Filled.Settings, contentDescription = S.settingsTitle)
+        }
+        Spacer(Modifier.height(12.dp))
     }
 }
 

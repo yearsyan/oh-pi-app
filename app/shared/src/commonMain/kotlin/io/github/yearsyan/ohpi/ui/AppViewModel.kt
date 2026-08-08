@@ -136,6 +136,7 @@ class AppViewModel(
     var activeServerId by mutableStateOf(""); private set
     var themeMode by mutableStateOf(ThemeMode.System); private set
     var language by mutableStateOf(AppLanguage.System); private set
+    var sidebarCollapsed by mutableStateOf(false); private set
     var workspaces = mutableStateListOf<WorkspaceSummary>(); private set
     var sessions = mutableStateListOf<SavedSession>(); private set
     var providers = mutableStateListOf<GatewayProvider>(); private set
@@ -174,6 +175,7 @@ class AppViewModel(
         activeServerId = store.activeServerId
         themeMode = store.themeMode
         language = store.language
+        sidebarCollapsed = store.sidebarCollapsed
         loadSessionsForActive()
         syncPortForwards()
     }
@@ -392,6 +394,12 @@ class AppViewModel(
     fun updateLanguage(lang: AppLanguage) {
         language = lang
         store.language = lang
+    }
+
+    /** Collapses or expands the wide-layout session list sidebar. */
+    fun updateSidebarCollapsed(collapsed: Boolean) {
+        sidebarCollapsed = collapsed
+        store.sidebarCollapsed = collapsed
     }
 
     // ---- built-in providers ----

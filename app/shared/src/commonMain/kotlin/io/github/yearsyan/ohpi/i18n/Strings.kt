@@ -160,6 +160,8 @@ interface Strings {
     val defaultWorkspace: String
     val expandWorkspace: String
     val collapseWorkspace: String
+    val expandSidebar: String
+    val collapseSidebar: String
     val showMoreSessions: (Int) -> String
     val showLessSessions: String
     val selectThisDirectory: String
@@ -585,6 +587,8 @@ object EnStrings : Strings {
     override val defaultWorkspace = "Default workspace"
     override val expandWorkspace = "Expand workspace"
     override val collapseWorkspace = "Collapse workspace"
+    override val expandSidebar = "Expand session list"
+    override val collapseSidebar = "Collapse session list"
     override val showMoreSessions = { count: Int -> "Show $count more" }
     override val showLessSessions = "Show less"
     override val selectThisDirectory = "Select this directory"
@@ -1009,6 +1013,8 @@ object ZhStrings : Strings {
     override val defaultWorkspace = "默认工作区"
     override val expandWorkspace = "展开工作区"
     override val collapseWorkspace = "收起工作区"
+    override val expandSidebar = "展开会话列表"
+    override val collapseSidebar = "收起会话列表"
     override val showMoreSessions = { count: Int -> "展开剩余 $count 条" }
     override val showLessSessions = "收起"
     override val selectThisDirectory = "选择此目录"
