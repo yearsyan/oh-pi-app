@@ -413,18 +413,6 @@ func writeAtomicFile(dir, name string, data []byte) error {
 	return syncDirectory(dir)
 }
 
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open session directory for sync: %w", err)
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil {
-		return fmt.Errorf("sync session directory: %w", err)
-	}
-	return nil
-}
-
 func (s *piSession) closeReplayStore() {
 	s.replayMu.Lock()
 	if s.replayFile != nil {
