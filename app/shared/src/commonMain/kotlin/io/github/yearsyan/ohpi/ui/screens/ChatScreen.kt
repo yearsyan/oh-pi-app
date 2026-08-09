@@ -66,9 +66,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.yearsyan.ohpi.chat.AssistantRenderChunk
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.TimelineItem
 import io.github.yearsyan.ohpi.chat.TimelineRenderGroup
+import io.github.yearsyan.ohpi.chat.chunkAssistantRun
 import io.github.yearsyan.ohpi.chat.groupTimelineItems
 import io.github.yearsyan.ohpi.data.ConnState
 import io.github.yearsyan.ohpi.i18n.S
@@ -302,6 +304,8 @@ internal fun MessageList(
     // it can re-enable following while the first drag is still in progress.
     var userScrolledAway by remember(controller) { mutableStateOf(false) }
     var initialPositionPending by remember(controller) { mutableStateOf(true) }
+    var bottomJumpAnimating by remember(controller) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val dismissKeyboardOnScroll =
         remember(controller, focusManager, listState) {
             object : NestedScrollConnection {
@@ -334,7 +338,6 @@ internal fun MessageList(
             }
         }
     var pinned by remember(controller) { mutableStateOf(true) }
-    val scope = rememberCoroutineScope()
     val renderGroups = groupTimelineItems(controller.items)
     val lastGroupKey = renderGroups.lastOrNull()?.key
     val anyRunStreaming = renderGroups.any { group ->
@@ -366,6 +369,29 @@ internal fun MessageList(
     val followingTail = !userScrolledAway
 
     val itemCount = renderGroups.size
+
+    // The tail can gain height after it first enters composition. Markdown is
+    // parsed asynchronously, so a jump from far away may initially measure the
+    // final assistant run at (nearly) zero height. While tail following is
+    // enabled, repeat the non-animated correction whenever the measured tail
+    // height changes. Collapsed thinking/tool payload updates do not change the
+    // measured height and therefore do not cause scroll requests.
+    LaunchedEffect(listState, followingTail, itemCount, bottomJumpAnimating) {
+        if (!followingTail || itemCount == 0 || bottomJumpAnimating) return@LaunchedEffect
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val tail = info.visibleItemsInfo.firstOrNull { it.index == itemCount - 1 }
+            TailLayoutSnapshot(
+                totalItemsCount = info.totalItemsCount,
+                measuredTailHeight = tail?.size,
+                canScrollForward = listState.canScrollForward,
+            )
+        }.collect { layout ->
+            if (layout.canScrollForward && !listState.isScrollInProgress) {
+                listState.scrollToBottom(itemCount - 1)
+            }
+        }
+    }
 
     // the composer height (including multiline growth) changes the bottom
     // content padding after entry; adjust only when no gesture/scroll is active
@@ -404,7 +430,14 @@ internal fun MessageList(
                             isStreaming =
                                 group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
                                     (caretUnderLastGroup && group.key == lastGroupKey),
+                            isTailRun = group.key == lastGroupKey,
                             onProcessDetailsToggled = { userScrolledAway = true },
+                            onTailProcessExpanding = {
+                                listState.requestScrollToBottom(renderGroups.lastIndex)
+                            },
+                            onTailProcessExpanded = {
+                                listState.requestScrollToBottom(renderGroups.lastIndex)
+                            },
                             onLoadToolImage = onLoadToolImage,
                         )
                     is TimelineRenderGroup.Single -> {
@@ -436,9 +469,20 @@ internal fun MessageList(
         ) {
             Surface(
                 onClick = {
+                    // Animate only the user-initiated jump. Once it finishes,
+                    // the layout watcher handles deferred Markdown height
+                    // changes without stacking additional animations.
+                    val lastIndex = renderGroups.lastIndex
                     pinned = true
                     userScrolledAway = false
-                    scope.launch { listState.animateScrollToBottom(renderGroups.lastIndex) }
+                    bottomJumpAnimating = true
+                    scope.launch {
+                        try {
+                            listState.animateScrollToBottom(lastIndex)
+                        } finally {
+                            bottomJumpAnimating = false
+                        }
+                    }
                 },
                 modifier = Modifier.size(38.dp),
                 shape = CircleShape,
@@ -460,18 +504,7 @@ internal fun MessageList(
     // Position a newly entered conversation once. Subsequent streaming updates
     // follow only while the list remains near the bottom and no scroll is in
     // progress; a synchronous request on every delta would fight user input.
-    val tailItem = controller.items.lastOrNull()
-    val tailSignature: Any? =
-        when (tailItem) {
-            is TimelineItem.AssistantItem ->
-                Triple(
-                    tailItem.blocks.size,
-                    tailItem.blocks.lastOrNull()?.text?.length ?: 0,
-                    tailItem.blocks.lastOrNull()?.tool?.output?.length ?: 0,
-                )
-            is TimelineItem.ToolItem -> tailItem.tool.output.length
-            else -> tailItem?.key
-        }
+    val tailSignature = tailFollowSignature(renderGroups.lastOrNull())
     LaunchedEffect(controller, tailSignature) {
         if (controller.items.isEmpty()) return@LaunchedEffect
         if (initialPositionPending) {
@@ -482,6 +515,39 @@ internal fun MessageList(
         }
     }
 }
+
+private data class TailLayoutSnapshot(
+    val totalItemsCount: Int,
+    val measuredTailHeight: Int?,
+    val canScrollForward: Boolean,
+)
+
+/** Only changes when the rendered tail can grow; collapsed process payloads stay excluded. */
+internal data class TailFollowSignature(
+    val groupKey: Long,
+    val chunkCount: Int = 0,
+    val visibleTextLength: Int = 0,
+)
+
+internal fun tailFollowSignature(group: TimelineRenderGroup?): TailFollowSignature? =
+    when (group) {
+        is TimelineRenderGroup.AssistantRun -> {
+            val chunks = chunkAssistantRun(group.items)
+            TailFollowSignature(
+                groupKey = group.key,
+                chunkCount = chunks.size,
+                visibleTextLength =
+                    chunks.sumOf { chunk ->
+                        when (chunk) {
+                            is AssistantRenderChunk.Text -> chunk.block.text.length
+                            is AssistantRenderChunk.Process -> 0
+                        }
+                    },
+            )
+        }
+        is TimelineRenderGroup.Single -> TailFollowSignature(group.key)
+        null -> null
+    }
 
 @Composable
 private fun EmptyChatState(modifier: Modifier = Modifier) {

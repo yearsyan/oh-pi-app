@@ -2,6 +2,7 @@ package io.github.yearsyan.ohpi.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -40,11 +41,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -140,13 +143,26 @@ fun UserMessageRow(item: TimelineItem.UserItem) {
 private fun AgentProcessBlock(
     details: List<AssistantProcessDetail>,
     isStreaming: Boolean,
-    onDetailsToggled: () -> Unit,
+    onDetailsToggled: (expanding: Boolean) -> Unit,
+    onDetailsExpanded: () -> Unit,
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val detailsVisibility = remember { MutableTransitionState(false) }
+    detailsVisibility.targetState = expanded
+    val latestOnDetailsExpanded by rememberUpdatedState(onDetailsExpanded)
     var sheetContent by remember { mutableStateOf<ProcessSheetContent?>(null) }
     val showDetails = expanded
     val strings = S
+
+    // Notify the list once the expansion animation has reached its final
+    // height. A scroll requested only from the click sees the initial animated
+    // height and can still leave the last rows below the viewport.
+    LaunchedEffect(detailsVisibility.isIdle, detailsVisibility.currentState) {
+        if (detailsVisibility.isIdle && detailsVisibility.currentState) {
+            latestOnDetailsExpanded()
+        }
+    }
     // A block with a single detail (one thinking or one tool call) skips the
     // inline list entirely: tapping the header opens the detail sheet directly.
     // A blank thinking (e.g. encrypted reasoning from GPT models) has nothing
@@ -188,8 +204,9 @@ private fun AgentProcessBlock(
                                 sheetContent =
                                     ProcessSheetContent.Tool(singleSheetDetail.tool)
                             singleDetail == null -> {
-                                onDetailsToggled()
-                                expanded = !expanded
+                                val expanding = !expanded
+                                expanded = expanding
+                                onDetailsToggled(expanding)
                             }
                         }
                     }
@@ -228,7 +245,7 @@ private fun AgentProcessBlock(
                 )
             }
         }
-        AnimatedVisibility(showDetails) {
+        AnimatedVisibility(visibleState = detailsVisibility) {
             Column(Modifier.padding(bottom = 4.dp)) {
                 details.forEach { detail ->
                     when (detail) {
@@ -907,7 +924,10 @@ private fun BashCommandBlock(command: String) {
 fun AssistantRunRow(
     items: List<TimelineItem>,
     isStreaming: Boolean,
+    isTailRun: Boolean = false,
     onProcessDetailsToggled: () -> Unit = {},
+    onTailProcessExpanding: () -> Unit = {},
+    onTailProcessExpanded: () -> Unit = {},
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     val chunks = chunkAssistantRun(items)
@@ -921,13 +941,21 @@ fun AssistantRunRow(
         ) {
             chunks.forEachIndexed { index, chunk ->
                 when (chunk) {
-                    is AssistantRenderChunk.Process ->
+                    is AssistantRenderChunk.Process -> {
+                        val isTailProcess = isTailRun && index == chunks.lastIndex
                         AgentProcessBlock(
                             details = chunk.details,
                             isStreaming = isStreaming && index == chunks.lastIndex,
-                            onDetailsToggled = onProcessDetailsToggled,
+                            onDetailsToggled = { expanding ->
+                                onProcessDetailsToggled()
+                                if (expanding && isTailProcess) onTailProcessExpanding()
+                            },
+                            onDetailsExpanded = {
+                                if (isTailProcess) onTailProcessExpanded()
+                            },
                             onLoadToolImage = onLoadToolImage,
                         )
+                    }
                     is AssistantRenderChunk.Text -> MarkdownView(chunk.block.text)
                 }
             }

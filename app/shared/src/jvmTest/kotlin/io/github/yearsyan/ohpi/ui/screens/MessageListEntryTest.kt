@@ -142,6 +142,48 @@ class MessageListEntryTest {
         waitForIdle()
         onNodeWithText("status-a-late").assertDoesNotExist()
         onNodeWithText(topBefore).assertIsDisplayed()
+
+        onNodeWithContentDescription(scrollToBottomDesc).performClick()
+        waitForIdle()
+
+        onNodeWithText("status-a-late").assertIsDisplayed()
+        onNodeWithContentDescription(scrollToBottomDesc).assertDoesNotExist()
+    }
+
+    @Test
+    fun scrollButtonFollowsTailThatGrowsAfterItIsFirstComposed() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        lateinit var scrollToBottomDesc: String
+        val finalMarker = "final deferred Markdown tail marker"
+        val longMarkdown =
+            (1..40).joinToString("\n\n") { "deferred Markdown paragraph $it" } +
+                "\n\n$finalMarker"
+        setContent {
+            scrollToBottomDesc = S.scrollToBottom
+            MessageList(controller = controller, bottomPadding = 220.dp, scrollToBottomTick = 0)
+        }
+        waitForIdle()
+
+        // Keep the tail out of composition so Markdown parsing only starts
+        // after the button jumps to the newly appended assistant run.
+        onRoot().performTouchInput { repeat(6) { swipeDown() } }
+        runOnIdle {
+            controller.items.add(
+                TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+                    it.blocks.add(AssistantBlock(BlockKind.Thinking, text = "deferred reasoning"))
+                    it.blocks.add(AssistantBlock(BlockKind.Text, text = longMarkdown))
+                },
+            )
+        }
+        waitForIdle()
+        onNodeWithText(finalMarker).assertDoesNotExist()
+
+        onNodeWithContentDescription(scrollToBottomDesc).performClick()
+        waitForIdle()
+
+        onNodeWithText(finalMarker).assertIsDisplayed()
+        onNodeWithContentDescription(scrollToBottomDesc).assertDoesNotExist()
     }
 
     @Test
@@ -193,6 +235,65 @@ class MessageListEntryTest {
         runOnIdle {
             thinking.text = (1..120).joinToString("\n") { "reasoning line $it" }
         }
+        waitForIdle()
+
+        onNodeWithText(processSummary).assertIsDisplayed()
+    }
+
+    @Test
+    fun expandingTailProcessKeepsExpandedDetailsAtBottom() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        val detailCount = 20
+        val assistant = TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+            repeat(detailCount) { index ->
+                it.blocks.add(
+                    AssistantBlock(
+                        BlockKind.Thinking,
+                        text = "tail reasoning ${index + 1}",
+                    ),
+                )
+            }
+        }
+        controller.items.add(assistant)
+        lateinit var processSummary: String
+        setContent {
+            processSummary = S.processThoughtTimes(detailCount)
+            MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
+        }
+        waitForIdle()
+
+        onNodeWithText(processSummary).performClick()
+        waitForIdle()
+
+        onNodeWithText("tail reasoning $detailCount").assertIsDisplayed()
+    }
+
+    @Test
+    fun expandingProcessWithLaterContentKeepsItsHeaderAnchored() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        val detailCount = 20
+        val assistant = TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+            repeat(detailCount) { index ->
+                it.blocks.add(
+                    AssistantBlock(
+                        BlockKind.Thinking,
+                        text = "middle reasoning ${index + 1}",
+                    ),
+                )
+            }
+            it.blocks.add(AssistantBlock(BlockKind.Text, text = "content after process"))
+        }
+        controller.items.add(assistant)
+        lateinit var processSummary: String
+        setContent {
+            processSummary = S.processThoughtTimes(detailCount)
+            MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
+        }
+        waitForIdle()
+
+        onNodeWithText(processSummary).performClick()
         waitForIdle()
 
         onNodeWithText(processSummary).assertIsDisplayed()

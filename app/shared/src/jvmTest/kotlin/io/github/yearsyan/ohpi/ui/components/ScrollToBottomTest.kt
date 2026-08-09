@@ -9,6 +9,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.runComposeUiTest
@@ -87,12 +90,16 @@ class ScrollToBottomTest {
     @Test
     fun tallLastItemAnimateScrollToBottomReachesContentEnd() = runComposeUiTest {
         lateinit var state: LazyListState
+        var animationFinished by mutableStateOf(false)
         setContent {
             state = rememberLazyListState()
-            LaunchedEffect(Unit) { state.animateScrollToBottom(49) }
+            LaunchedEffect(Unit) {
+                state.animateScrollToBottom(49)
+                animationFinished = true
+            }
             ProbeList(state, tallLastItem = true)
         }
-        waitUntil(timeoutMillis = 15_000) { !state.isScrollInProgress }
+        waitUntil(timeoutMillis = 15_000) { animationFinished }
         runOnIdle {
             assertFalse(state.canScrollForward, "list must not be scrollable further down")
             assertEquals(0, state.tailGapToContentEnd())
