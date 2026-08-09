@@ -2,7 +2,9 @@ package io.github.yearsyan.ohpi.net
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class LoopbackUrlsTest {
 
@@ -52,8 +54,8 @@ class LoopbackUrlsTest {
     @Test
     fun loopbackHostNameMatching() {
         listOf("localhost", "LOCALHOST", "127.0.0.1", "::1", "[::1]", "ui.localhost")
-            .forEach { assert(isLoopbackHostName(it)) { "$it should be loopback" } }
+            .forEach { assertTrue(isLoopbackHostName(it), "$it should be loopback") }
         listOf("example.com", "192.168.0.1", "localhost.example", "")
-            .forEach { assert(!isLoopbackHostName(it)) { "$it should not be loopback" } }
+            .forEach { assertFalse(isLoopbackHostName(it), "$it should not be loopback") }
     }
 }

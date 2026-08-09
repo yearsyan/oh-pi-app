@@ -1,6 +1,5 @@
 package io.github.yearsyan.ohpi.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -8,12 +7,10 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,12 +26,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberOverscrollEffect
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -57,6 +53,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -66,6 +64,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.fastAny
 import io.github.yearsyan.ohpi.chat.AssistantRenderChunk
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.TimelineItem
@@ -73,12 +72,14 @@ import io.github.yearsyan.ohpi.chat.TimelineRenderGroup
 import io.github.yearsyan.ohpi.chat.chunkAssistantRun
 import io.github.yearsyan.ohpi.chat.groupTimelineItems
 import io.github.yearsyan.ohpi.data.ConnState
+import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.ui.components.AssistantRunRow
 import io.github.yearsyan.ohpi.ui.components.ChatTopBar
 import io.github.yearsyan.ohpi.ui.components.Composer
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.ExtensionDialog
+import io.github.yearsyan.ohpi.ui.components.FollowScrollPacer
 import io.github.yearsyan.ohpi.ui.components.KeepScreenOn
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.StatusLine
@@ -86,6 +87,7 @@ import io.github.yearsyan.ohpi.ui.components.StreamingCaret
 import io.github.yearsyan.ohpi.ui.components.UserMessageRow
 import io.github.yearsyan.ohpi.ui.components.animateScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.localizedLabel
+import io.github.yearsyan.ohpi.ui.components.PlatformScrollToBottomButton
 import io.github.yearsyan.ohpi.ui.components.requestScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.resolveSessionStatus
 import io.github.yearsyan.ohpi.ui.components.scrollToBottom
@@ -305,6 +307,11 @@ internal fun MessageList(
     var userScrolledAway by remember(controller) { mutableStateOf(false) }
     var initialPositionPending by remember(controller) { mutableStateOf(true) }
     var bottomJumpAnimating by remember(controller) { mutableStateOf(false) }
+    // Expanding the final process block while already at the exact bottom uses
+    // the block's bottom edge as its anchor. The tail-height watcher below then
+    // compensates every animation step, so the details grow upward. Starting
+    // the expansion anywhere else keeps the normal top-edge anchor instead.
+    var tailProcessBottomAnchored by remember(controller) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val dismissKeyboardOnScroll =
         remember(controller, focusManager, listState) {
@@ -316,6 +323,7 @@ internal fun MessageList(
                     if (source == NestedScrollSource.UserInput && available.y != 0f) {
                         focusManager.clearFocus()
                         userScrolledAway = true
+                        tailProcessBottomAnchored = false
                     }
                     return Offset.Zero
                 }
@@ -338,6 +346,18 @@ internal fun MessageList(
             }
         }
     var pinned by remember(controller) { mutableStateOf(true) }
+    // While a finger rests on the list, tail-following must not shift rows out
+    // from under it. A programmatic scroll landing between pointer-down and
+    // -up moves the pressed row away from the finger, and the tap detector
+    // then reports the release as out-of-bounds — the click never fires.
+    // That made thinking/tool headers unexpandable while the pinned tail was
+    // actively streaming, so auto-scrolls are paused during contact and the
+    // list catches up once the finger lifts.
+    var pointerInContact by remember(controller) { mutableStateOf(false) }
+    // Streaming deltas arrive far more often than one scroll is worth doing:
+    // the pacer spaces tail-follow scrolls to at most one per window while
+    // still guaranteeing the trailing scroll that pins the final delta.
+    val followPacer = remember(controller) { FollowScrollPacer() }
     val renderGroups = groupTimelineItems(controller.items)
     val lastGroupKey = renderGroups.lastOrNull()?.key
     val anyRunStreaming = renderGroups.any { group ->
@@ -376,7 +396,13 @@ internal fun MessageList(
     // enabled, repeat the non-animated correction whenever the measured tail
     // height changes. Collapsed thinking/tool payload updates do not change the
     // measured height and therefore do not cause scroll requests.
-    LaunchedEffect(listState, followingTail, itemCount, bottomJumpAnimating) {
+    LaunchedEffect(
+        listState,
+        followingTail,
+        itemCount,
+        bottomJumpAnimating,
+        tailProcessBottomAnchored,
+    ) {
         if (!followingTail || itemCount == 0 || bottomJumpAnimating) return@LaunchedEffect
         snapshotFlow {
             val info = listState.layoutInfo
@@ -387,8 +413,24 @@ internal fun MessageList(
                 canScrollForward = listState.canScrollForward,
             )
         }.collect { layout ->
-            if (layout.canScrollForward && !listState.isScrollInProgress) {
-                listState.scrollToBottom(itemCount - 1)
+            if (layout.canScrollForward && !listState.isScrollInProgress && !pointerInContact) {
+                val lastIndex = listState.layoutInfo.totalItemsCount - 1
+                if (tailProcessBottomAnchored) {
+                    // Keep the tail's bottom at the same viewport coordinate
+                    // throughout the expansion instead of correcting only once
+                    // the animation has finished.
+                    if (!userScrolledAway && lastIndex >= 0) {
+                        listState.requestScrollToBottom(lastIndex)
+                    }
+                } else {
+                    followPacer.awaitTurn()
+                    // re-check after the throttle wait: a gesture may have started
+                    if (!userScrolledAway && !pointerInContact &&
+                        listState.canScrollForward && lastIndex >= 0
+                    ) {
+                        listState.scrollToBottom(lastIndex)
+                    }
+                }
             }
         }
     }
@@ -399,6 +441,7 @@ internal fun MessageList(
         if (bottomPadding > 0.dp &&
             followingTail &&
             !listState.isScrollInProgress &&
+            !pointerInContact &&
             itemCount > 0
         ) {
             listState.requestScrollToBottom(itemCount - 1)
@@ -416,9 +459,36 @@ internal fun MessageList(
     }
 
     Box(modifier = modifier.fillMaxWidth()) {
+        // The Android stretch overscroll wedges against the auto-following
+        // tail (each programmatic scroll interrupts the edge effect's release
+        // animation), and desktop shows no meaningful edge feedback either.
+        // Only iOS keeps its native rubber band.
+        val overscrollEffect =
+            if (remember { getPlatform().isIos }) {
+                rememberOverscrollEffect()
+            } else {
+                null
+            }
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().nestedScroll(dismissKeyboardOnScroll),
+            overscrollEffect = overscrollEffect,
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .nestedScroll(dismissKeyboardOnScroll)
+                    .pointerInput(controller) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            pointerInContact = true
+                            try {
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                } while (event.changes.fastAny { it.pressed })
+                            } finally {
+                                pointerInContact = false
+                            }
+                        }
+                    },
             verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(top = 10.dp, bottom = bottomPadding + 10.dp),
         ) {
@@ -431,12 +501,19 @@ internal fun MessageList(
                                 group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
                                     (caretUnderLastGroup && group.key == lastGroupKey),
                             isTailRun = group.key == lastGroupKey,
-                            onProcessDetailsToggled = { userScrolledAway = true },
-                            onTailProcessExpanding = {
-                                listState.requestScrollToBottom(renderGroups.lastIndex)
+                            onProcessDetailsToggled = { expanding, isTailProcess ->
+                                val anchorBottom =
+                                    expanding && isTailProcess && !listState.canScrollForward
+                                tailProcessBottomAnchored = anchorBottom
+                                if (!anchorBottom) userScrolledAway = true
                             },
-                            onTailProcessExpanded = {
-                                listState.requestScrollToBottom(renderGroups.lastIndex)
+                            onProcessDetailsExpanded = { isTailProcess ->
+                                if (isTailProcess && tailProcessBottomAnchored) {
+                                    // Finish on the exact bottom even if the last
+                                    // animation frame and its layout notification race.
+                                    listState.requestScrollToBottom(renderGroups.lastIndex)
+                                    tailProcessBottomAnchored = false
+                                }
                             },
                             onLoadToolImage = onLoadToolImage,
                         )
@@ -458,47 +535,29 @@ internal fun MessageList(
             }
         }
 
-        AnimatedVisibility(
+        PlatformScrollToBottomButton(
             visible = userScrolledAway && listState.canScrollForward,
+            onClick = {
+                // Animate only the user-initiated jump. Once it finishes,
+                // the layout watcher handles deferred Markdown height
+                // changes without stacking additional animations.
+                val lastIndex = renderGroups.lastIndex
+                pinned = true
+                userScrolledAway = false
+                bottomJumpAnimating = true
+                scope.launch {
+                    try {
+                        listState.animateScrollToBottom(lastIndex)
+                    } finally {
+                        bottomJumpAnimating = false
+                    }
+                }
+            },
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 18.dp, bottom = bottomPadding + 16.dp),
-            enter = fadeIn(tween(150)) + scaleIn(initialScale = 0.85f, animationSpec = tween(150)),
-            exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.85f, animationSpec = tween(150)),
-        ) {
-            Surface(
-                onClick = {
-                    // Animate only the user-initiated jump. Once it finishes,
-                    // the layout watcher handles deferred Markdown height
-                    // changes without stacking additional animations.
-                    val lastIndex = renderGroups.lastIndex
-                    pinned = true
-                    userScrolledAway = false
-                    bottomJumpAnimating = true
-                    scope.launch {
-                        try {
-                            listState.animateScrollToBottom(lastIndex)
-                        } finally {
-                            bottomJumpAnimating = false
-                        }
-                    }
-                },
-                modifier = Modifier.size(38.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = S.scrollToBottom,
-                        modifier = Modifier.size(22.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        )
     }
 
     // Position a newly entered conversation once. Subsequent streaming updates
@@ -510,7 +569,26 @@ internal fun MessageList(
         if (initialPositionPending) {
             initialPositionPending = false
             listState.requestScrollToBottom(renderGroups.lastIndex)
-        } else if (followingTail && pinned && !listState.isScrollInProgress) {
+        } else if (followingTail && pinned && !listState.isScrollInProgress && !pointerInContact) {
+            followPacer.awaitTurn()
+            // re-check after the throttle wait: the user may have scrolled away
+            val lastIndex = listState.layoutInfo.totalItemsCount - 1
+            if (!userScrolledAway && pinned && !pointerInContact && lastIndex >= 0) {
+                listState.scrollToBottom(lastIndex)
+            }
+        }
+    }
+
+    // Catch up once the finger lifts: deltas that arrived during the press
+    // were deliberately not followed, leaving the tail short of the bottom.
+    LaunchedEffect(pointerInContact) {
+        if (
+            !pointerInContact &&
+            followingTail &&
+            pinned &&
+            renderGroups.isNotEmpty() &&
+            listState.canScrollForward
+        ) {
             listState.scrollToBottom(renderGroups.lastIndex)
         }
     }

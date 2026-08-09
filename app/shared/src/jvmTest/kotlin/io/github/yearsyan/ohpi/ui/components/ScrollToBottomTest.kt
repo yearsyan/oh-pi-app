@@ -1,5 +1,6 @@
 package io.github.yearsyan.ohpi.ui.components
 
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -102,6 +103,48 @@ class ScrollToBottomTest {
         waitUntil(timeoutMillis = 15_000) { animationFinished }
         runOnIdle {
             assertFalse(state.canScrollForward, "list must not be scrollable further down")
+            assertEquals(0, state.tailGapToContentEnd())
+        }
+    }
+
+    @Test
+    fun visibleTallTailAnimationNeverMovesAwayFromBottom() = runComposeUiTest {
+        lateinit var state: LazyListState
+        var startAnimation by mutableStateOf(false)
+        var animationFinished by mutableStateOf(false)
+        setContent {
+            state = rememberLazyListState()
+            LaunchedEffect(startAnimation) {
+                if (startAnimation) {
+                    state.animateScrollToBottom(49)
+                    animationFinished = true
+                }
+            }
+            ProbeList(state, tallLastItem = true)
+        }
+        waitForIdle()
+        runBlocking {
+            state.scrollToBottom(49)
+            state.scrollBy(-80f)
+        }
+        val initialGap = state.tailGapToContentEnd()
+        assertTrue(initialGap < 0, "the test must start slightly away from the bottom")
+        assertTrue(state.canScrollForward)
+
+        mainClock.autoAdvance = false
+        startAnimation = true
+        repeat(12) {
+            mainClock.advanceTimeByFrame()
+            val currentGap = state.tailGapToContentEnd()
+            assertTrue(
+                currentGap >= initialGap - 1,
+                "a visible-tail animation must not first move farther from the bottom",
+            )
+        }
+        mainClock.autoAdvance = true
+        waitUntil(timeoutMillis = 15_000) { animationFinished }
+        runOnIdle {
+            assertFalse(state.canScrollForward)
             assertEquals(0, state.tailGapToContentEnd())
         }
     }

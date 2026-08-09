@@ -35,6 +35,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -58,15 +59,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.yearsyan.ohpi.PlatformTarget
 import io.github.yearsyan.ohpi.chat.AssistantProcessDetail
+import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.chat.AssistantRenderChunk
 import io.github.yearsyan.ohpi.chat.AssistantBlock
 import io.github.yearsyan.ohpi.chat.ProcessSummary
@@ -89,15 +94,16 @@ import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.decodeToImageBitmap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Create
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
@@ -106,6 +112,8 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
+
+internal const val AGENT_PROCESS_BLOCK_TEST_TAG = "agent-process-block"
 
 @Composable
 fun UserMessageRow(item: TimelineItem.UserItem) {
@@ -156,8 +164,7 @@ private fun AgentProcessBlock(
     val strings = S
 
     // Notify the list once the expansion animation has reached its final
-    // height. A scroll requested only from the click sees the initial animated
-    // height and can still leave the last rows below the viewport.
+    // height so a bottom-anchored expansion can apply its final correction.
     LaunchedEffect(detailsVisibility.isIdle, detailsVisibility.currentState) {
         if (detailsVisibility.isIdle && detailsVisibility.currentState) {
             latestOnDetailsExpanded()
@@ -175,6 +182,8 @@ private fun AgentProcessBlock(
             else -> singleDetail
         }
     val headerInteractive = singleDetail == null || singleSheetDetail != null
+    val isDesktop = remember { getPlatform().target == PlatformTarget.Desktop }
+    var headerHovered by remember { mutableStateOf(false) }
     // streaming shows the live latest activity; a completed block collapses
     // into an aggregated summary (思考 2 次，写入 1 个文件，…)
     val summary =
@@ -189,13 +198,16 @@ private fun AgentProcessBlock(
     // Plain, card-less layout: the block sits directly on the page background,
     // with no rounded grey container around the header or the detail rows.
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag(AGENT_PROCESS_BLOCK_TEST_TAG),
     ) {
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .hoverFadeClickable(enabled = headerInteractive) {
+                    .hoverFadeClickable(
+                        enabled = headerInteractive,
+                        onHoverChange = { headerHovered = it },
+                    ) {
                         when {
                             singleSheetDetail is AssistantProcessDetail.Thinking ->
                                 sheetContent =
@@ -228,20 +240,25 @@ private fun AgentProcessBlock(
                 // instead of at the far right edge of the row.
                 modifier = Modifier.weight(1f, fill = false),
             )
-            if (headerInteractive) {
+            // Desktop hides the collapsed arrow until the header is hovered;
+            // touch platforms always show it.
+            val arrowVisible = !isDesktop || showDetails || headerHovered
+            if (headerInteractive && arrowVisible) {
                 Spacer(Modifier.width(4.dp))
                 Icon(
-                    // Single-detail blocks open a sheet (navigate); multi-detail blocks
-                    // expand inline (drop-down).
-                    if (singleSheetDetail != null) Icons.Filled.KeyboardArrowRight
-                    else Icons.Filled.KeyboardArrowDown,
+                    // Sheet headers navigate (right); inline-expanding headers
+                    // rotate the same arrow to point down while expanded.
+                    Icons.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier =
                         Modifier
                             .size(16.dp)
                             .alpha(0.7f)
-                            .graphicsLayer { rotationZ = if (showDetails) 180f else 0f },
+                            .graphicsLayer {
+                                rotationZ =
+                                    if (singleSheetDetail == null && showDetails) 90f else 0f
+                            },
                 )
             }
         }
@@ -326,11 +343,15 @@ private fun ProcessDetailSheet(
 @Composable
 private fun Modifier.hoverFadeClickable(
     enabled: Boolean,
+    onHoverChange: ((Boolean) -> Unit)? = null,
     onClick: () -> Unit,
 ): Modifier {
     if (!enabled) return this
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
+    if (onHoverChange != null) {
+        LaunchedEffect(hovered) { onHoverChange(hovered) }
+    }
     return hoverable(interactionSource)
         .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
         .alpha(if (hovered) 0.5f else 1f)
@@ -798,17 +819,21 @@ private fun ToolCodeBlock(text: String) {
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(
-            text,
-            modifier = Modifier.padding(8.dp),
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFamily = rememberCodeFontFamily(),
-                fontSize = 11.5.sp,
-                lineHeight = 16.sp,
-            ),
-            color = piExtras.onCode,
-            maxLines = 40,
-        )
+        // Selectable so tool output (and other payloads) can be copied from the
+        // detail sheet.
+        SelectionContainer {
+            Text(
+                text,
+                modifier = Modifier.padding(8.dp),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = rememberCodeFontFamily(),
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                ),
+                color = piExtras.onCode,
+                maxLines = 40,
+            )
+        }
     }
 }
 
@@ -888,35 +913,80 @@ private fun BashCommandBlock(command: String) {
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier =
-                Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-        ) {
-            val codeFont = rememberCodeFontFamily()
-            Text(
-                "$",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = codeFont,
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp,
-                ),
-                color = piExtras.success,
-            )
-            Spacer(Modifier.width(7.dp))
-            Text(
-                highlighted,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = codeFont,
-                    fontSize = 11.5.sp,
-                    lineHeight = 16.sp,
-                ),
-                color = extras.syntax.plain,
-                maxLines = 40,
-                softWrap = false,
+        Box(Modifier.fillMaxWidth()) {
+            Row(
+                modifier =
+                    Modifier
+                        .horizontalScroll(rememberScrollState())
+                        // Trailing end padding keeps the command tail from
+                        // sliding under the floating copy button.
+                        .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 36.dp),
+            ) {
+                val codeFont = rememberCodeFontFamily()
+                Text(
+                    "$",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = codeFont,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    color = piExtras.success,
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    highlighted,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = codeFont,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    color = extras.syntax.plain,
+                    maxLines = 40,
+                    softWrap = false,
+                )
+            }
+            // The highlighted command is a non-wrapping AnnotatedString in a
+            // horizontal scroll row, so selection is impractical — copy the
+            // whole command via this button instead.
+            CopyCommandButton(
+                command = command,
+                modifier = Modifier.align(Alignment.TopEnd),
             )
         }
+    }
+}
+
+/** Small floating button copying the whole shell command; flips to a check briefly. */
+@Composable
+private fun CopyCommandButton(
+    command: String,
+    modifier: Modifier = Modifier,
+) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    if (copied) {
+        LaunchedEffect(copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+    IconButton(
+        onClick = {
+            clipboard.setText(AnnotatedString(command))
+            copied = true
+        },
+        modifier = modifier
+            .padding(2.dp)
+            .size(26.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(piExtras.codeBackground),
+    ) {
+        Icon(
+            if (copied) Icons.Filled.Check else Icons.Outlined.ContentCopy,
+            contentDescription = S.copy,
+            modifier = Modifier.size(14.dp),
+            tint = if (copied) piExtras.success else piExtras.onCode.copy(alpha = 0.7f),
+        )
     }
 }
 
@@ -925,9 +995,8 @@ fun AssistantRunRow(
     items: List<TimelineItem>,
     isStreaming: Boolean,
     isTailRun: Boolean = false,
-    onProcessDetailsToggled: () -> Unit = {},
-    onTailProcessExpanding: () -> Unit = {},
-    onTailProcessExpanded: () -> Unit = {},
+    onProcessDetailsToggled: (expanding: Boolean, isTailProcess: Boolean) -> Unit = { _, _ -> },
+    onProcessDetailsExpanded: (isTailProcess: Boolean) -> Unit = {},
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     val chunks = chunkAssistantRun(items)
@@ -947,11 +1016,10 @@ fun AssistantRunRow(
                             details = chunk.details,
                             isStreaming = isStreaming && index == chunks.lastIndex,
                             onDetailsToggled = { expanding ->
-                                onProcessDetailsToggled()
-                                if (expanding && isTailProcess) onTailProcessExpanding()
+                                onProcessDetailsToggled(expanding, isTailProcess)
                             },
                             onDetailsExpanded = {
-                                if (isTailProcess) onTailProcessExpanded()
+                                onProcessDetailsExpanded(isTailProcess)
                             },
                             onLoadToolImage = onLoadToolImage,
                         )

@@ -5,7 +5,6 @@ import kotlinx.cinterop.ObjCAction
 import platform.Foundation.NSURLRequest
 import platform.Foundation.NSSelectorFromString
 import platform.Foundation.NSURL
-import platform.UIKit.UIApplication
 import platform.UIKit.UIBarButtonItem
 import platform.UIKit.UIBarButtonSystemItem
 import platform.UIKit.UIViewAutoresizingFlexibleHeight
@@ -23,9 +22,9 @@ import platform.WebKit.WKWebViewConfiguration
 import platform.WebKit.WKWindowFeatures
 
 /**
- * In-app browser presented modally for http/https links. JavaScript and
- * inline media are enabled by default; the extra delegates keep target=_blank
- * navigations inside the view and hand non-http(s) schemes to the system.
+ * In-app browser presented modally for loopback HTTP(S) links. JavaScript and
+ * inline media are enabled by default. Navigation is kept inside the view only
+ * for loopback destinations; everything else is handed to the system.
  */
 @OptIn(ExperimentalForeignApi::class)
 internal class WebViewController(private val url: String) :
@@ -75,14 +74,18 @@ internal class WebViewController(private val url: String) :
         decisionHandler: (WKNavigationActionPolicy) -> Unit,
     ) {
         val target = decidePolicyForNavigationAction.request.URL
-        val scheme = target?.scheme?.lowercase()
-        if (target != null && scheme != null && scheme != "http" && scheme != "https") {
-            // tel:, mailto:, app deep links, ... hand off to the system.
-            UIApplication.sharedApplication.openURL(target, emptyMap<Any?, Any>(), null)
-            decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-        } else {
+        if (target != null && isIosInAppBrowserUrl(target)) {
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+            return
         }
+
+        // Do not let an external page or custom scheme replace the loopback
+        // page. Main-frame and target=_blank navigations go to the user's
+        // system browser/app; external subframes are simply blocked.
+        if (target != null && decidePolicyForNavigationAction.targetFrame?.mainFrame != false) {
+            openUrlInSystem(target)
+        }
+        decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
     }
 
     override fun webView(
@@ -91,10 +94,16 @@ internal class WebViewController(private val url: String) :
         forNavigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures,
     ): WKWebView? {
-        // No real multi-window support: load target=_blank in the same view.
+        // No real multi-window support: keep loopback target=_blank links in
+        // this view. A defensive external fallback covers WebKit versions that
+        // reach this delegate without first invoking the policy callback.
         if (forNavigationAction.targetFrame?.mainFrame != true) {
-            forNavigationAction.request.URL?.let {
-                webView.loadRequest(NSURLRequest(it))
+            forNavigationAction.request.URL?.let { target ->
+                if (isIosInAppBrowserUrl(target)) {
+                    webView.loadRequest(NSURLRequest(target))
+                } else {
+                    openUrlInSystem(target)
+                }
             }
         }
         return null

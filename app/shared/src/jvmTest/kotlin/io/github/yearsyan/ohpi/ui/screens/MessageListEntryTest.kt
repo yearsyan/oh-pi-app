@@ -3,9 +3,11 @@ package io.github.yearsyan.ohpi.ui.screens
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -18,7 +20,10 @@ import io.github.yearsyan.ohpi.chat.AssistantBlock
 import io.github.yearsyan.ohpi.chat.BlockKind
 import io.github.yearsyan.ohpi.chat.TimelineItem
 import io.github.yearsyan.ohpi.i18n.S
+import io.github.yearsyan.ohpi.ui.components.AGENT_PROCESS_BLOCK_TEST_TAG
+import kotlin.math.abs
 import kotlin.test.Test
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 
@@ -241,10 +246,56 @@ class MessageListEntryTest {
     }
 
     @Test
-    fun expandingTailProcessKeepsExpandedDetailsAtBottom() = runComposeUiTest {
+    fun tapOnProcessHeaderLandsWhileDeltasKeepGrowingThePinnedTail() = runComposeUiTest {
         val controller = testController(CoroutineScope(Dispatchers.Default))
         fillConversation(controller, "a")
         val detailCount = 20
+        val growingText = AssistantBlock(BlockKind.Text, text = "first line")
+        val assistant = TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+            repeat(detailCount) { index ->
+                it.blocks.add(AssistantBlock(BlockKind.Thinking, text = "live reasoning ${index + 1}"))
+            }
+            it.blocks.add(growingText)
+        }
+        controller.items.add(assistant)
+        lateinit var processSummary: String
+        setContent {
+            processSummary = S.processThoughtTimes(detailCount)
+            MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
+        }
+        waitForIdle()
+
+        val headerBounds = onNodeWithText(processSummary).fetchSemanticsNode().boundsInRoot
+        val headerPos = Offset(headerBounds.left + headerBounds.width / 4f, headerBounds.center.y)
+
+        // Hold a finger on the header while a delta grows the tail. The
+        // tail-follow scroll used to shift the row out from under the finger,
+        // so the next tiny move was reported out-of-bounds and the tap was
+        // cancelled (a real finger always emits small move events).
+        mainClock.autoAdvance = false
+        onRoot().performTouchInput { down(headerPos) }
+        runOnIdle {
+            growingText.text = (1..80).joinToString("\n") { "streamed line $it" }
+        }
+        // Let recomposition, the follow effects, and the relayout run while
+        // the finger is still down (staying under the long-press timeout).
+        repeat(10) { mainClock.advanceTimeByFrame() }
+        onRoot().performTouchInput {
+            moveBy(Offset(1f, 0f))
+            up()
+        }
+        mainClock.autoAdvance = true
+        waitForIdle()
+
+        // the tap must have toggled the inline expansion
+        onNodeWithText("live reasoning 1").assertIsDisplayed()
+    }
+
+    @Test
+    fun expandingTailProcessKeepsItsBottomEdgeAnchoredDuringAnimation() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        val detailCount = 8
         val assistant = TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
             repeat(detailCount) { index ->
                 it.blocks.add(
@@ -259,14 +310,84 @@ class MessageListEntryTest {
         lateinit var processSummary: String
         setContent {
             processSummary = S.processThoughtTimes(detailCount)
-            MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
+            MessageList(controller = controller, bottomPadding = 120.dp, scrollToBottomTick = 0)
         }
         waitForIdle()
 
+        val processBlock = onNodeWithTag(AGENT_PROCESS_BLOCK_TEST_TAG)
+        val collapsedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        mainClock.autoAdvance = false
         onNodeWithText(processSummary).performClick()
+        repeat(6) { mainClock.advanceTimeByFrame() }
+
+        val expandingBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            expandingBounds.height > collapsedBounds.height,
+            "the inline details must be partway through their expansion",
+        )
+        assertTrue(
+            abs(expandingBounds.bottom - collapsedBounds.bottom) <= 1f,
+            "a tail expansion started at the bottom must keep its bottom edge fixed",
+        )
+        assertTrue(
+            expandingBounds.top < collapsedBounds.top,
+            "the growing process block must push its top edge upward",
+        )
+
+        mainClock.autoAdvance = true
+        waitForIdle()
+        val expandedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            abs(expandedBounds.bottom - collapsedBounds.bottom) <= 1f,
+            "the final expanded height must preserve the same bottom edge",
+        )
+        onNodeWithText("tail reasoning $detailCount").assertIsDisplayed()
+    }
+
+    @Test
+    fun expandingTailProcessAwayFromBottomKeepsItsTopEdgeAnchored() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        val detailCount = 8
+        controller.items.add(
+            TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+                repeat(detailCount) { index ->
+                    it.blocks.add(
+                        AssistantBlock(
+                            BlockKind.Thinking,
+                            text = "away reasoning ${index + 1}",
+                        ),
+                    )
+                }
+            },
+        )
+        lateinit var processSummary: String
+        lateinit var scrollToBottomDesc: String
+        setContent {
+            processSummary = S.processThoughtTimes(detailCount)
+            scrollToBottomDesc = S.scrollToBottom
+            MessageList(controller = controller, bottomPadding = 120.dp, scrollToBottomTick = 0)
+        }
         waitForIdle()
 
-        onNodeWithText("tail reasoning $detailCount").assertIsDisplayed()
+        // Move slightly away from the exact bottom while leaving the tail
+        // process header comfortably inside the viewport.
+        onRoot().performTouchInput {
+            swipeDown(startY = centerY, endY = centerY + 56f, durationMillis = 200L)
+        }
+        waitForIdle()
+        onNodeWithContentDescription(scrollToBottomDesc).assertIsDisplayed()
+
+        val processBlock = onNodeWithTag(AGENT_PROCESS_BLOCK_TEST_TAG)
+        val topBeforeExpansion = processBlock.fetchSemanticsNode().boundsInRoot.top
+        onNodeWithText(processSummary).performClick()
+        waitForIdle()
+        val topAfterExpansion = processBlock.fetchSemanticsNode().boundsInRoot.top
+
+        assertTrue(
+            abs(topAfterExpansion - topBeforeExpansion) <= 1f,
+            "an expansion started away from the bottom must keep its top edge fixed",
+        )
     }
 
     @Test
