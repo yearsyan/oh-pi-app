@@ -9,6 +9,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,15 +40,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -86,7 +86,6 @@ import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.decodeToImageBitmap
 import androidx.compose.material.icons.Icons
@@ -171,59 +170,49 @@ private fun AgentProcessBlock(
         } else {
             completedProcessSummary(strings, summarizeProcessDetails(details))
         }
-    // Total characters streamed into this block so far; drives the activity dots.
-    val streamedChars =
-        details.sumOf { detail ->
-            when (detail) {
-                is AssistantProcessDetail.Thinking -> detail.block.text.length
-                is AssistantProcessDetail.Tool -> detail.tool.args.length + detail.tool.output.length
-            }
-        }
-    val dots = if (isStreaming) streamingActivityDots(streamedChars) else ""
+    // Plain, card-less layout: the block sits directly on the page background,
+    // with no rounded grey container around the header or the detail rows.
     Column(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (headerInteractive) {
-                            Modifier.clickable {
-                                when {
-                                    singleSheetDetail is AssistantProcessDetail.Thinking ->
-                                        sheetContent =
-                                            ProcessSheetContent.Thinking(singleSheetDetail.block)
-                                    singleSheetDetail is AssistantProcessDetail.Tool ->
-                                        sheetContent =
-                                            ProcessSheetContent.Tool(singleSheetDetail.tool)
-                                    singleDetail == null -> {
-                                        onDetailsToggled()
-                                        expanded = !expanded
-                                    }
-                                }
+                    .hoverFadeClickable(enabled = headerInteractive) {
+                        when {
+                            singleSheetDetail is AssistantProcessDetail.Thinking ->
+                                sheetContent =
+                                    ProcessSheetContent.Thinking(singleSheetDetail.block)
+                            singleSheetDetail is AssistantProcessDetail.Tool ->
+                                sheetContent =
+                                    ProcessSheetContent.Tool(singleSheetDetail.tool)
+                            singleDetail == null -> {
+                                onDetailsToggled()
+                                expanded = !expanded
                             }
-                        } else {
-                            Modifier
-                        },
-                    )
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                        }
+                    }
+                    .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SweepingText(
-                text = summary + dots,
+                text = summary,
                 sweeping = isStreaming,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Deeper base text plus a fully-opaque highlight band makes the
+                // sweep read clearly (previously the band blended into a light
+                // grey base).
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 highlightColor = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.labelLarge,
                 fontStyle = FontStyle.Italic,
-                modifier = Modifier.weight(1f),
+                // fill=false: the text only takes the width it needs so the
+                // expand/collapse arrow sits right at the end of the text
+                // instead of at the far right edge of the row.
+                modifier = Modifier.weight(1f, fill = false),
             )
             if (headerInteractive) {
+                Spacer(Modifier.width(4.dp))
                 Icon(
                     // Single-detail blocks open a sheet (navigate); multi-detail blocks
                     // expand inline (drop-down).
@@ -240,14 +229,8 @@ private fun AgentProcessBlock(
             }
         }
         AnimatedVisibility(showDetails) {
-            Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp)) {
-                details.forEachIndexed { index, detail ->
-                    if (index > 0) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
-                    }
+            Column(Modifier.padding(bottom = 4.dp)) {
+                details.forEach { detail ->
                     when (detail) {
                         is AssistantProcessDetail.Thinking ->
                             ThinkingRow(
@@ -318,63 +301,22 @@ private fun ProcessDetailSheet(
     }
 }
 
-private const val DOTS_SAMPLE_INTERVAL_MS = 160L
-private const val DOTS_IDLE_POLL_MS = 200L
-private const val DOTS_MIN_STEP_MS = 130L
-private const val DOTS_MAX_STEP_MS = 800L
-private const val DOTS_MIN_ACTIVE_RATE = 1.0
-private const val DOTS_SPEED_REF_CHARS = 30.0
-
 /**
- * Animated trailing dots (0→1→2→3→0) for a streaming label. The stepping speed
- * follows a smoothed estimate of the streamed character rate: faster output steps
- * the dots faster, and the dots freeze while no new output arrives.
+ * Click handling without any ripple or background highlight: the only hover
+ * feedback is the row content fading. No padding is added, so the text stays
+ * flush with the surrounding body text.
  */
 @Composable
-private fun streamingActivityDots(charCount: Int): String {
-    val latestCount by rememberUpdatedState(charCount)
-    var rateCharsPerSec by remember { mutableStateOf(0.0) }
-    var dotCount by remember { mutableIntStateOf(0) }
-
-    // Sample the streamed character count into a smoothed chars/sec estimate.
-    LaunchedEffect(Unit) {
-        var lastCount = latestCount
-        var lastTime = withFrameMillis { it }
-        while (true) {
-            delay(DOTS_SAMPLE_INTERVAL_MS)
-            val now = withFrameMillis { it }
-            val count = latestCount
-            val elapsedMs = (now - lastTime).coerceAtLeast(1L)
-            val instantRate = (count - lastCount).coerceAtLeast(0) * 1000.0 / elapsedMs
-            rateCharsPerSec =
-                if (instantRate > 0.0) {
-                    rateCharsPerSec * 0.4 + instantRate * 0.6
-                } else {
-                    0.0 // freeze promptly once output pauses
-                }
-            lastCount = count
-            lastTime = now
-        }
-    }
-
-    // Step the dots; the delay between steps shrinks as the output rate grows.
-    LaunchedEffect(Unit) {
-        while (true) {
-            val rate = rateCharsPerSec
-            if (rate < DOTS_MIN_ACTIVE_RATE) {
-                delay(DOTS_IDLE_POLL_MS)
-            } else {
-                val stepMs =
-                    (DOTS_MAX_STEP_MS * DOTS_SPEED_REF_CHARS / (rate + DOTS_SPEED_REF_CHARS))
-                        .toLong()
-                        .coerceIn(DOTS_MIN_STEP_MS, DOTS_MAX_STEP_MS)
-                delay(stepMs)
-                dotCount = (dotCount + 1) % 4
-            }
-        }
-    }
-
-    return ".".repeat(dotCount)
+private fun Modifier.hoverFadeClickable(
+    enabled: Boolean,
+    onClick: () -> Unit,
+): Modifier {
+    if (!enabled) return this
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    return hoverable(interactionSource)
+        .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+        .alpha(if (hovered) 0.5f else 1f)
 }
 
 /** One-line label with a light band sweeping across the text while [sweeping] is true. */
@@ -412,11 +354,15 @@ private fun SweepingText(
         if (width > 0) {
             val band = width * 0.45f + 1f
             val center = -band + progress * (width + 2 * band)
+            // Plateau gradient: the highlight holds at full strength across the
+            // middle of the band instead of peaking at a single point, so the
+            // sweep looks like a solid dark band moving through the text.
             Brush.linearGradient(
                 colorStops =
                     arrayOf(
                         0.0f to color,
-                        0.5f to highlightColor,
+                        0.35f to highlightColor,
+                        0.65f to highlightColor,
                         1.0f to color,
                     ),
                 start = Offset(center - band, 0f),
@@ -446,7 +392,7 @@ private fun ThinkingRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .then(if (hasContent) Modifier.clickable(onClick = onClick) else Modifier)
+                .hoverFadeClickable(enabled = hasContent, onClick = onClick)
                 .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -485,7 +431,7 @@ private fun ToolRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .hoverFadeClickable(enabled = true, onClick = onClick)
                 .padding(vertical = 6.dp),
     ) {
         ToolHeader(tool)
