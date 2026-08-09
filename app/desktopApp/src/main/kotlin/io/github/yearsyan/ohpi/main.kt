@@ -9,9 +9,11 @@ import androidx.compose.ui.window.rememberWindowState
 
 fun main() = application {
     val windowState = rememberWindowState(width = 1280.dp, height = 840.dp)
+    val appIcon = desktopAppIconPainter()
     Window(
         onCloseRequest = ::exitApplication,
         title = "Pi",
+        icon = appIcon,
         state = windowState,
         undecorated = true,
     ) {

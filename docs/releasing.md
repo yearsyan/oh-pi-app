@@ -1,8 +1,12 @@
 # 发布与签名
 
-推送 `v<major.minor.patch>` tag 会触发 `.github/workflows/release.yml`。发布流程构建 Android APK、Linux / Windows 的 amd64 与 arm64 网关，以及经过 Developer ID 签名和 Apple notarization 的 macOS 网关。
+推送 `v<major.minor.patch>` tag 会触发 `.github/workflows/release.yml`。发布流程构建 Android APK、Windows x64 桌面 ZIP、Linux / Windows 的 amd64 与 arm64 网关，以及经过 Developer ID 签名和 Apple notarization 的 macOS 网关。
 
 同一个 tag 还会触发 `.github/workflows/testflight.yml`，在 GitHub macOS runner 上归档 iOS App，并使用专用 Apple Distribution 证书与 App Store provisioning profile 签名后上传到 TestFlight。也可以手工运行 TestFlight workflow 并填写 `major.minor.patch` 版本号，在正式打 tag 前验证上传链路。
+
+## Windows 桌面产物
+
+GitHub 的 `windows-latest` runner 使用 Compose Multiplatform 的 `createDistributable` 任务生成带裁剪 JRE、Windows 原生 SSH DLL 和应用图标的 app-image，再发布为 `oh-pi-app-<version>-windows-x64.zip`。ZIP 是免安装便携包，不构建或发布 MSI；解压后运行目录内的 `io.github.yearsyan.ohpi.exe`。
 
 ## macOS 产物
 

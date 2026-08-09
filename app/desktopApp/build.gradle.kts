@@ -23,6 +23,7 @@ val piSshOutputDir = layout.buildDirectory.dir("piSsh/output/$piSshClassifier")
 val piSshResourcesDir = layout.buildDirectory.dir("generated/piSshResources")
 val piSshBuildPath = piSshBuildDir.get().asFile.absolutePath
 val piSshOutputPath = piSshOutputDir.get().asFile.absolutePath
+val desktopAppVersion = providers.gradleProperty("versionName").getOrElse("2.1.2")
 
 plugins {
     alias(libs.plugins.kotlinJvm)
@@ -101,12 +102,17 @@ tasks.named("processResources") {
 compose.desktop {
     application {
         mainClass = "io.github.yearsyan.ohpi.MainKt"
+        jvmArgs += listOf("-Dohpi.app.version=$desktopAppVersion")
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "io.github.yearsyan.ohpi"
-            packageVersion = "2.1.1"
+            packageVersion = desktopAppVersion
             vendor = "Oh Pi App"
+
+            windows {
+                iconFile.set(project.file("src/main/resources/icons/windows/ohpi.ico"))
+            }
         }
     }
 }

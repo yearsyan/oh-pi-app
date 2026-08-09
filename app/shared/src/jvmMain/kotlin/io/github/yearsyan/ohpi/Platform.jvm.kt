@@ -7,7 +7,9 @@ class JVMPlatform: Platform {
 
 actual fun getPlatform(): Platform = JVMPlatform()
 
-// Keep in sync with compose.desktop.application.nativeDistributions.packageVersion in desktopApp/build.gradle.kts.
-private const val DESKTOP_APP_VERSION = "2.1.1"
+private const val DEFAULT_DESKTOP_APP_VERSION = "2.1.2"
 
-actual fun appVersion(): String = DESKTOP_APP_VERSION
+actual fun appVersion(): String =
+    System.getProperty("ohpi.app.version")
+        ?.takeIf { it.isNotBlank() }
+        ?: DEFAULT_DESKTOP_APP_VERSION
