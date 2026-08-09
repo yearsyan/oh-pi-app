@@ -53,6 +53,20 @@ internal expect fun AppDropdownMenu(
     anchor: @Composable (openMenu: () -> Unit) -> Unit,
 )
 
+/**
+ * Wraps [content] in a platform context-menu trigger.
+ *
+ * Desktop opens the menu at the pointer on a secondary click. Touch platforms
+ * render [content] unchanged and keep their existing menu affordances.
+ */
+@Composable
+internal expect fun AppContextMenu(
+    items: List<AppMenuItem>,
+    onItemClick: (String) -> Unit,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+)
+
 /** Splits items into visual sections without producing empty leading groups. */
 internal fun List<AppMenuItem>.menuSections(): List<List<AppMenuItem>> {
     if (isEmpty()) return emptyList()

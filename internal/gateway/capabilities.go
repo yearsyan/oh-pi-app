@@ -106,7 +106,7 @@ func (loader *capabilitiesLoader) get(ctx context.Context, workDir string) (capa
 		loader.inflight[workDir] = call
 		loader.mu.Unlock()
 
-		probeContext, cancel := context.WithTimeout(ctx, loader.cfg.HistoryTimeout)
+		probeContext, cancel := context.WithTimeout(ctx, loader.cfg.CapabilitiesTimeout)
 		response, err := probeCapabilities(probeContext, loader.cfg, workDir)
 		cancel()
 

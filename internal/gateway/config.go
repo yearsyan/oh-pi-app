@@ -10,11 +10,12 @@ import (
 )
 
 const (
-	defaultMaxMessageBytes = int64(128 << 20)
-	defaultInputQueueSize  = 64
-	defaultClientQueueSize = 128
-	defaultSessionIdle     = 5 * time.Minute
-	defaultHistoryTimeout  = 10 * time.Second
+	defaultMaxMessageBytes     = int64(128 << 20)
+	defaultInputQueueSize      = 64
+	defaultClientQueueSize     = 128
+	defaultSessionIdle         = 5 * time.Minute
+	defaultHistoryTimeout      = 10 * time.Second
+	defaultCapabilitiesTimeout = 30 * time.Second
 )
 
 // Config controls the HTTP gateway and the pi child processes it owns.
@@ -46,16 +47,17 @@ type Config struct {
 	// probes. Production leaves this empty; tests use it to launch the helper
 	// process through the Go test binary without leaking session extensions or
 	// their flags into the authentication runtime.
-	ProviderPiArgs  []string
-	AllowedOrigins  []string
-	MaxMessageBytes int64
-	InputQueueSize  int
-	ClientQueueSize int
-	WriteTimeout    time.Duration
-	PongTimeout     time.Duration
-	SessionIdle     time.Duration
-	HistoryTimeout  time.Duration
-	Logger          *slog.Logger
+	ProviderPiArgs      []string
+	AllowedOrigins      []string
+	MaxMessageBytes     int64
+	InputQueueSize      int
+	ClientQueueSize     int
+	WriteTimeout        time.Duration
+	PongTimeout         time.Duration
+	SessionIdle         time.Duration
+	HistoryTimeout      time.Duration
+	CapabilitiesTimeout time.Duration
+	Logger              *slog.Logger
 
 	piEnvironment []string
 }
@@ -121,6 +123,12 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.HistoryTimeout < 1 {
 		return Config{}, fmt.Errorf("history timeout must be positive")
+	}
+	if c.CapabilitiesTimeout == 0 {
+		c.CapabilitiesTimeout = defaultCapabilitiesTimeout
+	}
+	if c.CapabilitiesTimeout < 1 {
+		return Config{}, fmt.Errorf("capabilities timeout must be positive")
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()

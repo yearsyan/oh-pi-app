@@ -35,6 +35,13 @@ func TestPiHelperProcess(t *testing.T) {
 	}
 	if inMemory {
 		sessionID = "in-memory"
+		if delay := os.Getenv("OHPI_TEST_CAPABILITY_DELAY"); delay != "" && !providerHelper {
+			duration, err := time.ParseDuration(delay)
+			if err != nil {
+				os.Exit(3)
+			}
+			time.Sleep(duration)
+		}
 		if probeLog := os.Getenv("OHPI_TEST_PROBE_LOG"); probeLog != "" && !providerHelper {
 			logFile, err := os.OpenFile(probeLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 			if err != nil {
@@ -369,6 +376,32 @@ func TestCapabilitiesAllowPiWithoutGetCommands(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK || len(payload.Commands) != 0 {
 		t.Fatalf("capabilities status = %d, commands = %#v", response.StatusCode, payload.Commands)
+	}
+}
+
+func TestCapabilitiesUseIndependentTimeout(t *testing.T) {
+	t.Setenv("OHPI_TEST_CAPABILITY_DELAY", "200ms")
+	app, server := startTestGatewayWithConfig(t, t.TempDir(), func(cfg *Config) {
+		cfg.HistoryTimeout = 50 * time.Millisecond
+		cfg.CapabilitiesTimeout = 5 * time.Second
+	})
+	if app.cfg.CapabilitiesTimeout != 5*time.Second {
+		t.Fatalf("capabilities timeout = %v, want 5s", app.cfg.CapabilitiesTimeout)
+	}
+	workspace := createTestWorkspace(t, server, t.TempDir())
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("create capabilities request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("capabilities status = %d, want 200", response.StatusCode)
 	}
 }
 

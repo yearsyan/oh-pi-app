@@ -10,6 +10,7 @@ plugins {
 }
 
 kotlin {
+    val isMacHost = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
     val piSshSourceDir = rootProject.projectDir.parentFile.resolve("native/pi_ssh")
 
     listOf(
@@ -25,6 +26,7 @@ kotlin {
         val nativeOutputPath = nativeOutputDir.get().asFile.absolutePath
         val configureTask =
             tasks.register<Exec>("configurePiSsh$targetSuffix") {
+                onlyIf("the iOS native library can only be configured on macOS") { isMacHost }
                 inputs.dir(piSshSourceDir)
                 outputs.file(nativeBuildDir.map { it.file("CMakeCache.txt") })
                 commandLine(
@@ -47,6 +49,7 @@ kotlin {
             }
         val buildTask =
             tasks.register<Exec>("buildPiSsh$targetSuffix") {
+                onlyIf("the iOS native library can only be built on macOS") { isMacHost }
                 dependsOn(configureTask)
                 inputs.dir(piSshSourceDir)
                 outputs.file(nativeOutputDir.map { it.file("libpi_ssh_bundle.a") })

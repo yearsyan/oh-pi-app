@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.yearsyan.ohpi.PlatformTarget
 import io.github.yearsyan.ohpi.data.SavedSession
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
@@ -578,91 +579,100 @@ private fun SessionRow(
     processStopSupported: Boolean,
 ) {
     var actionSheetOpen by remember { mutableStateOf(false) }
-    val ios = getPlatform().isIos
+    val platform = getPlatform()
+    val ios = platform.isIos
+    val desktop = platform.target == PlatformTarget.Desktop
     val bg = if (active) MaterialTheme.colorScheme.surfaceContainerHigh
     else MaterialTheme.colorScheme.surface
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = if (ios) {
-                    {
-                        longPressHaptic()
-                        actionSheetOpen = true
-                    }
-                } else null,
-            )
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (session.running) {
-                    SessionStatus(outputting = session.outputting)
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    session.name.ifBlank { S.untitledSession },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+    val menuItems =
+        buildList {
+            add(AppMenuItem(id = "rename", title = S.rename, icon = AppMenuIcon.Edit))
+            if (session.running && processStopSupported) {
+                add(
+                    AppMenuItem(
+                        id = "stop",
+                        title = S.stopPiProcess,
+                        subtitle = S.stopPiProcessOutputtingHint.takeIf { session.outputting },
+                        subtitleMaxLines = 2,
+                        icon = AppMenuIcon.Stop,
+                        enabled = !session.outputting,
+                        destructive = true,
+                    ),
                 )
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "${session.id.take(8)} · ${relativeTime(session.lastActive)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            add(
+                AppMenuItem(
+                    id = "delete",
+                    title = S.delete,
+                    icon = AppMenuIcon.Delete,
+                    destructive = true,
+                ),
             )
         }
-        if (!ios) {
-            val menuItems =
-                buildList {
-                    add(AppMenuItem(id = "rename", title = S.rename, icon = AppMenuIcon.Edit))
-                    if (session.running && processStopSupported) {
-                        add(
-                            AppMenuItem(
-                                id = "stop",
-                                title = S.stopPiProcess,
-                                subtitle = S.stopPiProcessOutputtingHint.takeIf { session.outputting },
-                                subtitleMaxLines = 2,
-                                icon = AppMenuIcon.Stop,
-                                enabled = !session.outputting,
-                                destructive = true,
-                            ),
-                        )
+    val onMenuItemClick: (String) -> Unit = { id ->
+        when (id) {
+            "rename" -> onRename()
+            "stop" -> onStopProcess()
+            "delete" -> onDelete()
+        }
+    }
+    AppContextMenu(
+        items = menuItems,
+        onItemClick = onMenuItemClick,
+        enabled = desktop,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(bg)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = if (ios) {
+                        {
+                            longPressHaptic()
+                            actionSheetOpen = true
+                        }
+                    } else null,
+                )
+                .padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (session.running) {
+                        SessionStatus(outputting = session.outputting)
+                        Spacer(Modifier.width(6.dp))
                     }
-                    add(
-                        AppMenuItem(
-                            id = "delete",
-                            title = S.delete,
-                            icon = AppMenuIcon.Delete,
-                            destructive = true,
-                        ),
+                    Text(
+                        session.name.ifBlank { S.untitledSession },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                 }
-            AppDropdownMenu(
-                items = menuItems,
-                onItemClick = { id ->
-                    when (id) {
-                        "rename" -> onRename()
-                        "stop" -> onStopProcess()
-                        "delete" -> onDelete()
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "${session.id.take(8)} · ${relativeTime(session.lastActive)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!ios && !desktop) {
+                AppDropdownMenu(
+                    items = menuItems,
+                    onItemClick = onMenuItemClick,
+                    accessibilityLabel = S.moreActions,
+                ) { openMenu ->
+                    IconButton(onClick = openMenu, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = S.moreActions,
+                            modifier = Modifier.size(17.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                },
-                accessibilityLabel = S.moreActions,
-            ) { openMenu ->
-                IconButton(onClick = openMenu, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = S.moreActions,
-                        modifier = Modifier.size(17.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         }

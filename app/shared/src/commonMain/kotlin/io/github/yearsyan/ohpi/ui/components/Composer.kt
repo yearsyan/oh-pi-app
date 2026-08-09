@@ -24,6 +24,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -41,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +53,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,7 +79,23 @@ fun Composer(
     modifier: Modifier = Modifier,
     onPromptSent: () -> Unit = {},
 ) {
-    val text = controller.composerText
+    val controllerText = controller.composerText
+    val editorState =
+        remember(controller) {
+            TextFieldState(
+                initialText = controllerText,
+                initialSelection = TextRange(controllerText.length),
+            )
+        }
+    LaunchedEffect(controller, editorState) {
+        snapshotFlow { editorState.text.toString() }.collect(controller::updateComposerText)
+    }
+    LaunchedEffect(controllerText, editorState) {
+        if (editorState.text.toString() != controllerText) {
+            editorState.setTextAndPlaceCursorAtEnd(controllerText)
+        }
+    }
+    val text = editorState.text.toString()
     val images = controller.composerImages
     var pickerError by remember { mutableStateOf<String?>(null) }
     var observedConfirmation by
@@ -172,8 +193,7 @@ fun Composer(
                         )
                     }
                     BasicTextField(
-                        value = text,
-                        onValueChange = controller::updateComposerText,
+                        state = editorState,
                         enabled = !promptPending,
                         modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                         textStyle =
@@ -181,7 +201,7 @@ fun Composer(
                                 color = MaterialTheme.colorScheme.onSurface,
                             ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        maxLines = 6,
+                        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 6),
                     )
                 }
 
