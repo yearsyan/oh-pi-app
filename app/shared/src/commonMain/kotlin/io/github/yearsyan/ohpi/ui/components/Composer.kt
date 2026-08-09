@@ -51,6 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
@@ -153,6 +155,13 @@ fun Composer(
                 ),
             ) + controller.slashCommands,
         )
+    val transcriptScrimColor = MaterialTheme.colorScheme.background
+    val transcriptScrim =
+        remember(transcriptScrimColor) {
+            Brush.verticalGradient(
+                colorStops = composerTranscriptScrimStops(transcriptScrimColor),
+            )
+        }
 
     Box(
         modifier =
@@ -160,13 +169,13 @@ fun Composer(
                 .fillMaxWidth()
                 .imePadding(),
     ) {
-        // Keep the rounded top edge floating over the transcript, while making
-        // everything below the card opaque so messages never show underneath it.
+        // Let the transcript travel beneath 75% of the composer. It stays fully
+        // visible through the first two thirds of that underlap, then fades into
+        // the page background over the final third so there is no hard cutoff.
         Box(
             Modifier
                 .matchParentSize()
-                .padding(top = 36.dp)
-                .background(MaterialTheme.colorScheme.background),
+                .background(transcriptScrim),
         )
         PlatformComposerSurface(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -311,6 +320,19 @@ fun Composer(
         }
     }
 }
+
+private const val ComposerTranscriptUnderlapFraction = 0.75f
+private const val ComposerTranscriptFadeStartFraction =
+    ComposerTranscriptUnderlapFraction * (2f / 3f)
+
+/** Vertical scrim stops keeping the transcript visible, then fading it away. */
+internal fun composerTranscriptScrimStops(background: Color): Array<Pair<Float, Color>> =
+    arrayOf(
+        0f to Color.Transparent,
+        ComposerTranscriptFadeStartFraction to Color.Transparent,
+        ComposerTranscriptUnderlapFraction to background,
+        1f to background,
+    )
 
 @Composable
 private fun QueuedPromptPanel(items: List<QueuedPromptItem>) {
