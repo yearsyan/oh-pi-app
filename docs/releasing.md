@@ -2,7 +2,7 @@
 
 推送 `v<major.minor.patch>` tag 会触发 `.github/workflows/release.yml`。发布流程构建 Android APK、Windows x64 桌面 ZIP、Linux / Windows 的 amd64 与 arm64 网关，以及经过 Developer ID 签名和 Apple notarization 的 macOS 网关。
 
-同一个 tag 还会触发 `.github/workflows/testflight.yml`，在 GitHub macOS runner 上归档 iOS App，并使用专用 Apple Distribution 证书与 App Store provisioning profile 签名后上传到 TestFlight。也可以手工运行 TestFlight workflow 并填写 `major.minor.patch` 版本号，在正式打 tag 前验证上传链路。
+`.github/workflows/testflight.yml` 不随 tag 自动触发，只能在 GitHub UI、`gh workflow run` 或 API 手工运行：在 GitHub macOS runner 上归档 iOS App，并使用专用 Apple Distribution 证书与 App Store provisioning profile 签名后上传到 TestFlight。版本号留空时默认取最近一个 `v*` tag；也可显式填写 `major.minor.patch`，在正式打 tag 前验证上传链路。
 
 ## Windows 桌面产物
 
@@ -46,7 +46,7 @@ iOS App Store Connect 记录使用以下固定身份：
 - Bundle ID：`io.github.yearsyan.ohpi.OhPiApp`
 - Apple Team ID：`2XX5KZ6X3G`
 
-TestFlight workflow 使用 tag 作为 `MARKETING_VERSION`，使用 `<workflow run number>.<run attempt>` 作为唯一的 `CURRENT_PROJECT_VERSION`。手工触发时必须显式填写版本号。
+TestFlight workflow 使用解析出的版本（手工输入或最近 `v*` tag）作为 `MARKETING_VERSION`，使用 `<workflow run number>.<run attempt>` 作为唯一的 `CURRENT_PROJECT_VERSION`。
 
 归档阶段关闭代码签名；上传阶段在临时 keychain 中导入专用 Apple Distribution `.p12`，安装仅绑定 OhPiApp 的 App Store provisioning profile，再由 Xcode 手工签名并使用 App Store Connect API Key 上传。API Key 保持 Developer 角色即可，不需要给 CI Admin 权限。临时 keychain、证书、profile 和 API Key 在成功或失败后都会删除；缺少任一 Secret 时 workflow 会直接失败。
 

@@ -1,14 +1,13 @@
 name: TestFlight
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: iOS marketing version (for example, 1.10.7)
-        required: true
+        description: >-
+          iOS marketing version (for example, 1.10.7). Leave empty to use the
+          most recent v* tag.
+        required: false
         type: string
 
 permissions:
@@ -27,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -57,10 +58,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
+          if [[ -n "$VERSION_INPUT" ]]; then
             version="$VERSION_INPUT"
+          else
+            version="$(git describe --tags --abbrev=0 --match 'v*' | sed 's/^v//')"
           fi
 
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
