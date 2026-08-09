@@ -6,12 +6,12 @@
     android:viewportHeight="800">
     <path
         android:fillColor="#FF000000"
-        android:pathData="M232,96H568C643.11,96 704,156.89 704,232V568C704,643.11 643.11,704 568,704H232C156.89,704 96,643.11 96,568V232C96,156.89 156.89,96 232,96Z" />
+        android:pathData="M208,48H592C680.37,48 752,119.63 752,208V592C752,680.37 680.37,752 592,752H208C119.63,752 48,680.37 48,592V208C48,119.63 119.63,48 208,48Z" />
     <group
         android:pivotX="400"
         android:pivotY="400"
-        android:scaleX="0.72"
-        android:scaleY="0.72">
+        android:scaleX="0.84"
+        android:scaleY="0.84">
         <path
             android:fillColor="#FFFFFFFF"
             android:fillType="evenOdd"

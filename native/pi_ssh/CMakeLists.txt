@@ -142,11 +142,14 @@ target_include_directories(
 )
 target_link_libraries(pi_ssh PRIVATE ${PI_SSH_LIBSSH_TARGET} Threads::Threads)
 if(WIN32)
-    target_link_libraries(pi_ssh PRIVATE ws2_32)
+    target_link_libraries(pi_ssh PRIVATE dwmapi user32 ws2_32)
 endif()
 
 if(PI_SSH_ENABLE_JNI)
     target_sources(pi_ssh PRIVATE src/pi_ssh_jni.c)
+    if(WIN32)
+        target_sources(pi_ssh PRIVATE src/pi_window_frame_jni.c)
+    endif()
     if(NOT ANDROID)
         find_path(
             PI_SSH_JNI_INCLUDE_DIR

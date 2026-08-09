@@ -134,6 +134,13 @@ private fun IntArray.toSshError(strings: Array<String?>): SshTunnelError =
         hostKeySha256 = strings.getOrNull(1)?.takeIf { it.isNotBlank() },
     )
 
+/** Applies the native Windows frame to an AWT window without crossing the Win32 message loop. */
+fun applyWindowsNativeWindowFrame(windowHandle: Long): Boolean {
+    if (!System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) return false
+    NativeSshBridge.ensureLoaded()
+    return NativeSshBridge.nativeApplyWindowsWindowFrame(windowHandle)
+}
+
 internal object NativeSshBridge {
     private var loaded = false
 
@@ -207,6 +214,9 @@ internal object NativeSshBridge {
 
     @JvmStatic
     external fun nativeVersion(): String
+
+    @JvmStatic
+    external fun nativeApplyWindowsWindowFrame(windowHandle: Long): Boolean
 }
 
 internal object NativeSshLibraryLoader {

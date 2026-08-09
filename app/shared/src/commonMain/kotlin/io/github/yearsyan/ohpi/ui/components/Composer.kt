@@ -52,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -112,18 +113,26 @@ fun Composer(
     }
     val imageTooLarge = S.imageTooLarge
     val imageReadFailed = S.imageReadFailed
-    val picker =
-        rememberImagePicker { result ->
-            if (controller.isPromptPending) return@rememberImagePicker
-            when (result) {
-                is ImagePickResult.Success -> {
-                    controller.updateComposerImages((images + result.images).take(MaxPickedImageCount))
-                    pickerError = null
-                }
-                ImagePickResult.TooLarge -> pickerError = imageTooLarge
-                ImagePickResult.Failed -> pickerError = imageReadFailed
+    val onImageResult: (ImagePickResult) -> Unit = imageResult@{ result ->
+        if (controller.isPromptPending) return@imageResult
+        when (result) {
+            is ImagePickResult.Success -> {
+                controller.updateComposerImages(
+                    (controller.composerImages + result.images).take(MaxPickedImageCount),
+                )
+                pickerError = null
             }
+
+            ImagePickResult.TooLarge -> pickerError = imageTooLarge
+            ImagePickResult.Failed -> pickerError = imageReadFailed
         }
+    }
+    val picker = rememberImagePicker(onImageResult)
+    val clipboardImagePasteHandler =
+        rememberClipboardImagePasteHandler(
+            enabled = !promptPending,
+            onResult = onImageResult,
+        )
     val hasPrompt = text.isNotBlank() || images.isNotEmpty()
     val canSend = controller.canSubmitInput(text, images.isNotEmpty())
     val showStop = controller.isStreaming && !hasPrompt
@@ -195,7 +204,11 @@ fun Composer(
                     BasicTextField(
                         state = editorState,
                         enabled = !promptPending,
-                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
+                                .onPreviewKeyEvent(clipboardImagePasteHandler),
                         textStyle =
                             MaterialTheme.typography.bodyLarge.copy(
                                 color = MaterialTheme.colorScheme.onSurface,

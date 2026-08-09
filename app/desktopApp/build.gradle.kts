@@ -36,7 +36,6 @@ dependencies {
 
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)
-    implementation(libs.jna)
     implementation(libs.kotlinx.coroutinesSwing)
 
     implementation(libs.compose.uiToolingPreview)
@@ -103,6 +102,14 @@ compose.desktop {
     application {
         mainClass = "io.github.yearsyan.ohpi.MainKt"
         jvmArgs += listOf("-Dohpi.app.version=$desktopAppVersion")
+
+        buildTypes.release.proguard {
+            // ProGuard 7.7 can narrow Kotlin/Okio method descriptors without
+            // updating their return bytecode, producing a runtime VerifyError.
+            // Keep shrinking enabled, but do not rewrite dependency bytecode.
+            optimize.set(false)
+            configurationFiles.from(project.file("proguard-rules.pro"))
+        }
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
