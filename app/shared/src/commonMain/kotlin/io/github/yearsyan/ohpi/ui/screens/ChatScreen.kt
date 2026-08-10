@@ -97,6 +97,7 @@ import io.github.yearsyan.ohpi.ui.components.StatusLine
 import io.github.yearsyan.ohpi.ui.components.StreamingCaret
 import io.github.yearsyan.ohpi.ui.components.UserMessageRow
 import io.github.yearsyan.ohpi.ui.components.animateScrollToBottom
+import io.github.yearsyan.ohpi.ui.components.compensateVisibleTailToBottom
 import io.github.yearsyan.ohpi.ui.components.conversationHorizontalInset
 import io.github.yearsyan.ohpi.ui.components.conversationQuickJumpTargets
 import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
@@ -552,15 +553,17 @@ internal fun MessageList(
                 val lastIndex = listState.layoutInfo.totalItemsCount - 1
                 if (tailProcessBottomAnchored) {
                     // Keep the tail's bottom at the same viewport coordinate
-                    // throughout the expansion instead of correcting only once
-                    // the animation has finished.
-                    if (!userScrolledAway && lastIndex >= 0) {
-                        listState.requestScrollToBottom(lastIndex)
+                    // by consuming only this frame's newly measured height.
+                    // A direct delta avoids stacking final-item relocation
+                    // requests throughout the expansion animation.
+                    if (!userScrolledAway) {
+                        listState.compensateVisibleTailToBottom()
                     }
                 } else {
                     followPacer.awaitTurn()
                     // re-check after the throttle wait: a gesture may have started
-                    if (!userScrolledAway && !pointerInContact &&
+                    if (!tailProcessBottomAnchored &&
+                        !userScrolledAway && !pointerInContact &&
                         listState.canScrollForward && lastIndex >= 0
                     ) {
                         listState.scrollToBottom(lastIndex)
@@ -575,6 +578,7 @@ internal fun MessageList(
     LaunchedEffect(controller, bottomPadding) {
         if (bottomPadding > 0.dp &&
             followingTail &&
+            !tailProcessBottomAnchored &&
             !listState.isScrollInProgress &&
             !pointerInContact &&
             itemCount > 0
@@ -666,13 +670,13 @@ internal fun MessageList(
                                     expanding &&
                                         isTailProcess &&
                                         listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
+                                tailProcessBottomAnchored = anchorBottom
                                 if (anchorBottom) {
                                     // Close the at-most-16dp gap before the first
-                                    // expansion frame, then keep correcting each
-                                    // subsequent frame in the tail-height watcher.
-                                    listState.requestScrollToBottom(renderGroups.lastIndex)
+                                    // expansion frame. Later frames use the same
+                                    // bounded compensation from the current anchor.
+                                    listState.compensateVisibleTailToBottom()
                                 }
-                                tailProcessBottomAnchored = anchorBottom
                                 // Only an expansion decides whether tail following
                                 // should continue. Collapsing a bottom-anchored block
                                 // must preserve the existing follow state; otherwise
@@ -684,7 +688,7 @@ internal fun MessageList(
                                 if (isTailProcess && tailProcessBottomAnchored) {
                                     // Finish on the exact bottom even if the last
                                     // animation frame and its layout notification race.
-                                    listState.requestScrollToBottom(renderGroups.lastIndex)
+                                    listState.compensateVisibleTailToBottom()
                                     tailProcessBottomAnchored = false
                                 }
                             },
@@ -760,11 +764,19 @@ internal fun MessageList(
         if (initialPositionPending) {
             initialPositionPending = false
             listState.requestScrollToBottom(renderGroups.lastIndex)
-        } else if (followingTail && pinned && !listState.isScrollInProgress && !pointerInContact) {
+        } else if (
+            followingTail &&
+            pinned &&
+            !tailProcessBottomAnchored &&
+            !listState.isScrollInProgress &&
+            !pointerInContact
+        ) {
             followPacer.awaitTurn()
             // re-check after the throttle wait: the user may have scrolled away
             val lastIndex = listState.layoutInfo.totalItemsCount - 1
-            if (!userScrolledAway && pinned && !pointerInContact && lastIndex >= 0) {
+            if (!tailProcessBottomAnchored &&
+                !userScrolledAway && pinned && !pointerInContact && lastIndex >= 0
+            ) {
                 listState.scrollToBottom(lastIndex)
             }
         }
@@ -775,6 +787,7 @@ internal fun MessageList(
     LaunchedEffect(pointerInContact) {
         if (
             !pointerInContact &&
+            !tailProcessBottomAnchored &&
             followingTail &&
             pinned &&
             renderGroups.isNotEmpty() &&

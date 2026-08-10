@@ -32,6 +32,27 @@ internal fun LazyListState.isWithinBottomThreshold(thresholdPx: Int): Boolean =
     remainingScrollToBottomPx()?.let { it <= thresholdPx.coerceAtLeast(0) } == true
 
 /**
+ * Queues a bounded correction for the measured gap below the visible tail.
+ *
+ * Bottom-anchored height animations call this once per layout step. The
+ * correction advances from the current first-visible anchor by only the new
+ * gap. This is safe while LazyColumn is completing a measure pass and avoids
+ * repeatedly retargeting the growing final item with an extreme offset.
+ * Returns `false` when the tail is not currently measured.
+ */
+internal fun LazyListState.compensateVisibleTailToBottom(): Boolean {
+    val distance = remainingScrollToBottomPx() ?: return false
+    if (distance > 0) {
+        val targetOffset =
+            (firstVisibleItemScrollOffset.toLong() + distance)
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        requestScrollToItem(firstVisibleItemIndex, targetOffset)
+    }
+    return true
+}
+
+/**
  * Serializes tail-follow scrolls so at most one starts per [minInterval].
  * Callers wait out the remainder of the throttle window instead of being
  * dropped, so the final delta of a stream still lands at the bottom once the

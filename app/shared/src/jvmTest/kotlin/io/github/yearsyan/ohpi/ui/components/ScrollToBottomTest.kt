@@ -175,6 +175,28 @@ class ScrollToBottomTest {
     }
 
     @Test
+    fun visibleTailCompensationConsumesOnlyTheCurrentGap() = runComposeUiTest {
+        lateinit var state: LazyListState
+        setContent {
+            state = rememberLazyListState()
+            ProbeList(state, tallLastItem = true)
+        }
+        waitForIdle()
+
+        runBlocking {
+            state.scrollToBottom(49)
+            state.scrollBy(-16f)
+        }
+        runOnIdle { assertEquals(16, state.remainingScrollToBottomPx()) }
+        runOnIdle { assertTrue(state.compensateVisibleTailToBottom()) }
+        waitForIdle()
+        runOnIdle {
+            assertEquals(0, state.remainingScrollToBottomPx())
+            assertFalse(state.canScrollForward)
+        }
+    }
+
+    @Test
     fun negativeIndexIsANoOp() = runComposeUiTest {
         lateinit var state: LazyListState
         setContent {

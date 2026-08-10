@@ -398,11 +398,20 @@ class MessageListEntryTest {
         val collapsedBounds = processBlock.fetchSemanticsNode().boundsInRoot
         mainClock.autoAdvance = false
         onNodeWithText(processSummary).performClick()
-        repeat(6) { mainClock.advanceTimeByFrame() }
+        var sawGrowth = false
+        repeat(12) {
+            mainClock.advanceTimeByFrame()
+            val frameBounds = processBlock.fetchSemanticsNode().boundsInRoot
+            sawGrowth = sawGrowth || frameBounds.height > collapsedBounds.height
+            assertTrue(
+                abs(frameBounds.bottom - collapsedBounds.bottom) <= 1f,
+                "every expansion frame must preserve the tail block's bottom edge",
+            )
+        }
 
         val expandingBounds = processBlock.fetchSemanticsNode().boundsInRoot
         assertTrue(
-            expandingBounds.height > collapsedBounds.height,
+            sawGrowth,
             "the inline details must be partway through their expansion",
         )
         assertTrue(
