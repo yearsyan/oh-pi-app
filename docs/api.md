@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.1.0","protocol":2,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.2.0","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
 ```
 
 ```http
@@ -60,7 +60,7 @@ Authorization: Bearer <TOKEN>
 
 ## 工作空间与会话 HTTP API
 
-协议 2 由服务端维护工作空间。当前一个工作空间对应一个已存在的绝对目录；同一规范化目录只会有一个工作空间 ID。旧的 `/api/sessions` 和 `/api/capabilities` 已删除，不提供兼容层。
+自协议 2 起由服务端维护工作空间。当前一个工作空间对应一个已存在的绝对目录；同一规范化目录只会有一个工作空间 ID。旧的 `/api/sessions` 和 `/api/capabilities` 已删除，不提供兼容层。
 
 ### 创建和列出工作空间
 
@@ -422,8 +422,9 @@ attach 按以下顺序发送，最后才发送 `ohpi/ready`。收到 `ready` 表
 4. `ohpi/replay_begin`
 5. 零到多个 `ohpi/replay_event`；超大单事件则是一个 `ohpi/replay_binary_begin`，随后跟随多个 WebSocket Binary 消息
 6. `ohpi/replay_end`
-7. `ohpi/ready`
-8. attach 高水位之后的实时 pi 事件
+7. 一个 `ohpi/ui_request_snapshot`，随后是零到多个 `ohpi/ui_request_pending`，表示当前仍等待回答的交互请求
+8. `ohpi/ready`
+9. attach 高水位之后的实时 pi 事件
 
 ```json
 {"type":"ohpi","event":"history_begin","reset":false,"entry_id":"entry-45","through_seq":41,"total_bytes":287104}
@@ -434,6 +435,8 @@ attach 按以下顺序发送，最后才发送 `ohpi/ready`。收到 `ready` 表
 {"type":"ohpi","event":"replay_binary_begin","seq":43,"total_bytes":734003}
 <WebSocket Binary: raw JSON event bytes>
 {"type":"ohpi","event":"replay_end","through_seq":45}
+{"type":"ohpi","event":"ui_request_snapshot"}
+{"type":"ohpi","event":"ui_request_pending","request_id":"dialog-1","payload":{"type":"extension_ui_request","id":"dialog-1","method":"confirm","title":"继续？"}}
 {
   "type": "ohpi",
   "event": "ready",
@@ -459,6 +462,18 @@ attach 按以下顺序发送，最后才发送 `ohpi/ready`。收到 `ready` 表
 每个 Binary 消息最多携带 256 KiB 原始数据。因此稳定历史总量、单个稳定 entry 的大小、活动 turn 回放总量都不会被一个 WebSocket 消息截断。活动事件先以紧凑形式落到磁盘 WAL，attach 从磁盘持续追平；网关在同一序列化临界区内发送 `replay_end`、注册实时高水位，保证不会漏掉 replay 与 live 之间的事件。
 
 replay 序号是单调高水位，不要求在磁盘中连续。网关在 assistant `message_end` 后只保留最终消息，在 `tool_execution_end` 后删除中间工具输出，并对 `queue_update`、会话名等状态采用 last-write-wins。被合并掉的序号不会造成缺口：带较旧 `replay_since` 的客户端会收到其后仍有效的最终状态，再由 `replay_end.through_seq` 提交新的高水位。启动恢复会用相同规则原子迁移旧 WAL。
+
+### 交互式 extension UI
+
+协议 3 将 `select`、`confirm`、`input`、`editor` 类型的 `extension_ui_request` 作为 session 级临时状态，而不是普通 replay 记录。实时客户端仍直接收到 pi 的原始请求；attach 客户端先以 `ohpi/ui_request_snapshot` 清空临时请求状态，再通过 `ohpi/ui_request_pending.payload` 恢复当前尚未回答的请求。客户端必须按请求 `id` 去重，并在收到 `ready` 后才展示快照中的请求。snapshot 即使为空也会发送，使客户端能够清除旧版本缓存中残留的交互事件。
+
+多个客户端可以同时显示同一个请求，但只有第一份 `extension_ui_response` 会被转发给 pi。网关接受第一份答案后向该 session 的所有实时客户端广播：
+
+```json
+{"type":"ohpi","event":"ui_request_resolved","request_id":"dialog-1"}
+```
+
+所有客户端都应关闭相同 ID 的弹窗。较晚的答案不会再次转发，发送方收到 `ohpi/error`，错误码为 `ui_request_already_resolved`；未知或已经失效的 ID 返回 `ui_request_not_pending`。resolved 事件只包含请求 ID，不包含回答正文。
 
 历史 session 必须由当前 `--data-dir` 对应的 ohpi 实例创建。不存在或格式非法的 ID 在 WebSocket 升级前返回 HTTP 404。
 
@@ -498,7 +513,7 @@ skill、prompt template 会展开输入文本，extension 指令也可能不产�
 
 - 输出是 session 级广播，不是按发送者私有路由。多个客户端必须给会产生用户消息的 RPC `id` 加各自的唯一前缀，避免 `source_id` 冲突。
 - attach 从 pi 的 append-only session JSONL 按 entry 游标发送稳定历史，并从磁盘 WAL 发送当前活动 turn；不再调用或内嵌整包 `get_entries`。客户端仍可在 `ready` 后主动发送其他 pi RPC。
-- 普通 pi 事件（包括可能正阻塞 pi 的 `extension_ui_request`）都会进入活动 turn WAL；RPC `response` 不回放，避免 attach 客户端误处理并非由它发起的旧命令响应。
+- 普通 pi 事件会进入活动 turn WAL；交互式 `extension_ui_request` 由网关以 pending 快照恢复，RPC `response` 不回放，避免 attach 客户端误处理旧请求或并非由它发起的命令响应。
 - `abort`、`steer` 等命令会影响整个共享 session。
 - `new_session`、`switch_session`、`fork`、`clone` 会破坏网关的 session 与子进程映射，因此会被网关拒绝。新 session 应通过新的 `action=create` 连接创建。
 - 格式错误的命令只会向发送方返回 `ohpi/error`，不会转发给 pi。

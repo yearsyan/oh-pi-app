@@ -239,6 +239,7 @@ class ChatController(
     var steeringQueue = mutableStateListOf<String>(); private set
     var followUpQueue = mutableStateListOf<String>(); private set
     var dialog by mutableStateOf<UiDialogRequest?>(null); private set
+    private val uiDialogs = UiDialogQueue()
 
     /** Per-session composer state survives navigation and transient reconnects. */
     var composerText by mutableStateOf(""); private set
@@ -527,6 +528,7 @@ class ChatController(
         syncPhase = SessionSyncPhase.Idle
         syncProgress = null
         stagedItems = null
+        resetUiDialogs()
         if (clearTimeline) {
             items.clear()
         }
@@ -698,6 +700,7 @@ class ChatController(
         pendingPrompt = null
         pendingCompactId = null
         composerSubmissionSourceId = null
+        resetUiDialogs()
         steeringQueue.clear()
         followUpQueue.clear()
     }
@@ -716,6 +719,7 @@ class ChatController(
         sessionStatsRefreshQueued = false
         cancelSessionMetricsRefresh()
         runningToolCount = 0
+        resetUiDialogs()
         val retryable = when (code.toInt()) {
             1000, 1002, 1003, 1007, 1008, 1009 -> false
             else -> true
@@ -743,6 +747,7 @@ class ChatController(
         sessionStatsRefreshQueued = false
         cancelSessionMetricsRefresh()
         runningToolCount = 0
+        resetUiDialogs()
         if (!reconnectEnabled || !retryable || !hasSafeReconnectTarget()) {
             conn = ConnState.Error
             isLoadingHistory = false
@@ -1012,14 +1017,14 @@ class ChatController(
         sessionName = name
     }
 
-    fun respondDialog(response: JsonObjectBuilder.() -> Unit) {
-        val req = dialog ?: return
-        sendCommand {
+    fun respondDialog(requestId: String, response: JsonObjectBuilder.() -> Unit) {
+        val req = dialog?.takeIf { it.id == requestId } ?: return
+        val sent = sendCommand {
             put("type", "extension_ui_response")
             put("id", req.id)
             response()
         }
-        dialog = null
+        if (sent) resolveUiDialog(req.id)
     }
 
     private fun onGatewayMessage(text: String) {
@@ -1034,7 +1039,7 @@ class ChatController(
         val attachFrame = historyBinaryActive || replayBinarySeq != null ||
             (msg.str("type") == "ohpi" && gatewayEvent in setOf(
                 "history_begin", "history_end", "replay_begin", "replay_event",
-                "replay_binary_begin", "replay_end",
+                "replay_binary_begin", "replay_end", "ui_request_snapshot", "ui_request_pending",
             ))
         try {
             check(replayBinarySeq == null) { "text frame arrived inside a replay binary payload" }
@@ -1079,7 +1084,10 @@ class ChatController(
             "tool_execution_start" -> handleToolStart(msg)
             "tool_execution_update" -> handleToolUpdate(msg)
             "tool_execution_end" -> handleToolEnd(msg)
-            "agent_start" -> updateServerStreaming(true)
+            "agent_start" -> {
+                uiDialogs.beginAgentTurn()
+                updateServerStreaming(true)
+            }
             "agent_settled" -> {
                 updateServerStreaming(false)
                 for (item in timeline) {
@@ -1150,6 +1158,7 @@ class ChatController(
                 swapStagedTimeline()
                 val created = msg.str("action") == "create"
                 conn = ConnState.Ready
+                syncUiDialog()
                 isLoadingHistory = false
                 syncProgress = null
                 val sid = msg.strOrEmpty("session_id")
@@ -1180,6 +1189,9 @@ class ChatController(
                 refreshSessionStats()
                 flushPendingCreatePrompt()
             }
+            "ui_request_snapshot" -> resetUiDialogs()
+            "ui_request_pending" -> msg.obj("payload")?.let(::handleUiRequest)
+            "ui_request_resolved" -> resolveUiDialog(msg.strOrEmpty("request_id"))
             "error" -> onToast(
                 "${msg.strOrEmpty("code")}: ${msg.strOrEmpty("message")}",
                 Toast.Kind.Error,
@@ -1950,19 +1962,41 @@ class ChatController(
 
     private fun handleUiRequest(msg: JsonObject) {
         when (msg.str("method")) {
-            "select", "confirm", "input", "editor" -> dialog = UiDialogRequest(
-                id = msg.strOrEmpty("id"),
-                method = msg.strOrEmpty("method"),
-                title = msg.strOrEmpty("title"),
-                message = msg.strOrEmpty("message"),
-                options = msg.arr("options")?.map { it.toString().trim('"') } ?: emptyList(),
-                placeholder = msg.strOrEmpty("placeholder"),
-                prefill = msg.strOrEmpty("prefill"),
-            )
+            "select", "confirm", "input", "editor" -> {
+                // Requests seen while attaching remain provisional. Protocol 3
+                // replaces them with an authoritative snapshot before ready;
+                // older gateways keep their replay behavior for compatibility.
+                uiDialogs.offer(
+                    UiDialogRequest(
+                        id = msg.strOrEmpty("id"),
+                        method = msg.strOrEmpty("method"),
+                        title = msg.strOrEmpty("title"),
+                        message = msg.strOrEmpty("message"),
+                        options = msg.arr("options")?.map { it.toString().trim('"') } ?: emptyList(),
+                        placeholder = msg.strOrEmpty("placeholder"),
+                        prefill = msg.strOrEmpty("prefill"),
+                    ),
+                )
+                if (conn == ConnState.Ready) syncUiDialog()
+            }
             "notify" -> onToast(msg.str("text") ?: msg.strOrEmpty("title"), Toast.Kind.Info)
             "setStatus", "setTitle" -> msg.str("status")?.let { status(it) }
                 ?: msg.str("title")?.let { sessionName = it }
             else -> Unit
         }
+    }
+
+    private fun resolveUiDialog(id: String) {
+        uiDialogs.resolve(id)
+        syncUiDialog()
+    }
+
+    private fun syncUiDialog() {
+        dialog = uiDialogs.current
+    }
+
+    private fun resetUiDialogs() {
+        uiDialogs.reset()
+        dialog = null
     }
 }

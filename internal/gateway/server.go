@@ -31,7 +31,7 @@ var sessionChangingCommands = map[string]struct{}{
 
 const maxSessionNameRunes = 200
 
-const gatewayProtocolVersion = 2
+const gatewayProtocolVersion = 3
 
 const gatewayFeatureSessionProcessStop = "session_process_stop"
 const gatewayFeatureWorkspaces = "workspaces_v2"
@@ -397,6 +397,28 @@ func (g *Gateway) readClient(client *wsClient, session *piSession) {
 			)
 			continue
 		}
+		if commandType == "extension_ui_response" {
+			requestID, parseErr := extensionUIResponseID(command)
+			if parseErr != nil {
+				gatewayError(client, "invalid_ui_response", parseErr.Error())
+				continue
+			}
+			resolveErr := session.resolveUIRequest(client.done, requestID, command)
+			switch {
+			case resolveErr == nil:
+				continue
+			case errors.Is(resolveErr, errUIRequestAlreadyResolved):
+				gatewayError(client, "ui_request_already_resolved", "UI request was already answered")
+				continue
+			case errors.Is(resolveErr, errUIRequestNotPending):
+				gatewayError(client, "ui_request_not_pending", "UI request is no longer pending")
+				continue
+			default:
+				client.close(websocket.CloseInternalServerErr, "pi session is not running")
+				return
+			}
+		}
+
 		var sessionName *string
 		if commandType == "set_session_name" {
 			command, sessionName, err = normalizeSessionNameCommand(command)
@@ -535,6 +557,7 @@ type gatewayEvent struct {
 	WorkspaceDirectory string          `json:"workspace_directory,omitempty"`
 	Code               string          `json:"code,omitempty"`
 	Message            string          `json:"message,omitempty"`
+	RequestID          string          `json:"request_id,omitempty"`
 	FromSeq            uint64          `json:"from_seq,omitempty"`
 	ThroughSeq         uint64          `json:"through_seq,omitempty"`
 	Seq                uint64          `json:"seq,omitempty"`

@@ -37,7 +37,7 @@ Provider 或 extension Provider。正式 session 和工作空间 `capabilities` 
 <data-dir>/workspaces/<workspace-id>/workspace.json
 ```
 
-其中包含 ID、目录、显示名、追加系统提示词和时间戳。技术栈不持久化，而是在返回 API 时根据根目录的框架配置、语言 manifest 和 `package.json` 依赖按优先级重新探测。未来可以在该结构上增加子工作空间；协议 2 暂不提供子目录层级。
+其中包含 ID、目录、显示名、追加系统提示词和时间戳。技术栈不持久化，而是在返回 API 时根据根目录的框架配置、语言 manifest 和 `package.json` 依赖按优先级重新探测。未来可以在该结构上增加子工作空间；当前协议暂不提供子目录层级。
 
 每个 session 使用独立目录：
 
@@ -100,6 +100,8 @@ session 是共享控制域：
 - `abort`、`steer` 等命令影响整个 session。
 - `new_session`、`switch_session`、`fork` 和 `clone` 会破坏网关的 session 与子进程映射，因此由网关拒绝。
 - 多个客户端必须为会产生用户消息的 RPC `id` 使用各自的唯一前缀，避免 `source_id` 冲突。
+
+交互式 extension UI 请求由 session 在内存中按请求 ID 仲裁。请求先进入 pending 状态再广播；第一份客户端答案在同一序列化临界区内完成认领和入队，随后向所有实时客户端广播不含答案正文的 resolved 事件。重复答案不会进入 pi stdin。交互请求不写入 replay WAL，attach 在切换到 live 的临界区内发送当前 pending 快照，因此已回答请求不会因重连复活，仍在等待的请求也不会在 replay/live 边界丢失。
 
 ## 生命周期与关闭
 

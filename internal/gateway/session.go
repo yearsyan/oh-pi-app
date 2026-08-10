@@ -66,6 +66,9 @@ type piSession struct {
 	internalWaiters  map[string]chan []byte
 	userSources      userSourceTracker
 	metricTracker    sessionMetricTracker
+	pendingUI        map[string]pendingUIRequest
+	pendingUIOrder   []string
+	resolvedUI       map[string]struct{}
 
 	idleMu          sync.Mutex
 	idleTimer       *time.Timer
@@ -115,6 +118,8 @@ func newPiSession(cfg piSessionConfig) *piSession {
 		done:            make(chan struct{}),
 		clients:         make(map[*wsClient]uint64),
 		internalWaiters: make(map[string]chan []byte),
+		pendingUI:       make(map[string]pendingUIRequest),
+		resolvedUI:      make(map[string]struct{}),
 		settled:         true,
 	}
 	if cfg.NewSession {

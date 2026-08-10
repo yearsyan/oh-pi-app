@@ -8,6 +8,7 @@ import (
 
 type replayPayloadMetadata struct {
 	outputType string
+	method     string
 	role       string
 	toolCallID string
 }
@@ -31,6 +32,12 @@ func (c *replayLogCompactor) add(record persistedReplayRecord) error {
 		return fmt.Errorf("compact replay payload at sequence %d: %w", record.Seq, err)
 	}
 	record.Payload = payload
+	if meta.outputType == "extension_ui_request" && interactiveUIRequestMethod(meta.method) {
+		// Interactive UI is ephemeral session state. Pending requests are sent as
+		// an authoritative attach snapshot; replaying old prompts can resurrect an
+		// answer that another client already supplied.
+		return nil
+	}
 
 	switch meta.outputType {
 	case "message_start":
@@ -93,6 +100,11 @@ func compactReplayPayload(payload []byte) (json.RawMessage, replayPayloadMetadat
 	if raw := fields["type"]; raw != nil {
 		if err := json.Unmarshal(raw, &meta.outputType); err != nil {
 			return nil, replayPayloadMetadata{}, fmt.Errorf("decode output type: %w", err)
+		}
+	}
+	if raw := fields["method"]; raw != nil && meta.outputType == "extension_ui_request" {
+		if err := json.Unmarshal(raw, &meta.method); err != nil {
+			return nil, replayPayloadMetadata{}, fmt.Errorf("decode extension UI method: %w", err)
 		}
 	}
 	if raw := fields["message"]; raw != nil &&

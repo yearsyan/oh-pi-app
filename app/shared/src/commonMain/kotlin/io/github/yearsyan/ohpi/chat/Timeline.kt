@@ -261,6 +261,39 @@ data class UiDialogRequest(
     val prefill: String,
 )
 
+/** Orders session-scoped extension dialogs and treats request IDs as idempotency keys. */
+internal class UiDialogQueue {
+    private val pending = mutableListOf<UiDialogRequest>()
+    private val resolved = mutableSetOf<String>()
+
+    val current: UiDialogRequest?
+        get() = pending.firstOrNull()
+
+    fun offer(request: UiDialogRequest): Boolean {
+        if (request.id.isBlank() || request.id in resolved || pending.any { it.id == request.id }) {
+            return false
+        }
+        pending += request
+        return true
+    }
+
+    fun resolve(id: String): Boolean {
+        if (id.isBlank()) return false
+        resolved += id
+        return pending.removeAll { it.id == id }
+    }
+
+    /** A later agent turn may legitimately reuse an RPC request ID. */
+    fun beginAgentTurn() {
+        resolved.clear()
+    }
+
+    fun reset() {
+        pending.clear()
+        resolved.clear()
+    }
+}
+
 data class Toast(val id: Long, val text: String, val kind: Kind) {
     enum class Kind { Info, Error, Success }
 }

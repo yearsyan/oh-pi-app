@@ -33,7 +33,9 @@ type replayResume struct {
 func (s *piSession) addLiveClient(client *wsClient, ready []byte) bool {
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
-	if !client.sendBlocking(ready) {
+	// Create connections retain ready as their first frame. A request emitted
+	// during process startup follows immediately as an authoritative snapshot.
+	if !client.sendBlocking(ready) || !s.sendPendingUIRequestsLocked(client) {
 		return false
 	}
 	return s.registerClientLocked(client, s.outputSeq)
@@ -209,7 +211,10 @@ func (s *piSession) syncAttach(
 			Type:       "ohpi",
 			Event:      "replay_end",
 			ThroughSeq: throughSeq,
-		})) || !client.sendBlocking(ready) {
+		})) || !client.sendBlocking(mustGatewayEvent(gatewayEvent{
+			Type:  "ohpi",
+			Event: "ui_request_snapshot",
+		})) || !s.sendPendingUIRequestsLocked(client) || !client.sendBlocking(ready) {
 			s.replayMu.Unlock()
 			return errors.New("client disconnected at live handoff")
 		}

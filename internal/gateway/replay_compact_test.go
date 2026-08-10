@@ -98,6 +98,43 @@ func TestCompactReplayPayloadDropsTurnEndMessageDuplicate(t *testing.T) {
 	}
 }
 
+func TestRewriteReplayLogDropsLegacyInteractiveUIRequests(t *testing.T) {
+	path := filepath.Join(t.TempDir(), replayLogFileName)
+	records := []persistedReplayRecord{
+		testReplayRecord(t, 1, map[string]any{
+			"type": "extension_ui_request", "id": "stale-dialog", "method": "confirm",
+		}),
+		testReplayRecord(t, 2, map[string]any{"type": "agent_start"}),
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create replay log: %v", err)
+	}
+	for _, record := range records {
+		if _, err := file.Write(append(marshalTestJSON(t, record), '\n')); err != nil {
+			t.Fatalf("write replay record: %v", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close replay log: %v", err)
+	}
+
+	lastSeq, err := rewriteReplayLog(path, 0)
+	if err != nil {
+		t.Fatalf("rewrite replay log: %v", err)
+	}
+	if lastSeq != 2 {
+		t.Fatalf("last sequence = %d, want high-water mark 2", lastSeq)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read compacted replay log: %v", err)
+	}
+	if strings.Contains(string(data), "stale-dialog") || !strings.Contains(string(data), "agent_start") {
+		t.Fatalf("compacted replay retained interactive UI or lost durable output: %s", data)
+	}
+}
+
 func TestRewriteReplayLogKeepsFinalStatesAndActiveTail(t *testing.T) {
 	path := filepath.Join(t.TempDir(), replayLogFileName)
 	records := []persistedReplayRecord{

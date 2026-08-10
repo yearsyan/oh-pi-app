@@ -236,7 +236,10 @@ fun ChatScreen(
         )
     }
     controller.dialog?.let { req ->
-        ExtensionDialog(request = req, onRespond = controller::respondDialog)
+        ExtensionDialog(
+            request = req,
+            onRespond = { response -> controller.respondDialog(req.id, response) },
+        )
     }
 }
 

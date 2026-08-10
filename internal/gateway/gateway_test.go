@@ -936,7 +936,7 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 		"token":      {testToken},
 	})
 	defer second.Close()
-	attached, history, replay := readAttachHistory(t, second)
+	attached, history, replay, pendingUI := readAttachHistoryWithPending(t, second)
 	if attached.string("session_id") != sessionID {
 		t.Fatalf("attach ready = %#v", attached)
 	}
@@ -944,7 +944,7 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 		t.Fatalf("history response = %#v", history)
 	}
 	wantTypes := []string{
-		"agent_start", "message_start", "message_end", "message_start", "message_update", "extension_ui_request",
+		"agent_start", "message_start", "message_end", "message_start", "message_update",
 	}
 	if len(replay) != len(wantTypes) {
 		t.Fatalf("replay event count = %d, want %d: %#v", len(replay), len(wantTypes), replay)
@@ -956,6 +956,13 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	}
 	if replay[1].string("source_id") != "app-prompt-1" || replay[2].string("source_id") != "app-prompt-1" {
 		t.Fatalf("replayed user source IDs were not preserved: %#v %#v", replay[1], replay[2])
+	}
+	if len(pendingUI) != 1 || pendingUI[0].string("request_id") != "dialog-1" {
+		t.Fatalf("pending UI snapshot = %#v, want dialog-1", pendingUI)
+	}
+	pendingPayload, _ := pendingUI[0]["payload"].(map[string]any)
+	if pendingPayload["type"] != "extension_ui_request" || pendingPayload["method"] != "confirm" {
+		t.Fatalf("pending UI payload = %#v", pendingPayload)
 	}
 
 	liveEvent := map[string]any{
@@ -979,6 +986,75 @@ func TestAttachReceivesHistoryThenActiveReplayThenLiveOutput(t *testing.T) {
 	}
 
 	_ = app
+}
+
+func TestUIRequestFirstResponseWinsAcrossClients(t *testing.T) {
+	_, server := startTestGateway(t, t.TempDir())
+	first := dialWebSocket(t, server, url.Values{
+		"action":   {"create"},
+		"token":    {testToken},
+		"work_dir": {t.TempDir()},
+	})
+	defer first.Close()
+	sessionID := readEvent(t, first).string("session_id")
+
+	second := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer second.Close()
+	_, _, _ = readAttachHistory(t, second)
+
+	request := map[string]any{
+		"type": "extension_ui_request", "id": "dialog-shared", "method": "input",
+		"title": "Answer once", "placeholder": "value",
+	}
+	writeJSON(t, first, map[string]any{
+		"id": "emit-ui", "type": "fake_emit", "events": []any{request, request},
+	})
+	for name, client := range map[string]*websocket.Conn{"first": first, "second": second} {
+		if got := readEvent(t, client); got.string("id") != "dialog-shared" {
+			t.Fatalf("%s UI request = %#v", name, got)
+		}
+		if response := readEvent(t, client); response.string("id") != "emit-ui" {
+			t.Fatalf("%s fake emit response = %#v", name, response)
+		}
+	}
+
+	writeJSON(t, first, map[string]any{
+		"type": "extension_ui_response", "id": "dialog-shared", "value": "first answer",
+	})
+	for name, client := range map[string]*websocket.Conn{"first": first, "second": second} {
+		resolved := readEvent(t, client)
+		if resolved.string("event") != "ui_request_resolved" || resolved.string("request_id") != "dialog-shared" {
+			t.Fatalf("%s resolution = %#v", name, resolved)
+		}
+		if _, leaked := resolved["value"]; leaked {
+			t.Fatalf("%s resolution leaked the answer: %#v", name, resolved)
+		}
+		if response := readEvent(t, client); response.string("command") != "extension_ui_response" {
+			t.Fatalf("%s pi response = %#v", name, response)
+		}
+	}
+
+	writeJSON(t, second, map[string]any{
+		"type": "extension_ui_response", "id": "dialog-shared", "value": "late answer",
+	})
+	if rejected := readEvent(t, second); rejected.string("code") != "ui_request_already_resolved" {
+		t.Fatalf("late response rejection = %#v", rejected)
+	}
+
+	third := dialWebSocket(t, server, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer third.Close()
+	_, _, _, pendingUI := readAttachHistoryWithPending(t, third)
+	if len(pendingUI) != 0 {
+		t.Fatalf("resolved UI request was restored on attach: %#v", pendingUI)
+	}
 }
 
 func TestAttachResumesActiveReplayAndWrapsOptedInLiveOutput(t *testing.T) {
@@ -1686,6 +1762,12 @@ func decodeEvent(t *testing.T, message []byte) event {
 
 func readAttachHistory(t *testing.T, conn *websocket.Conn) (event, event, []event) {
 	t.Helper()
+	ready, history, replay, _ := readAttachHistoryWithPending(t, conn)
+	return ready, history, replay
+}
+
+func readAttachHistoryWithPending(t *testing.T, conn *websocket.Conn) (event, event, []event, []event) {
+	t.Helper()
 	historyBegin := readEvent(t, conn)
 	if historyBegin.string("type") != "ohpi" || historyBegin.string("event") != "history_begin" {
 		t.Fatalf("attach first message = %#v, want history_begin", historyBegin)
@@ -1831,11 +1913,34 @@ historyComplete:
 			if replaySeq != 0 {
 				t.Fatal("replay ended with an incomplete payload")
 			}
-			ready := readEvent(t, conn)
-			if ready.string("type") != "ohpi" || ready.string("event") != "ready" {
-				t.Fatalf("attach handoff message = %#v, want ready", ready)
+			var pendingUI []event
+			snapshotSeen := false
+			for {
+				handoff := readEvent(t, conn)
+				if handoff.string("type") != "ohpi" {
+					t.Fatalf("attach handoff message = %#v, want ohpi event", handoff)
+				}
+				switch handoff.string("event") {
+				case "ui_request_snapshot":
+					if snapshotSeen {
+						t.Fatal("attach sent more than one UI request snapshot")
+					}
+					snapshotSeen = true
+					pendingUI = nil
+				case "ui_request_pending":
+					if !snapshotSeen {
+						t.Fatal("pending UI request arrived before its snapshot marker")
+					}
+					pendingUI = append(pendingUI, handoff)
+				case "ready":
+					if !snapshotSeen {
+						t.Fatal("attach ready arrived without a UI request snapshot")
+					}
+					return handoff, history, replay, pendingUI
+				default:
+					t.Fatalf("attach handoff message = %#v, want pending UI or ready", handoff)
+				}
 			}
-			return ready, history, replay
 		default:
 			t.Fatalf("unexpected replay event = %#v", message)
 		}

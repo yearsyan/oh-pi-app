@@ -22,6 +22,7 @@ type replayRecord struct {
 type piOutputEnvelope struct {
 	Type    string  `json:"type"`
 	ID      string  `json:"id,omitempty"`
+	Method  string  `json:"method,omitempty"`
 	Command string  `json:"command,omitempty"`
 	Success bool    `json:"success,omitempty"`
 	Name    *string `json:"name,omitempty"`
@@ -197,11 +198,29 @@ func (s *piSession) handleOutput(message []byte) {
 	}
 
 	s.replayMu.Lock()
+	if validJSON && envelope.Type == "agent_start" {
+		// RPC IDs may be reused in a later turn, but remain tombstoned until then
+		// so delayed duplicates cannot reopen an answered dialog.
+		clear(s.resolvedUI)
+	}
 	s.outputSeq++
 	outputSeq := s.outputSeq
 	var replayErr error
 	replayMessage := message
-	if validJSON && replayableOutput(envelope.Type) {
+	replayable := validJSON && replayableOutput(envelope.Type)
+	broadcastOutput := true
+	broadcastWhileLocked := false
+	if validJSON && envelope.Type == "extension_ui_request" && interactiveUIRequestMethod(envelope.Method) {
+		replayable = false
+		if !validUIRequestID(envelope.ID) {
+			s.logger.Warn("ignore interactive UI request with invalid id", "request_id", envelope.ID)
+			broadcastOutput = false
+		} else {
+			broadcastOutput = s.acceptUIRequestLocked(envelope.ID, message)
+			broadcastWhileLocked = broadcastOutput
+		}
+	}
+	if replayable {
 		var compactErr error
 		replayMessage, _, compactErr = compactReplayPayload(message)
 		if compactErr != nil {
@@ -223,6 +242,11 @@ func (s *piSession) handleOutput(message []byte) {
 				replayErr = s.syncReplayLocked()
 			}
 		}
+	}
+	if broadcastWhileLocked {
+		// Publish to every current client before a fast answer can acquire
+		// replayMu and broadcast the matching resolution.
+		s.broadcast(message, replayMessage, outputSeq, false)
 	}
 	s.replayMu.Unlock()
 	if replayErr != nil {
@@ -246,7 +270,9 @@ func (s *piSession) handleOutput(message []byte) {
 	if checkpointToken != 0 {
 		s.scheduleCheckpoint(outputSeq, checkpointToken, checkpointSnapshot, checkpointSnapshotErr)
 	}
-	s.broadcast(message, replayMessage, outputSeq, validJSON && replayableOutput(envelope.Type))
+	if broadcastOutput && !broadcastWhileLocked {
+		s.broadcast(message, replayMessage, outputSeq, replayable)
+	}
 }
 
 func (s *piSession) adoptObservedSessionName(message []byte) {

@@ -538,8 +538,7 @@ fun ExtensionDialog(
     request: UiDialogRequest,
     onRespond: (JsonObjectBuilder.() -> Unit) -> Unit,
 ) {
-    var text by remember { mutableStateOf(request.prefill) }
-    var selected by remember { mutableStateOf<String?>(null) }
+    var text by remember(request.id) { mutableStateOf(request.prefill) }
 
     Dialog(onDismissRequest = { onRespond { put("cancelled", true) } }) {
         Surface(
