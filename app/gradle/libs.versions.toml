@@ -22,6 +22,7 @@ jna = "5.18.1"
 material3 = "1.11.0-alpha07"
 markdown-renderer = "0.41.0"
 highlights = "1.1.0"
+haze = "2.0.0-alpha03"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -55,6 +56,8 @@ jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 markdown-renderer = { module = "com.mikepenz:multiplatform-markdown-renderer", version.ref = "markdown-renderer" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 highlights = { module = "dev.snipme:highlights", version.ref = "highlights" }
+haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
+haze-blur = { module = "dev.chrisbanes.haze:haze-blur", version.ref = "haze" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

@@ -32,6 +32,7 @@ import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import androidx.compose.ui.window.ComposeUIView
+import dev.chrisbanes.haze.HazeState
 import io.github.yearsyan.ohpi.i18n.LocalStrings
 import io.github.yearsyan.ohpi.theme.LocalPiExtras
 import kotlinx.cinterop.readValue
@@ -48,6 +49,7 @@ import platform.UIKit.UIVisualEffectView
 
 @Composable
 internal actual fun PlatformComposerSurface(
+    backdropState: HazeState?,
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {

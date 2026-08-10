@@ -119,7 +119,7 @@ enum class SettingsSection {
 internal fun settingsSectionFor(name: String): SettingsSection? =
     SettingsSection.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
 
-/** Sections with too little content for a full page open a bottom sheet instead. */
+/** Sections with too little content for a full compact page open a bottom sheet instead. */
 private fun settingsSectionUsesSheet(section: SettingsSection): Boolean = when (section) {
     SettingsSection.Appearance, SettingsSection.Language, SettingsSection.About -> true
     else -> false
@@ -156,10 +156,10 @@ fun SettingsScreen(
 ) {
     var sheetSectionName by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // Light sections open a sheet; full pages navigate (compact) or swap the
-    // detail pane (wide).
+    // Light sections open a sheet on compact layouts. Wide layouts always swap
+    // the detail pane so every setting remains visible beside the master list.
     fun openSection(target: SettingsSection, openPage: (SettingsSection) -> Unit) {
-        if (settingsSectionUsesSheet(target)) sheetSectionName = target.name
+        if (!wide && settingsSectionUsesSheet(target)) sheetSectionName = target.name
         else openPage(target)
     }
 
@@ -260,7 +260,7 @@ fun SettingsScreen(
         }
     }
 
-    sheetSectionName?.let { name ->
+    if (!wide) sheetSectionName?.let { name ->
         val sheetSection = settingsSectionFor(name)
         if (sheetSection != null && settingsSectionUsesSheet(sheetSection)) {
             SettingsSectionSheet(
@@ -451,8 +451,8 @@ private fun SettingsDetail(
             onAddProvider = onAddProvider,
         )
 
-        // Sheet sections are normally opened as bottom sheets; these scaffold
-        // fallbacks keep a pushed [SettingsSectionRoute] usable.
+        // Light sections use bottom sheets on compact layouts and these detail
+        // pages in the wide right pane (or for a directly pushed route).
         SettingsSection.Appearance -> SettingsDetailScaffold(
             title = S.appearanceSection,
             onBack = onBack,

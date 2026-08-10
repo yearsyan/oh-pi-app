@@ -65,6 +65,8 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastAny
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import io.github.yearsyan.ohpi.chat.AssistantRenderChunk
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.TimelineItem
@@ -81,13 +83,14 @@ import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.ExtensionDialog
 import io.github.yearsyan.ohpi.ui.components.FollowScrollPacer
 import io.github.yearsyan.ohpi.ui.components.KeepScreenOn
+import io.github.yearsyan.ohpi.ui.components.PlatformScrollToBottomButton
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.StatusLine
 import io.github.yearsyan.ohpi.ui.components.StreamingCaret
 import io.github.yearsyan.ohpi.ui.components.UserMessageRow
 import io.github.yearsyan.ohpi.ui.components.animateScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.localizedLabel
-import io.github.yearsyan.ohpi.ui.components.PlatformScrollToBottomButton
+import io.github.yearsyan.ohpi.ui.components.platformSupportsComposerBackdropBlur
 import io.github.yearsyan.ohpi.ui.components.requestScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.resolveSessionStatus
 import io.github.yearsyan.ohpi.ui.components.scrollToBottom
@@ -119,6 +122,8 @@ fun ChatScreen(
     var composerHeightPx by remember { mutableIntStateOf(0) }
     var scrollToBottomTick by remember { mutableIntStateOf(0) }
     val composerBottomPadding = with(LocalDensity.current) { composerHeightPx.toDp() }
+    val composerBackdropState =
+        if (platformSupportsComposerBackdropBlur) rememberHazeState() else null
 
     // Keep the display awake while the model is generating output.
     KeepScreenOn(controller.isStreaming)
@@ -149,10 +154,21 @@ fun ChatScreen(
             controller.missingModel -> ChatBodyState.NoModel
             else -> ChatBodyState.Empty
         }
+        val activeComposerBackdropState =
+            composerBackdropState?.takeUnless { controller.missingModel }
         Box(Modifier.weight(1f)) {
             Crossfade(
                 targetState = bodyState,
-                modifier = Modifier.fillMaxSize(),
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (activeComposerBackdropState != null) {
+                                Modifier.hazeSource(state = activeComposerBackdropState)
+                            } else {
+                                Modifier
+                            },
+                        ),
                 animationSpec = tween(durationMillis = 180),
                 label = "chatBody",
             ) { state ->
@@ -183,6 +199,7 @@ fun ChatScreen(
             } else {
                 Composer(
                     controller = controller,
+                    backdropState = activeComposerBackdropState,
                     onPromptSent = { scrollToBottomTick++ },
                     modifier =
                         Modifier
@@ -719,8 +736,8 @@ private fun NoModelComposerBar(
             shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            shadowElevation = if (darkScheme) 0.dp else 4.dp,
-            border = if (darkScheme) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
+            shadowElevation = 0.dp,
+            border = BorderStroke(if (darkScheme) 1.dp else 0.5.dp, MaterialTheme.colorScheme.outline),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),

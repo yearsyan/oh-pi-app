@@ -60,6 +60,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.chrisbanes.haze.HazeState
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.PromptImage
 import io.github.yearsyan.ohpi.chat.QueuedPromptItem
@@ -79,6 +80,7 @@ import org.jetbrains.compose.resources.decodeToImageBitmap
 @Composable
 fun Composer(
     controller: ChatController,
+    backdropState: HazeState? = null,
     modifier: Modifier = Modifier,
     onPromptSent: () -> Unit = {},
 ) {
@@ -178,6 +180,7 @@ fun Composer(
                 .background(transcriptScrim),
         )
         PlatformComposerSurface(
+            backdropState = backdropState,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
             Column(

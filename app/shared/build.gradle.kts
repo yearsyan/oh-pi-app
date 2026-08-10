@@ -144,6 +144,8 @@ kotlin {
             implementation(libs.markdown.renderer)
             implementation(libs.markdown.renderer.m3)
             implementation(libs.highlights)
+            implementation(libs.haze)
+            implementation(libs.haze.blur)
             implementation("com.squareup.okio:okio:3.4.0")
         }
         jvmMain.dependencies {
