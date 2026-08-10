@@ -242,6 +242,7 @@ class AppViewModel(
     fun saveServer(profile: ServerProfile, newKey: SshPrivateKey? = null) {
         // A profile referencing a key that failed to persist would be unusable.
         if (newKey != null && !saveSshKey(newKey)) return
+        val rollback = servers.toList()
         // Key material lives only in the managed key store; profiles keep the id.
         val stripped =
             profile.copy(
@@ -253,7 +254,7 @@ class AppViewModel(
         val merged =
             if (previous != null) stripped.copy(portForwards = previous.portForwards) else stripped
         if (idx >= 0) servers[idx] = merged else servers.add(merged)
-        store.saveServers(servers.toList())
+        if (!persistServers(rollback)) return
         if (activeServerId.isBlank()) {
             selectServer(stripped.id)
         } else if (stripped.id == activeServerId && previous != merged) {
@@ -304,6 +305,21 @@ class AppViewModel(
         }
     }
 
+    /** Persists server metadata and credentials, restoring UI state on a secure-store failure. */
+    private fun persistServers(rollback: List<ServerProfile>): Boolean {
+        return try {
+            store.saveServers(servers.toList())
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            servers.clear()
+            servers.addAll(rollback)
+            toast(stringsProvider().serverCredentialsStorageFailed, Toast.Kind.Error)
+            false
+        }
+    }
+
     /** Injects the referenced managed key's material for connecting; never persisted. */
     private fun ServerProfile.withResolvedSshKey(): ServerProfile {
         if (!connectionMode.usesSsh || ssh.authentication != SshAuthentication.PrivateKey) {
@@ -317,8 +333,9 @@ class AppViewModel(
     }
 
     fun deleteServer(id: String) {
+        val rollback = servers.toList()
         servers.removeAll { it.id == id }
-        store.saveServers(servers.toList())
+        if (!persistServers(rollback)) return
         store.clearLegacySessions(id)
         if (activeServerId == id) {
             resetActiveConnections()

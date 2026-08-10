@@ -46,9 +46,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -73,6 +75,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -93,6 +96,7 @@ import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.GatewayServerInfo
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.longPressHaptic
+import io.github.yearsyan.ohpi.ui.privacy.rememberAiDataConsentPresenter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -102,6 +106,10 @@ import ohpiapp.shared.generated.resources.app_icon
 import org.jetbrains.compose.resources.painterResource
 
 private val SettingsListPaneWidth = 320.dp
+private const val PrivacyPolicyUrl = "https://yearsyan.github.io/oh-pi-app/"
+private const val GitHubProjectUrl = "https://github.com/yearsyan/oh-pi-app"
+private const val SupportEmailUrl =
+    "mailto:yearsyan@hotmail.com?subject=Oh%20Pi%20App%20Support"
 
 /** Top-level settings destinations shown in the master list; each opens a detail page. */
 enum class SettingsSection {
@@ -1026,6 +1034,9 @@ private fun LanguagePicker(language: AppLanguage, onLanguage: (AppLanguage) -> U
 
 @Composable
 private fun AboutContent() {
+    val uriHandler = LocalUriHandler.current
+    val aiDataConsentPresenter = rememberAiDataConsentPresenter()
+    var resetAiDataPermissionsOpen by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier
@@ -1064,6 +1075,96 @@ private fun AboutContent() {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    Spacer(Modifier.height(16.dp))
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    AboutLinkRow(
+        icon = Icons.Filled.Gavel,
+        title = S.privacyPolicy,
+        subtitle = S.privacyPolicyDescription,
+        onClick = { runCatching { uriHandler.openUri(PrivacyPolicyUrl) } },
+    )
+    if (aiDataConsentPresenter.requiresExplicitConsent) {
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 32.dp),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+        AboutLinkRow(
+            icon = Icons.Filled.Psychology,
+            title = S.aiDataPermissions,
+            subtitle = S.aiDataPermissionsDescription,
+            onClick = { resetAiDataPermissionsOpen = true },
+        )
+    }
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 32.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+    AboutLinkRow(
+        icon = Icons.Filled.Code,
+        title = S.githubProject,
+        subtitle = S.githubProjectDescription,
+        onClick = { runCatching { uriHandler.openUri(GitHubProjectUrl) } },
+    )
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 32.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+    AboutLinkRow(
+        icon = Icons.Filled.Email,
+        title = S.supportAndContact,
+        subtitle = S.supportEmail,
+        onClick = { runCatching { uriHandler.openUri(SupportEmailUrl) } },
+    )
+    if (resetAiDataPermissionsOpen) {
+        ConfirmDialog(
+            title = S.aiDataPermissionsResetTitle,
+            body = S.aiDataPermissionsResetBody,
+            confirmLabel = S.reset,
+            onDismiss = { resetAiDataPermissionsOpen = false },
+            onConfirm = {
+                aiDataConsentPresenter.revokeAllConsents()
+                resetAiDataPermissionsOpen = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun AboutLinkRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 private fun settingsSectionIcon(section: SettingsSection): ImageVector = when (section) {

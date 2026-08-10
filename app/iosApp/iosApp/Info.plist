@@ -6,6 +6,8 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Oh Pi App</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>

@@ -29,6 +29,7 @@ class IosBrowserUrlPolicyTest {
     fun nonLoopbackOrNonHttpUrlsLeaveTheApp() {
         listOf(
             "https://example.com",
+            "https://github.com/yearsyan/oh-pi-app",
             "https://localhost.example.com",
             "https://localhost@example.com",
             "http://126.255.255.255",

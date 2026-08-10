@@ -378,6 +378,7 @@ private fun MainDestination(
 
         compactChatId != null -> ChatScreen(
             controller = vm.controllerFor(compactChatId),
+            serverId = vm.activeServerId,
             showBack = true,
             onBack = onNavigateBack,
             onRename = { name -> vm.renameSession(compactChatId, name) },
@@ -483,6 +484,7 @@ private fun WideHome(
             if (chatId != null) {
                 ChatScreen(
                     controller = vm.controllerFor(chatId),
+                    serverId = vm.activeServerId,
                     showBack = false,
                     onBack = {},
                     onRename = { name -> vm.renameSession(chatId, name) },

@@ -1,6 +1,7 @@
 package io.github.yearsyan.ohpi.data
 
 import com.russhwolf.settings.Settings
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 expect fun createSettings(): Settings
@@ -14,6 +15,35 @@ internal interface SshKeyStorage {
 }
 
 internal expect fun createSshKeyStorage(settings: Settings): SshKeyStorage
+
+/** Platform storage for gateway tokens and per-server SSH passwords. */
+internal interface ServerSecretStorage {
+    /** True when secrets must be stripped from the regular settings blob. */
+    val protectsSecrets: Boolean
+
+    fun read(): String
+
+    /** Persists the blob; an empty value removes all stored server secrets. */
+    fun write(value: String)
+}
+
+internal expect fun createServerSecretStorage(settings: Settings): ServerSecretStorage
+
+/** Other platforms retain their existing inline settings representation. */
+internal object InlineServerSecretStorage : ServerSecretStorage {
+    override val protectsSecrets: Boolean = false
+
+    override fun read(): String = ""
+
+    override fun write(value: String) = Unit
+}
+
+@Serializable
+internal data class ServerSecrets(
+    val serverId: String,
+    val token: String = "",
+    val sshPassword: String = "",
+)
 
 /** Plain settings-backed storage shared by platforms without a secure enclave store. */
 internal class SettingsSshKeyStorage(private val settings: Settings) : SshKeyStorage {
@@ -31,12 +61,50 @@ private val storeJson = Json { ignoreUnknownKeys = true }
 /** Persists server profiles, UI preferences and legacy session-list migration data. */
 class SettingsStore(private val settings: Settings = createSettings()) {
     private val sshKeyStorage: SshKeyStorage = createSshKeyStorage(settings)
+    private var serverSecretStorage: ServerSecretStorage = createServerSecretStorage(settings)
 
-    fun loadServers(): List<ServerProfile> =
-        decodeList(settings.getString(KEY_SERVERS, ""))
+    fun loadServers(): List<ServerProfile> {
+        val persisted = decodeList<ServerProfile>(settings.getString(KEY_SERVERS, ""))
+        if (!serverSecretStorage.protectsSecrets) return persisted
+
+        val secrets =
+            decodeList<ServerSecrets>(serverSecretStorage.read())
+                .associateBy(ServerSecrets::serverId)
+        val redacted = persisted.map { it.withoutSecrets() }
+
+        // Old plaintext values are intentionally discarded rather than imported.
+        if (redacted != persisted) settings.putString(KEY_SERVERS, encode(redacted))
+
+        return redacted.map { profile ->
+            val stored = secrets[profile.id]
+            profile.copy(
+                token = stored?.token.orEmpty(),
+                ssh = profile.ssh.copy(password = stored?.sshPassword.orEmpty()),
+            )
+        }
+    }
 
     fun saveServers(servers: List<ServerProfile>) {
-        settings.putString(KEY_SERVERS, encode(servers))
+        if (!serverSecretStorage.protectsSecrets) {
+            settings.putString(KEY_SERVERS, encode(servers))
+            return
+        }
+
+        val secrets =
+            servers.mapNotNull { server ->
+                if (server.token.isEmpty() && server.ssh.password.isEmpty()) null
+                else ServerSecrets(server.id, server.token, server.ssh.password)
+            }
+        val encodedSecrets = if (secrets.isEmpty()) "" else encode(secrets)
+        if (serverSecretStorage.read() != encodedSecrets) {
+            serverSecretStorage.write(encodedSecrets)
+        }
+        settings.putString(KEY_SERVERS, encode(servers.map { it.withoutSecrets() }))
+    }
+
+    /** Overrides platform secret storage in unit tests before the first load/save. */
+    internal fun useServerSecretStorageForTest(storage: ServerSecretStorage) {
+        serverSecretStorage = storage
     }
 
     /** Centrally managed SSH private keys; one key can be referenced by many servers. */
@@ -91,6 +159,9 @@ class SettingsStore(private val settings: Settings = createSettings()) {
     }
 
     private inline fun <reified T> encode(value: T): String = storeJson.encodeToString(value)
+
+    private fun ServerProfile.withoutSecrets(): ServerProfile =
+        copy(token = "", ssh = ssh.copy(password = ""))
 
     companion object {
         private const val KEY_SERVERS = "servers"

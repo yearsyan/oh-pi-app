@@ -83,6 +83,9 @@ fun Composer(
     backdropState: HazeState? = null,
     modifier: Modifier = Modifier,
     onPromptSent: () -> Unit = {},
+    onSubmitInput: (String, List<PromptImage>) -> Unit = { text, images ->
+        controller.submitInput(text, images)
+    },
 ) {
     val controllerText = controller.composerText
     val editorState =
@@ -287,7 +290,7 @@ fun Composer(
                                 when {
                                     showStop -> controller.abort()
                                     canSend -> {
-                                        controller.submitInput(text, images)
+                                        onSubmitInput(text, images)
                                     }
                                 }
                             },

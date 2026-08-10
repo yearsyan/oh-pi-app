@@ -117,6 +117,7 @@ interface Strings {
     val sshKeyDefaultName: String
     val sshKeyRequired: String
     val sshKeyStorageFailed: String
+    val serverCredentialsStorageFailed: String
 
     // SSH host verification
     val sshHostKeyTitle: String
@@ -191,6 +192,15 @@ interface Strings {
     // chat
     val messagePlaceholder: String
     val send: String
+    val aiDataConsentTitle: (String) -> String
+    val aiDataConsentMessage: (String, String) -> String
+    val aiDataConsentAgreeAndSend: String
+    val aiDataConsentUnknownProvider: String
+    val aiDataPermissions: String
+    val aiDataPermissionsDescription: String
+    val aiDataPermissionsResetTitle: String
+    val aiDataPermissionsResetBody: String
+    val reset: String
     val stop: String
     val scrollToBottom: String
     val addImage: String
@@ -353,6 +363,12 @@ interface Strings {
     val languageSection: String
     val languageSystem: String
     val aboutSection: String
+    val privacyPolicy: String
+    val privacyPolicyDescription: String
+    val githubProject: String
+    val githubProjectDescription: String
+    val supportAndContact: String
+    val supportEmail: String
     val activeServerHint: String
 
     // built-in pi providers
@@ -567,6 +583,8 @@ object EnStrings : Strings {
     override val sshKeyDefaultName = "SSH key"
     override val sshKeyRequired = "Select a key or create a new one"
     override val sshKeyStorageFailed = "Could not save the key to secure storage"
+    override val serverCredentialsStorageFailed =
+        "Could not save the server credentials to secure storage"
 
     override val sshHostKeyTitle = "Trust this SSH server?"
     override val sshHostKeyChangedTitle = "SSH host key changed"
@@ -640,6 +658,18 @@ object EnStrings : Strings {
 
     override val messagePlaceholder = "Message Pi…"
     override val send = "Send"
+    override val aiDataConsentTitle = { provider: String -> "Allow sharing with $provider?" }
+    override val aiDataConsentMessage = { provider: String, model: String ->
+        "Selected model: $model\n\nTo generate a response, Oh Pi will send your message, conversation context, selected images or files, and tool results through your configured server to $provider. $provider handles this data under its own terms and privacy policy. The Oh Pi developer does not receive this content."
+    }
+    override val aiDataConsentAgreeAndSend = "Agree & Send"
+    override val aiDataConsentUnknownProvider = "the selected AI provider"
+    override val aiDataPermissions = "AI data permissions"
+    override val aiDataPermissionsDescription = "Reset provider sharing approvals"
+    override val aiDataPermissionsResetTitle = "Reset AI data permissions?"
+    override val aiDataPermissionsResetBody =
+        "Oh Pi will ask for permission again before the next prompt is sent to each AI provider."
+    override val reset = "Reset"
     override val stop = "Stop"
     override val scrollToBottom = "Scroll to bottom"
     override val addImage = "Add image"
@@ -804,6 +834,12 @@ object EnStrings : Strings {
     override val languageSection = "Language"
     override val languageSystem = "System"
     override val aboutSection = "About"
+    override val privacyPolicy = "Privacy policy"
+    override val privacyPolicyDescription = "How Oh Pi App handles your data"
+    override val githubProject = "GitHub project"
+    override val githubProjectDescription = "Source code, issues, and releases"
+    override val supportAndContact = "Support & contact"
+    override val supportEmail = "yearsyan@hotmail.com"
     override val activeServerHint = "Active"
 
     override val providersTitle = "AI providers"
@@ -1018,6 +1054,7 @@ object ZhStrings : Strings {
     override val sshKeyDefaultName = "SSH 密钥"
     override val sshKeyRequired = "请选择或新建一个密钥"
     override val sshKeyStorageFailed = "无法将密钥写入安全存储"
+    override val serverCredentialsStorageFailed = "无法将服务器凭据写入安全存储"
 
     override val sshHostKeyTitle = "信任这台 SSH 服务器？"
     override val sshHostKeyChangedTitle = "SSH 主机密钥已变化"
@@ -1088,6 +1125,18 @@ object ZhStrings : Strings {
 
     override val messagePlaceholder = "给 Pi 发送消息…"
     override val send = "发送"
+    override val aiDataConsentTitle = { provider: String -> "允许将内容发送给 $provider？" }
+    override val aiDataConsentMessage = { provider: String, model: String ->
+        "当前模型：$model\n\n为了生成回复，Oh Pi 会经由你配置的服务器，将你的消息、对话上下文、选中的图片或文件以及工具结果发送给 $provider。$provider 会依照其自己的条款和隐私政策处理这些数据；Oh Pi 开发者不会收到这些内容。"
+    }
+    override val aiDataConsentAgreeAndSend = "同意并发送"
+    override val aiDataConsentUnknownProvider = "所选 AI Provider"
+    override val aiDataPermissions = "AI 数据授权"
+    override val aiDataPermissionsDescription = "重置向 Provider 共享数据的授权"
+    override val aiDataPermissionsResetTitle = "重置 AI 数据授权？"
+    override val aiDataPermissionsResetBody =
+        "下次向每个 AI Provider 发送提示词前，Oh Pi 都会重新请求授权。"
+    override val reset = "重置"
     override val stop = "停止"
     override val scrollToBottom = "滚动到底部"
     override val addImage = "添加图片"
@@ -1250,6 +1299,12 @@ object ZhStrings : Strings {
     override val languageSection = "语言"
     override val languageSystem = "跟随系统"
     override val aboutSection = "关于"
+    override val privacyPolicy = "隐私政策"
+    override val privacyPolicyDescription = "了解 Oh Pi App 如何处理你的数据"
+    override val githubProject = "GitHub 项目"
+    override val githubProjectDescription = "查看源代码、问题与版本发布"
+    override val supportAndContact = "支持与联系我们"
+    override val supportEmail = "yearsyan@hotmail.com"
     override val activeServerHint = "当前"
 
     override val providersTitle = "AI Provider"

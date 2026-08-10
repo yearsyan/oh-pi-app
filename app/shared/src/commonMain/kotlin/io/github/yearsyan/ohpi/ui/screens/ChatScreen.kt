@@ -94,6 +94,8 @@ import io.github.yearsyan.ohpi.ui.components.platformSupportsComposerBackdropBlu
 import io.github.yearsyan.ohpi.ui.components.requestScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.resolveSessionStatus
 import io.github.yearsyan.ohpi.ui.components.scrollToBottom
+import io.github.yearsyan.ohpi.ui.privacy.AiDataConsentRequest
+import io.github.yearsyan.ohpi.ui.privacy.rememberAiDataConsentPresenter
 import kotlinx.coroutines.launch
 
 private enum class ChatBodyState {
@@ -107,6 +109,7 @@ private enum class ChatBodyState {
 @Composable
 fun ChatScreen(
     controller: ChatController,
+    serverId: String,
     showBack: Boolean,
     onBack: () -> Unit,
     onRename: (String) -> Unit,
@@ -116,6 +119,8 @@ fun ChatScreen(
     onOpenProviders: () -> Unit = {},
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
+    val strings = S
+    val aiDataConsentPresenter = rememberAiDataConsentPresenter()
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var stopProcessOpen by remember { mutableStateOf(false) }
@@ -201,6 +206,31 @@ fun ChatScreen(
                     controller = controller,
                     backdropState = activeComposerBackdropState,
                     onPromptSent = { scrollToBottomTick++ },
+                    onSubmitInput = { text, images ->
+                        val model = controller.currentModel
+                        val providerId =
+                            model?.provider?.trim().orEmpty().ifBlank {
+                                model?.qualified ?: controller.model.ifBlank { "unknown" }
+                            }
+                        val providerName =
+                            model?.provider?.trim().orEmpty()
+                                .ifBlank { strings.aiDataConsentUnknownProvider }
+                        val modelName =
+                            model?.label ?: controller.model.ifBlank { providerName }
+                        aiDataConsentPresenter.requestConsent(
+                            request =
+                                AiDataConsentRequest(
+                                    serverId = serverId,
+                                    providerId = providerId,
+                                    title = strings.aiDataConsentTitle(providerName),
+                                    message = strings.aiDataConsentMessage(providerName, modelName),
+                                    cancelLabel = strings.cancel,
+                                    privacyPolicyLabel = strings.privacyPolicy,
+                                    agreeAndSendLabel = strings.aiDataConsentAgreeAndSend,
+                                ),
+                            onGranted = { controller.submitInput(text, images) },
+                        )
+                    },
                     modifier =
                         Modifier
                             .align(Alignment.BottomCenter)

@@ -44,8 +44,10 @@ import platform.Security.kSecMatchLimitOne
 import platform.Security.kSecReturnData
 import platform.Security.kSecValueData
 
-private const val KeychainService = "io.github.yearsyan.ohpi.ssh-keys"
-private const val KeychainAccount = "ssh_keys"
+private const val SshKeysKeychainService = "io.github.yearsyan.ohpi.ssh-keys"
+private const val SshKeysKeychainAccount = "ssh_keys"
+private const val ServerSecretsKeychainService = "io.github.yearsyan.ohpi.server-secrets"
+private const val ServerSecretsKeychainAccount = "server_secrets"
 
 /**
  * iOS keeps managed SSH private keys in the system Keychain instead of
@@ -54,13 +56,30 @@ private const val KeychainAccount = "ssh_keys"
  */
 internal class KeychainSshKeyStorage : SshKeyStorage {
     /** Reads never throw: a Keychain hiccup must not crash app start-up. */
-    override fun read(): String = readKeychainItem().orEmpty()
+    override fun read(): String =
+        readKeychainItem(SshKeysKeychainService, SshKeysKeychainAccount).orEmpty()
 
     override fun write(value: String) {
         if (value.isEmpty()) {
-            deleteKeychainItem()
+            deleteKeychainItem(SshKeysKeychainService, SshKeysKeychainAccount)
         } else {
-            writeKeychainItem(value)
+            writeKeychainItem(SshKeysKeychainService, SshKeysKeychainAccount, value)
+        }
+    }
+}
+
+/** Keeps gateway tokens and SSH passwords out of NSUserDefaults on iOS. */
+internal class KeychainServerSecretStorage : ServerSecretStorage {
+    override val protectsSecrets: Boolean = true
+
+    override fun read(): String =
+        readKeychainItem(ServerSecretsKeychainService, ServerSecretsKeychainAccount).orEmpty()
+
+    override fun write(value: String) {
+        if (value.isEmpty()) {
+            deleteKeychainItem(ServerSecretsKeychainService, ServerSecretsKeychainAccount)
+        } else {
+            writeKeychainItem(ServerSecretsKeychainService, ServerSecretsKeychainAccount, value)
         }
     }
 }
@@ -68,13 +87,20 @@ internal class KeychainSshKeyStorage : SshKeyStorage {
 internal actual fun createSshKeyStorage(settings: Settings): SshKeyStorage =
     KeychainSshKeyStorage()
 
+internal actual fun createServerSecretStorage(settings: Settings): ServerSecretStorage =
+    KeychainServerSecretStorage()
+
 /**
  * Builds the generic-password lookup query and hands it to [block]. The
  * dictionary retains its values; locally created strings are released after.
  */
-private inline fun withBaseQuery(block: (CFDictionaryRef?) -> Unit) {
-    val service = CFStringCreateWithCString(null, KeychainService, kCFStringEncodingUTF8)
-    val account = CFStringCreateWithCString(null, KeychainAccount, kCFStringEncodingUTF8)
+private inline fun withBaseQuery(
+    serviceName: String,
+    accountName: String,
+    block: (CFDictionaryRef?) -> Unit,
+) {
+    val service = CFStringCreateWithCString(null, serviceName, kCFStringEncodingUTF8)
+    val account = CFStringCreateWithCString(null, accountName, kCFStringEncodingUTF8)
     val query =
         CFDictionaryCreateMutable(
             null,
@@ -94,11 +120,11 @@ private inline fun withBaseQuery(block: (CFDictionaryRef?) -> Unit) {
     }
 }
 
-private fun readKeychainItem(): String? =
+private fun readKeychainItem(service: String, account: String): String? =
     memScoped {
         val result = alloc<COpaquePointerVar>()
         var output: String? = null
-        withBaseQuery { query ->
+        withBaseQuery(service, account) { query ->
             CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue)
             CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne)
             if (SecItemCopyMatching(query, result.ptr) != errSecSuccess) return@withBaseQuery
@@ -114,10 +140,10 @@ private fun readKeychainItem(): String? =
         output
     }
 
-private fun writeKeychainItem(value: String) {
+private fun writeKeychainItem(service: String, account: String, value: String) {
     val data = stringToCFData(value)
     try {
-        withBaseQuery { query ->
+        withBaseQuery(service, account) { query ->
             CFDictionarySetValue(query, kSecValueData, data)
             CFDictionarySetValue(
                 query,
@@ -126,7 +152,7 @@ private fun writeKeychainItem(value: String) {
             )
             when (val status = SecItemAdd(query, null)) {
                 errSecSuccess -> Unit
-                errSecDuplicateItem -> updateKeychainItem(data)
+                errSecDuplicateItem -> updateKeychainItem(service, account, data)
                 else -> throw IllegalStateException("Keychain add failed (status $status)")
             }
         }
@@ -135,7 +161,7 @@ private fun writeKeychainItem(value: String) {
     }
 }
 
-private fun updateKeychainItem(data: CFDataRef?) {
+private fun updateKeychainItem(service: String, account: String, data: CFDataRef?) {
     val attributes =
         CFDictionaryCreateMutable(
             null,
@@ -145,7 +171,7 @@ private fun updateKeychainItem(data: CFDataRef?) {
         )
     try {
         CFDictionarySetValue(attributes, kSecValueData, data)
-        withBaseQuery { query ->
+        withBaseQuery(service, account) { query ->
             val status = SecItemUpdate(query, attributes)
             if (status != errSecSuccess) {
                 throw IllegalStateException("Keychain update failed (status $status)")
@@ -156,9 +182,9 @@ private fun updateKeychainItem(data: CFDataRef?) {
     }
 }
 
-private fun deleteKeychainItem() {
+private fun deleteKeychainItem(service: String, account: String) {
     // A missing item is not an error: nothing was stored yet.
-    withBaseQuery { query -> SecItemDelete(query) }
+    withBaseQuery(service, account) { query -> SecItemDelete(query) }
 }
 
 private fun stringToCFData(value: String): CFDataRef? {

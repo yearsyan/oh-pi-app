@@ -15,8 +15,16 @@ internal actual fun rememberPlatformUriHandler(): UriHandler =
                 runCatching {
                     if (Desktop.isDesktopSupported()) {
                         val desktop = Desktop.getDesktop()
-                        if (desktop.isSupported(Desktop.Action.BROWSE)) {
-                            desktop.browse(URI(uri))
+                        val target = URI(uri)
+                        val action =
+                            if (target.scheme.equals("mailto", ignoreCase = true)) {
+                                Desktop.Action.MAIL
+                            } else {
+                                Desktop.Action.BROWSE
+                            }
+                        if (desktop.isSupported(action)) {
+                            if (action == Desktop.Action.MAIL) desktop.mail(target)
+                            else desktop.browse(target)
                         }
                     }
                 }
