@@ -99,6 +99,7 @@ import io.github.yearsyan.ohpi.ui.components.UserMessageRow
 import io.github.yearsyan.ohpi.ui.components.animateScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.compensateVisibleTailToBottom
 import io.github.yearsyan.ohpi.ui.components.conversationHorizontalInset
+import io.github.yearsyan.ohpi.ui.components.conversationQuickJumpPreview
 import io.github.yearsyan.ohpi.ui.components.conversationQuickJumpTargets
 import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
 import io.github.yearsyan.ohpi.ui.components.localizedLabel
@@ -717,6 +718,9 @@ internal fun MessageList(
                 targets = quickJumpTargets,
                 currentItemIndex = listState.firstVisibleItemIndex,
                 totalItemsCount = renderGroups.size,
+                previewForTarget = { target ->
+                    conversationQuickJumpPreview(renderGroups, target)
+                },
                 onJump = ::requestJumpToGroup,
                 modifier =
                     Modifier
