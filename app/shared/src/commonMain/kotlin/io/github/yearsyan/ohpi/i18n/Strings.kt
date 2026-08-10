@@ -203,6 +203,7 @@ interface Strings {
     val reset: String
     val stop: String
     val scrollToBottom: String
+    val conversationQuickNavigation: String
     val addImage: String
     val removeImage: String
     val imageAttachment: (Int) -> String
@@ -672,6 +673,7 @@ object EnStrings : Strings {
     override val reset = "Reset"
     override val stop = "Stop"
     override val scrollToBottom = "Scroll to bottom"
+    override val conversationQuickNavigation = "Conversation quick navigation"
     override val addImage = "Add image"
     override val removeImage = "Remove image"
     override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
@@ -1139,6 +1141,7 @@ object ZhStrings : Strings {
     override val reset = "重置"
     override val stop = "停止"
     override val scrollToBottom = "滚动到底部"
+    override val conversationQuickNavigation = "会话快速跳转"
     override val addImage = "添加图片"
     override val removeImage = "移除图片"
     override val imageAttachment = { count: Int -> "图片 × $count" }

@@ -1,0 +1,4 @@
+language = Objective-C
+package = io.github.yearsyan.ohpi.liquidglass
+headers = OhPiLiquidGlassBridge.h
+linkerOpts = -framework UIKit

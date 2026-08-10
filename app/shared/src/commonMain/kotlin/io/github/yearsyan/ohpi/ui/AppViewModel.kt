@@ -154,6 +154,8 @@ class AppViewModel(
     var activeGatewayInfo by mutableStateOf<GatewayServerInfo?>(null); private set
     var activeChatId by mutableStateOf<String?>(null); private set
     var sessionsLoading by mutableStateOf(false); private set
+    /** True only while a load triggered by the user's pull-to-refresh gesture is in flight. */
+    var sessionsRefreshing by mutableStateOf(false); private set
     var providersLoading by mutableStateOf(false); private set
     var providerLogoutId by mutableStateOf<String?>(null); private set
     var providerAuthFlow by mutableStateOf<ProviderAuthFlowState?>(null); private set
@@ -369,6 +371,7 @@ class AppViewModel(
                 workspaces.clear()
                 sessions.clear()
                 sessionsLoading = false
+                sessionsRefreshing = false
                 toast(stringsProvider().managedGatewayStopped, Toast.Kind.Success)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -706,7 +709,11 @@ class AppViewModel(
         // Keep the indicator visible briefly so a fast LAN response still
         // reads as a completed refresh instead of a no-op flicker.
         if (!sessionsLoading) {
-            loadSessionsForActive(clearExisting = false, minIndicatorMs = MIN_REFRESH_INDICATOR_MS)
+            loadSessionsForActive(
+                clearExisting = false,
+                minIndicatorMs = MIN_REFRESH_INDICATOR_MS,
+                userRefresh = true,
+            )
         }
     }
 
@@ -739,7 +746,11 @@ class AppViewModel(
         controllers.values.forEach { it.reconnectIfDisconnected() }
     }
 
-    private fun loadSessionsForActive(clearExisting: Boolean = true, minIndicatorMs: Long = 0) {
+    private fun loadSessionsForActive(
+        clearExisting: Boolean = true,
+        minIndicatorMs: Long = 0,
+        userRefresh: Boolean = false,
+    ) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
         if (clearExisting) {
@@ -748,9 +759,11 @@ class AppViewModel(
         }
         if (server == null) {
             sessionsLoading = false
+            sessionsRefreshing = false
             return
         }
         sessionsLoading = true
+        sessionsRefreshing = userRefresh
         val startedAt = nowMillis()
         viewModelScope.launch {
             if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
@@ -810,7 +823,10 @@ class AppViewModel(
                     val elapsed = nowMillis() - startedAt
                     if (elapsed < minIndicatorMs) delay(minIndicatorMs - elapsed)
                     // A newer load may have started during the delay.
-                    if (generation == sessionRefreshGeneration) sessionsLoading = false
+                    if (generation == sessionRefreshGeneration) {
+                        sessionsLoading = false
+                        sessionsRefreshing = false
+                    }
                 }
             }
         }

@@ -20,30 +20,13 @@ import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import io.github.yearsyan.ohpi.i18n.S
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassCreateScrollButtonView
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassIsAvailable
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassSetScrollButtonProgress
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassUpdateScrollButton
 import kotlinx.cinterop.ObjCAction
-import kotlinx.cinterop.readValue
-import platform.CoreGraphics.CGAffineTransformMakeScale
-import platform.CoreGraphics.CGRectZero
-import platform.Foundation.NSClassFromString
 import platform.Foundation.NSSelectorFromString
-import platform.UIKit.UIAccessibilityTraitButton
 import platform.UIKit.UIColor
-import platform.UIKit.UICornerConfiguration
-import platform.UIKit.UICornerRadius
-import platform.UIKit.UIGlassEffect
-import platform.UIKit.UIGlassEffectStyle
-import platform.UIKit.UIImage
-import platform.UIKit.UIImageSymbolConfiguration
-import platform.UIKit.UIImageSymbolWeightSemibold
-import platform.UIKit.UIImageView
-import platform.UIKit.UITapGestureRecognizer
-import platform.UIKit.UIUserInterfaceStyle
-import platform.UIKit.UIView
-import platform.UIKit.UIViewContentMode
-import platform.UIKit.UIVisualEffectView
-import platform.UIKit.accessibilityLabel
-import platform.UIKit.accessibilityTraits
-import platform.UIKit.isAccessibilityElement
 import platform.darwin.NSObject
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -72,16 +55,33 @@ internal actual fun PlatformScrollToBottomButton(
 
     UIKitView(
         factory = {
-            LiquidGlassScrollButtonView().apply {
-                onTap = { latestOnClick() }
-                updateAppearance(darkAppearance, iconTint, accessibilityLabel)
-                updateVisibility(progress.value)
-            }
+            val tapTarget = TapTarget { latestOnClick() }
+            val view =
+                checkNotNull(
+                    OhPiLiquidGlassCreateScrollButtonView(
+                        tapTarget,
+                        NSSelectorFromString("handleTap"),
+                    ),
+                ) {
+                    "Liquid Glass bridge returned no scroll button on a supported OS"
+                }
+            OhPiLiquidGlassUpdateScrollButton(
+                view,
+                darkAppearance,
+                iconTint.toUIColor(),
+                accessibilityLabel,
+            )
+            OhPiLiquidGlassSetScrollButtonProgress(view, progress.value.toDouble())
+            view
         },
         update = { view ->
-            view.onTap = { latestOnClick() }
-            view.updateAppearance(darkAppearance, iconTint, accessibilityLabel)
-            view.updateVisibility(progress.value)
+            OhPiLiquidGlassUpdateScrollButton(
+                view,
+                darkAppearance,
+                iconTint.toUIColor(),
+                accessibilityLabel,
+            )
+            OhPiLiquidGlassSetScrollButtonProgress(view, progress.value.toDouble())
         },
         modifier = modifier.size(38.dp),
         properties =
@@ -107,105 +107,6 @@ private class TapTarget(
     }
 }
 
-/**
- * Native circular glass button. The SF Symbol chevron sits inside the glass
- * content view so it stays crisp; its tint is pushed from the Compose theme
- * so it matches the legacy Material icon color exactly.
- */
-private class LiquidGlassScrollButtonView : UIView(frame = CGRectZero.readValue()) {
-    var onTap: (() -> Unit)? = null
-
-    private val tapTarget = TapTarget { onTap?.invoke() }
-
-    private val glassView =
-        UIVisualEffectView(
-            effect =
-                UIGlassEffect.effectWithStyle(UIGlassEffectStyle.UIGlassEffectStyleRegular).apply {
-                    // Brighten on touch-down; this is a button, not a static card.
-                    interactive = true
-                },
-        )
-
-    private val iconView =
-        UIImageView(
-            image =
-                UIImage.systemImageNamed(
-                    "chevron.down",
-                    withConfiguration =
-                        UIImageSymbolConfiguration.configurationWithPointSize(
-                            pointSize = ScrollButtonSymbolPointSize,
-                            weight = UIImageSymbolWeightSemibold,
-                        ),
-                ),
-        )
-
-    init {
-        opaque = false
-        backgroundColor = UIColor.clearColor
-        isAccessibilityElement = true
-        accessibilityTraits = UIAccessibilityTraitButton
-
-        val corners =
-            UICornerConfiguration.configurationWithRadius(
-                UICornerRadius.fixedRadius(ScrollButtonCornerRadius),
-            )
-        cornerConfiguration = corners
-        glassView.cornerConfiguration = corners
-        glassView.clipsToBounds = true
-
-        iconView.contentMode = UIViewContentMode.UIViewContentModeCenter
-
-        addSubview(glassView)
-        glassView.contentView.addSubview(iconView)
-
-        addGestureRecognizer(
-            UITapGestureRecognizer(
-                target = tapTarget,
-                action = NSSelectorFromString("handleTap"),
-            ),
-        )
-    }
-
-    /** Keeps UIKit glass in sync with the app theme, including forced themes. */
-    fun updateAppearance(
-        isDark: Boolean,
-        tint: Color,
-        label: String,
-    ) {
-        val interfaceStyle =
-            if (isDark) {
-                UIUserInterfaceStyle.UIUserInterfaceStyleDark
-            } else {
-                UIUserInterfaceStyle.UIUserInterfaceStyleLight
-            }
-        if (overrideUserInterfaceStyle != interfaceStyle) {
-            overrideUserInterfaceStyle = interfaceStyle
-        }
-        iconView.tintColor = tint.toUIColor()
-        if (accessibilityLabel != label) {
-            accessibilityLabel = label
-        }
-    }
-
-    /** Mirrors the legacy fade/scale and drops hit-testing while invisible. */
-    fun updateVisibility(progress: Float) {
-        val clamped = progress.coerceIn(0f, 1f)
-        alpha = clamped.toDouble()
-        val scale = (0.85 + 0.15 * clamped).toDouble()
-        transform = CGAffineTransformMakeScale(scale, scale)
-        val shouldHide = clamped <= 0.01f
-        if (hidden != shouldHide) {
-            hidden = shouldHide
-        }
-    }
-
-    override fun layoutSubviews() {
-        super.layoutSubviews()
-        glassView.setFrame(bounds)
-        iconView.setFrame(glassView.contentView.bounds)
-    }
-}
-
 private fun Color.toUIColor(): UIColor =
     UIColor.colorWithRed(
         red = red.toDouble(),
@@ -214,10 +115,4 @@ private fun Color.toUIColor(): UIColor =
         alpha = alpha.toDouble(),
     )
 
-private fun isScrollButtonLiquidGlassAvailable(): Boolean =
-    NSClassFromString("UIGlassEffect") != null
-
-/** The button is fixed at 38.dp, so a 19pt radius keeps it circular. */
-private const val ScrollButtonCornerRadius = 19.0
-
-private const val ScrollButtonSymbolPointSize = 15.0
+private fun isScrollButtonLiquidGlassAvailable(): Boolean = OhPiLiquidGlassIsAvailable()

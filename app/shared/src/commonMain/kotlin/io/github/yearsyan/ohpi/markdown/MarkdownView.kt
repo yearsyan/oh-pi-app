@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -41,6 +42,8 @@ import com.mikepenz.markdown.compose.extendedspans.SpanDrawInstructions
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.MarkdownState
+import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownExtendedSpans
 import com.mikepenz.markdown.model.markdownPadding
@@ -50,6 +53,8 @@ import io.github.yearsyan.ohpi.syntax.Syntax
 import io.github.yearsyan.ohpi.theme.piExtras
 import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 private val highlightedCodeFence: MarkdownComponent = { model ->
@@ -103,10 +108,26 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
             ExtendedSpans(InlineCodeSpanPainter(extras.codeBackground))
         }
     }
-    val state = rememberMarkdownState(
-        content = markdown,
-        retainState = true,
-    )
+    // A cache hit renders synchronously at the final height on the first
+    // frame; a miss falls back to the renderer's async parse, which starts as
+    // a zero-height loading box and jumps once parsing lands.
+    val preparsed = remember(markdown) { MarkdownParseCache.peek(markdown) }
+    val state: MarkdownState = if (preparsed != null) {
+        remember(preparsed) { PreparsedMarkdownState(preparsed) }
+    } else {
+        rememberMarkdownState(
+            content = markdown,
+            retainState = true,
+        )
+    }
+    // Persist the async parse result so a recycled LazyColumn item re-entering
+    // the viewport hits the cache instead of flashing the loading box again.
+    if (preparsed == null) {
+        LaunchedEffect(state, markdown) {
+            val success = state.state.filterIsInstance<State.Success>().first()
+            MarkdownParseCache.put(markdown, success)
+        }
+    }
 
     SelectionContainer(modifier) {
         Markdown(

@@ -12,6 +12,7 @@ plugins {
 kotlin {
     val isMacHost = System.getProperty("os.name").startsWith("Mac", ignoreCase = true)
     val piSshSourceDir = rootProject.projectDir.parentFile.resolve("native/pi_ssh")
+    val liquidGlassSourceDir = project.file("src/nativeInterop/liquidGlass")
 
     listOf(
         iosArm64(),
@@ -24,6 +25,61 @@ kotlin {
         val nativeOutputDir = layout.buildDirectory.dir("piSsh/output/$targetName")
         val nativeBuildPath = nativeBuildDir.get().asFile.absolutePath
         val nativeOutputPath = nativeOutputDir.get().asFile.absolutePath
+        val liquidGlassBuildDir = layout.buildDirectory.dir("liquidGlass/$targetName")
+        val liquidGlassBuildPath = liquidGlassBuildDir.get().asFile.absolutePath
+        val liquidGlassObjectPath = "$liquidGlassBuildPath/OhPiLiquidGlassBridge.o"
+        val liquidGlassLibraryPath = "$liquidGlassBuildPath/libOhPiLiquidGlassBridge.a"
+        val appleTarget =
+            if (targetName == "iosArm64") {
+                "arm64-apple-ios18.5"
+            } else {
+                "arm64-apple-ios18.5-simulator"
+            }
+        val compileLiquidGlassBridge =
+            tasks.register<Exec>("compileLiquidGlassBridge$targetSuffix") {
+                onlyIf("the iOS bridge can only be compiled on macOS") { isMacHost }
+                inputs.files(
+                    liquidGlassSourceDir.resolve("OhPiLiquidGlassBridge.h"),
+                    liquidGlassSourceDir.resolve("OhPiLiquidGlassBridge.m"),
+                )
+                outputs.file(liquidGlassObjectPath)
+                doFirst { liquidGlassBuildDir.get().asFile.mkdirs() }
+                commandLine(
+                    "xcrun",
+                    "--sdk",
+                    sysroot,
+                    "clang",
+                    "-target",
+                    appleTarget,
+                    "-fobjc-arc",
+                    "-fmodules",
+                    "-fmodules-cache-path=$liquidGlassBuildPath/ModuleCache",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror=unguarded-availability",
+                    "-Werror=unguarded-availability-new",
+                    "-I${liquidGlassSourceDir.absolutePath}",
+                    "-c",
+                    liquidGlassSourceDir.resolve("OhPiLiquidGlassBridge.m").absolutePath,
+                    "-o",
+                    liquidGlassObjectPath,
+                )
+            }
+        val archiveLiquidGlassBridge =
+            tasks.register<Exec>("archiveLiquidGlassBridge$targetSuffix") {
+                onlyIf("the iOS bridge can only be archived on macOS") { isMacHost }
+                dependsOn(compileLiquidGlassBridge)
+                inputs.file(liquidGlassObjectPath)
+                outputs.file(liquidGlassLibraryPath)
+                commandLine(
+                    "xcrun",
+                    "libtool",
+                    "-static",
+                    "-o",
+                    liquidGlassLibraryPath,
+                    liquidGlassObjectPath,
+                )
+            }
         val configureTask =
             tasks.register<Exec>("configurePiSsh$targetSuffix") {
                 onlyIf("the iOS native library can only be configured on macOS") { isMacHost }
@@ -80,6 +136,26 @@ kotlin {
             .configureEach {
                 dependsOn(buildTask)
                 inputs.file(piSshSourceDir.resolve("include/pi_ssh.h"))
+            }
+
+        val liquidGlassInterop =
+            iosTarget.compilations.getByName("main").cinterops.create("liquidGlass") {
+                defFile(project.file("src/nativeInterop/cinterop/liquidGlass.def"))
+                compilerOpts("-I${liquidGlassSourceDir.absolutePath}")
+                extraOpts(
+                    "-libraryPath",
+                    liquidGlassBuildPath,
+                    "-staticLibrary",
+                    "libOhPiLiquidGlassBridge.a",
+                )
+            }
+        tasks.matching { it.name == liquidGlassInterop.interopProcessingTaskName }
+            .configureEach {
+                dependsOn(archiveLiquidGlassBridge)
+                inputs.files(
+                    liquidGlassSourceDir.resolve("OhPiLiquidGlassBridge.h"),
+                    liquidGlassSourceDir.resolve("OhPiLiquidGlassBridge.m"),
+                )
             }
 
         iosTarget.binaries.framework {

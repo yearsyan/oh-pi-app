@@ -85,6 +85,7 @@ fun SessionListPane(
     activeChatId: String?,
     wide: Boolean,
     sessionsLoading: Boolean,
+    sessionsRefreshing: Boolean,
     onRefresh: () -> Unit,
     onNewChat: () -> Unit,
     onSelectSession: (SavedSession) -> Unit,
@@ -199,12 +200,16 @@ fun SessionListPane(
         Spacer(Modifier.height(4.dp))
 
         PlatformPullToRefreshBox(
-            isRefreshing = sessionsLoading,
+            // The spinner is reserved for explicit pull-to-refresh; initial
+            // loads show the skeleton instead, and the pull gesture is
+            // disabled while any load is in flight.
+            isRefreshing = sessionsRefreshing,
             onRefresh = onRefresh,
+            enabled = !sessionsLoading,
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
             if (workspaces.isEmpty()) {
-                if (sessionsLoading) SessionsLoading() else EmptySessions()
+                if (sessionsLoading && !sessionsRefreshing) SessionsLoading() else EmptySessions()
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     workspaces.forEach { workspace ->

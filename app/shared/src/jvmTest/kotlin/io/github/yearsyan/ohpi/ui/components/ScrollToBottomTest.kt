@@ -150,6 +150,31 @@ class ScrollToBottomTest {
     }
 
     @Test
+    fun bottomThresholdIncludesItsPixelBoundary() = runComposeUiTest {
+        lateinit var state: LazyListState
+        setContent {
+            state = rememberLazyListState()
+            ProbeList(state, tallLastItem = true)
+        }
+        waitForIdle()
+
+        runBlocking {
+            state.scrollToBottom(49)
+            state.scrollBy(-16f)
+        }
+        runOnIdle {
+            assertEquals(16, state.remainingScrollToBottomPx())
+            assertTrue(state.isWithinBottomThreshold(16))
+        }
+
+        runBlocking { state.scrollBy(-1f) }
+        runOnIdle {
+            assertEquals(17, state.remainingScrollToBottomPx())
+            assertFalse(state.isWithinBottomThreshold(16))
+        }
+    }
+
+    @Test
     fun negativeIndexIsANoOp() = runComposeUiTest {
         lateinit var state: LazyListState
         setContent {

@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 internal actual fun PlatformPullToRefreshBox(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
+    enabled: Boolean,
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {

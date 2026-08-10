@@ -17,14 +17,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,9 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
-import io.github.yearsyan.ohpi.licenses.APACHE_2_0_TEXT
-import io.github.yearsyan.ohpi.licenses.LGPL_2_1_TEXT
-import io.github.yearsyan.ohpi.licenses.MIT_TEXT
 import io.github.yearsyan.ohpi.licenses.OssCategory
 import io.github.yearsyan.ohpi.licenses.OssComponent
 import io.github.yearsyan.ohpi.licenses.OssLicense
@@ -129,7 +124,11 @@ fun LicensesScreen(onBack: (() -> Unit)?) {
     }
 
     viewing?.let { license ->
-        LicenseTextDialog(license = license, onDismiss = { viewing = null })
+        LicenseTextSheet(
+            title = licenseLabel(license),
+            text = license.fullText,
+            onDismiss = { viewing = null },
+        )
     }
 }
 
@@ -196,29 +195,6 @@ private fun ComponentRow(
             )
         }
     }
-}
-
-@Composable
-private fun LicenseTextDialog(license: OssLicense, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(licenseLabel(license)) },
-        text = {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Text(
-                    license.fullText,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(S.dialogOk) }
-        },
-    )
 }
 
 @Composable

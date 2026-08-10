@@ -1,11 +1,16 @@
 package io.github.yearsyan.ohpi.ui.screens
 
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -21,11 +26,13 @@ import io.github.yearsyan.ohpi.chat.BlockKind
 import io.github.yearsyan.ohpi.chat.TimelineItem
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.ui.components.AGENT_PROCESS_BLOCK_TEST_TAG
+import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * Regression tests for entering a non-empty session: the timeline must land
@@ -195,16 +202,24 @@ class MessageListEntryTest {
     fun smallDragInsideNearBottomThresholdStillDisablesFollowing() = runComposeUiTest {
         val controller = testController(CoroutineScope(Dispatchers.Default))
         fillConversation(controller, "a")
+        var dragDistancePx = 0f
         setContent {
+            dragDistancePx =
+                LocalViewConfiguration.current.touchSlop +
+                    with(LocalDensity.current) { 40.dp.toPx() }
             MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
         }
         waitForIdle()
 
-        // Stay well inside the 96dp near-bottom threshold. The old behavior
-        // cleared user intent here, so the next update snapped back and fought
-        // the drag.
+        // Move 40dp after touch slop: outside the 16dp attachment zone but well
+        // inside the independent 96dp streaming-pinned threshold. Following
+        // must remain disabled so the next update does not fight the drag.
         onRoot().performTouchInput {
-            swipeDown(startY = centerY, endY = centerY + 40f, durationMillis = 200L)
+            swipeDown(
+                startY = centerY,
+                endY = centerY + dragDistancePx,
+                durationMillis = 1_000L,
+            )
         }
         waitForIdle()
         runOnIdle {
@@ -213,6 +228,71 @@ class MessageListEntryTest {
         waitForIdle()
 
         onNodeWithText("status-a-near-tail").assertDoesNotExist()
+    }
+
+    @Test
+    fun enteringBottomAttachmentThresholdKeepsFollowingAndHidesButton() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        lateinit var listState: LazyListState
+        var attachmentThresholdPx = 0
+        var nearBottomGapPx = 0
+        lateinit var scrollToBottomDesc: String
+        setContent {
+            listState = rememberLazyListState()
+            attachmentThresholdPx = with(LocalDensity.current) { 16.dp.roundToPx() }
+            nearBottomGapPx = with(LocalDensity.current) { 8.dp.roundToPx() }
+            scrollToBottomDesc = S.scrollToBottom
+            MessageList(
+                controller = controller,
+                bottomPadding = 0.dp,
+                scrollToBottomTick = 0,
+                listStateOverride = listState,
+            )
+        }
+        waitForIdle()
+        val exactBottomFirstIndex = listState.firstVisibleItemIndex
+        val exactBottomFirstOffset = listState.firstVisibleItemScrollOffset
+
+        // Establish real user intent outside the attachment zone first.
+        onRoot().performTouchInput {
+            swipeDown(startY = centerY, endY = centerY + 56f, durationMillis = 200L)
+        }
+        waitForIdle()
+        onNodeWithContentDescription(scrollToBottomDesc).assertIsDisplayed()
+
+        // Move to exactly 8dp from the end without passing through the exact
+        // bottom. Entering the 16dp zone must clear the away state and hide the
+        // affordance.
+        runBlocking {
+            listState.scrollToItem(
+                index = exactBottomFirstIndex,
+                scrollOffset = (exactBottomFirstOffset - nearBottomGapPx).coerceAtLeast(0),
+            )
+        }
+        waitForIdle()
+        runOnIdle {
+            assertTrue(listState.isWithinBottomThreshold(attachmentThresholdPx))
+        }
+        onNodeWithContentDescription(scrollToBottomDesc).assertDoesNotExist()
+
+        runOnIdle {
+            repeat(8) { index ->
+                controller.items.add(
+                    TimelineItem.StatusItem(
+                        key = 1000L + index,
+                        text = "attached-tail-$index",
+                        ts = 60L + index,
+                    ),
+                )
+            }
+        }
+        waitUntil(timeoutMillis = 15_000) {
+            onAllNodesWithText("attached-tail-7").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        onNodeWithText("attached-tail-7").assertIsDisplayed()
+        onNodeWithContentDescription(scrollToBottomDesc).assertDoesNotExist()
     }
 
     @Test
@@ -342,6 +422,60 @@ class MessageListEntryTest {
             "the final expanded height must preserve the same bottom edge",
         )
         onNodeWithText("tail reasoning $detailCount").assertIsDisplayed()
+    }
+
+    @Test
+    fun collapsingAndReexpandingTailProcessKeepsItsBottomEdgeAnchored() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        val detailCount = 8
+        controller.items.add(
+            TimelineItem.AssistantItem(key = 1000, streaming = false, ts = 60L).also {
+                repeat(detailCount) { index ->
+                    it.blocks.add(
+                        AssistantBlock(
+                            BlockKind.Thinking,
+                            text = "reexpanded reasoning ${index + 1}",
+                        ),
+                    )
+                }
+            },
+        )
+        lateinit var processSummary: String
+        setContent {
+            processSummary = S.processThoughtTimes(detailCount)
+            MessageList(controller = controller, bottomPadding = 120.dp, scrollToBottomTick = 0)
+        }
+        waitForIdle()
+
+        val processBlock = onNodeWithTag(AGENT_PROCESS_BLOCK_TEST_TAG)
+        onNodeWithText(processSummary).performClick()
+        waitForIdle()
+        onNodeWithText(processSummary).performClick()
+        waitForIdle()
+
+        val collapsedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        mainClock.autoAdvance = false
+        onNodeWithText(processSummary).performClick()
+        repeat(6) { mainClock.advanceTimeByFrame() }
+
+        val reexpandingBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            reexpandingBounds.height > collapsedBounds.height,
+            "the inline details must be partway through their second expansion",
+        )
+        assertTrue(
+            abs(reexpandingBounds.bottom - collapsedBounds.bottom) <= 1f,
+            "a re-expanded tail process must keep the same bottom edge",
+        )
+
+        mainClock.autoAdvance = true
+        waitForIdle()
+        val expandedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            abs(expandedBounds.bottom - collapsedBounds.bottom) <= 1f,
+            "the completed second expansion must preserve the same bottom edge",
+        )
     }
 
     @Test

@@ -34,18 +34,10 @@ import androidx.compose.ui.viewinterop.UIKitView
 import androidx.compose.ui.window.ComposeUIView
 import dev.chrisbanes.haze.HazeState
 import io.github.yearsyan.ohpi.i18n.LocalStrings
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassCreateComposerView
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassIsAvailable
+import io.github.yearsyan.ohpi.liquidglass.OhPiLiquidGlassUpdateComposerAppearance
 import io.github.yearsyan.ohpi.theme.LocalPiExtras
-import kotlinx.cinterop.readValue
-import platform.CoreGraphics.CGRectZero
-import platform.Foundation.NSClassFromString
-import platform.UIKit.UICornerConfiguration
-import platform.UIKit.UICornerRadius
-import platform.UIKit.UIGlassEffect
-import platform.UIKit.UIGlassEffectStyle
-import platform.UIKit.UIColor
-import platform.UIKit.UIUserInterfaceStyle
-import platform.UIKit.UIView
-import platform.UIKit.UIVisualEffectView
 
 @Composable
 internal actual fun PlatformComposerSurface(
@@ -110,11 +102,14 @@ internal actual fun PlatformComposerSurface(
                         }
                     }
                 }
-            LiquidGlassComposerView(composeContent).apply {
-                updateAppearance(darkAppearance)
-            }
+            val glassView =
+                checkNotNull(OhPiLiquidGlassCreateComposerView(composeContent)) {
+                    "Liquid Glass bridge returned no composer view on a supported OS"
+                }
+            OhPiLiquidGlassUpdateComposerAppearance(glassView, darkAppearance)
+            glassView
         },
-        update = { view -> view.updateAppearance(darkAppearance) },
+        update = { view -> OhPiLiquidGlassUpdateComposerAppearance(view, darkAppearance) },
         // ComposeUIView has no Auto Layout intrinsic height. Keep UIKitView on
         // an explicit Compose-owned height so its first measurement cannot be 0.
         modifier = modifier.height(contentHeight),
@@ -165,63 +160,7 @@ private fun MeasuredComposerContent(
     }
 }
 
-/**
- * Keeps native glass behind a separately rendered Compose subtree. The text
- * field and buttons therefore remain crisp instead of being sampled by glass.
- */
-private class LiquidGlassComposerView(
-    private val composeContent: UIView,
-) : UIView(frame = CGRectZero.readValue()) {
-    private val glassView =
-        UIVisualEffectView(
-            effect =
-                UIGlassEffect.effectWithStyle(UIGlassEffectStyle.UIGlassEffectStyleRegular).apply {
-                    interactive = false
-                },
-        )
-
-    init {
-        opaque = false
-        backgroundColor = UIColor.clearColor
-        clipsToBounds = true
-
-        val corners =
-            UICornerConfiguration.configurationWithRadius(
-                UICornerRadius.fixedRadius(ComposerCornerRadius),
-            )
-        cornerConfiguration = corners
-        glassView.cornerConfiguration = corners
-        glassView.clipsToBounds = true
-        glassView.userInteractionEnabled = true
-        composeContent.opaque = false
-        composeContent.backgroundColor = UIColor.clearColor
-
-        addSubview(glassView)
-        glassView.contentView.addSubview(composeContent)
-    }
-
-    /** Keeps UIKit glass in sync with the app theme, including forced themes. */
-    fun updateAppearance(isDark: Boolean) {
-        val interfaceStyle =
-            if (isDark) {
-                UIUserInterfaceStyle.UIUserInterfaceStyleDark
-            } else {
-                UIUserInterfaceStyle.UIUserInterfaceStyleLight
-            }
-        if (overrideUserInterfaceStyle != interfaceStyle) {
-            overrideUserInterfaceStyle = interfaceStyle
-        }
-    }
-
-    override fun layoutSubviews() {
-        super.layoutSubviews()
-        glassView.setFrame(bounds)
-        composeContent.setFrame(glassView.contentView.bounds)
-    }
-}
-
-private fun isLiquidGlassAvailable(): Boolean = NSClassFromString("UIGlassEffect") != null
+private fun isLiquidGlassAvailable(): Boolean = OhPiLiquidGlassIsAvailable()
 
 private val ComposerMinimumHeight = 116.dp
 private val ComposerMeasurementMaxHeight = 896.dp
-private const val ComposerCornerRadius = 26.0

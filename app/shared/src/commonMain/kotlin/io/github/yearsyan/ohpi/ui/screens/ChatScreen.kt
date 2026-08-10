@@ -13,17 +13,22 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberOverscrollEffect
@@ -76,9 +81,12 @@ import io.github.yearsyan.ohpi.chat.groupTimelineItems
 import io.github.yearsyan.ohpi.data.ConnState
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
+import io.github.yearsyan.ohpi.markdown.MarkdownParseCache
 import io.github.yearsyan.ohpi.ui.components.AssistantRunRow
 import io.github.yearsyan.ohpi.ui.components.ChatTopBar
 import io.github.yearsyan.ohpi.ui.components.Composer
+import io.github.yearsyan.ohpi.ui.components.ConversationContentMaxWidth
+import io.github.yearsyan.ohpi.ui.components.ConversationQuickJumpRail
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.ExtensionDialog
 import io.github.yearsyan.ohpi.ui.components.FollowScrollPacer
@@ -89,13 +97,19 @@ import io.github.yearsyan.ohpi.ui.components.StatusLine
 import io.github.yearsyan.ohpi.ui.components.StreamingCaret
 import io.github.yearsyan.ohpi.ui.components.UserMessageRow
 import io.github.yearsyan.ohpi.ui.components.animateScrollToBottom
+import io.github.yearsyan.ohpi.ui.components.conversationHorizontalInset
+import io.github.yearsyan.ohpi.ui.components.conversationQuickJumpTargets
+import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
 import io.github.yearsyan.ohpi.ui.components.localizedLabel
 import io.github.yearsyan.ohpi.ui.components.platformSupportsComposerBackdropBlur
 import io.github.yearsyan.ohpi.ui.components.requestScrollToBottom
 import io.github.yearsyan.ohpi.ui.components.resolveSessionStatus
 import io.github.yearsyan.ohpi.ui.components.scrollToBottom
+import io.github.yearsyan.ohpi.ui.components.usesWideConversationLayout
 import io.github.yearsyan.ohpi.ui.privacy.AiDataConsentRequest
 import io.github.yearsyan.ohpi.ui.privacy.rememberAiDataConsentPresenter
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 private enum class ChatBodyState {
@@ -104,6 +118,9 @@ private enum class ChatBodyState {
     NoModel,
     Messages,
 }
+
+private val BottomAttachmentThreshold = 16.dp
+private val StreamingTailFollowThreshold = 96.dp
 
 /** Full chat pane: top bar, message timeline, composer, dialogs. */
 @Composable
@@ -161,7 +178,14 @@ fun ChatScreen(
         }
         val activeComposerBackdropState =
             composerBackdropState?.takeUnless { controller.missingModel }
-        Box(Modifier.weight(1f)) {
+        BoxWithConstraints(Modifier.weight(1f)) {
+            val wideConversationLayout = usesWideConversationLayout(maxWidth)
+            val centeredComposerModifier =
+                if (wideConversationLayout) {
+                    Modifier.widthIn(max = ConversationContentMaxWidth)
+                } else {
+                    Modifier
+                }
             Crossfade(
                 targetState = bodyState,
                 modifier =
@@ -178,7 +202,16 @@ fun ChatScreen(
                 label = "chatBody",
             ) { state ->
                 when (state) {
-                    ChatBodyState.Loading -> SessionLoadingState(controller, Modifier.fillMaxSize())
+                    ChatBodyState.Loading ->
+                        SessionLoadingState(
+                            controller = controller,
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(
+                                        horizontal = conversationHorizontalInset(maxWidth),
+                                    ),
+                        )
                     ChatBodyState.Empty -> EmptyChatState(Modifier.fillMaxSize())
                     ChatBodyState.NoModel ->
                         NoModelChatState(onOpenProviders, Modifier.fillMaxSize())
@@ -199,6 +232,7 @@ fun ChatScreen(
                     modifier =
                         Modifier
                             .align(Alignment.BottomCenter)
+                            .then(centeredComposerModifier)
                             .onSizeChanged { composerHeightPx = it.height },
                 )
             } else {
@@ -234,6 +268,7 @@ fun ChatScreen(
                     modifier =
                         Modifier
                             .align(Alignment.BottomCenter)
+                            .then(centeredComposerModifier)
                             .onSizeChanged { composerHeightPx = it.height },
                 )
             }
@@ -337,34 +372,47 @@ private fun LoadingBar(
     )
 }
 
+@OptIn(FlowPreview::class)
 @Composable
 internal fun MessageList(
     controller: ChatController,
     bottomPadding: Dp,
     scrollToBottomTick: Int,
+    listStateOverride: LazyListState? = null,
     modifier: Modifier = Modifier,
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     // Each conversation gets its own list state: entering or switching to a
     // session starts at the tail instead of inheriting the previous
     // session's scroll position.
-    val listState = key(controller) { rememberLazyListState() }
+    val rememberedListState = key(controller) { rememberLazyListState() }
+    val listState = listStateOverride ?: rememberedListState
     val focusManager = LocalFocusManager.current
-    // Once a user gesture moves the list, automatic tail following stays off
-    // until the list reaches the exact bottom again. A near-bottom threshold
-    // is useful for button visibility, but is too aggressive for this gate:
-    // it can re-enable following while the first drag is still in progress.
+    val density = LocalDensity.current
+    val bottomAttachmentThresholdPx =
+        with(density) { BottomAttachmentThreshold.roundToPx() }
+    // Once a user gesture moves beyond the 16dp attachment zone, automatic
+    // tail following stays off until the list re-enters that zone.
     var userScrolledAway by remember(controller) { mutableStateOf(false) }
+    var bottomAttached by remember(controller) { mutableStateOf(true) }
     var initialPositionPending by remember(controller) { mutableStateOf(true) }
     var bottomJumpAnimating by remember(controller) { mutableStateOf(false) }
-    // Expanding the final process block while already at the exact bottom uses
-    // the block's bottom edge as its anchor. The tail-height watcher below then
-    // compensates every animation step, so the details grow upward. Starting
-    // the expansion anywhere else keeps the normal top-edge anchor instead.
+    // Expanding the final process block from within the 16dp attachment zone
+    // first closes that small gap, then uses the block's bottom edge as its
+    // anchor. The tail-height watcher below compensates every animation step,
+    // so the details grow upward. Starting farther away keeps the normal
+    // top-edge anchor instead.
     var tailProcessBottomAnchored by remember(controller) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(listState, bottomAttachmentThresholdPx) {
+        snapshotFlow { listState.isWithinBottomThreshold(bottomAttachmentThresholdPx) }
+            .collect { attached ->
+                bottomAttached = attached
+                if (attached) userScrolledAway = false
+            }
+    }
     val dismissKeyboardOnScroll =
-        remember(controller, focusManager, listState) {
+        remember(controller, focusManager, listState, bottomAttachmentThresholdPx) {
             object : NestedScrollConnection {
                 override fun onPreScroll(
                     available: Offset,
@@ -383,14 +431,19 @@ internal fun MessageList(
                     available: Offset,
                     source: NestedScrollSource,
                 ): Offset {
-                    if (source == NestedScrollSource.UserInput && !listState.canScrollForward) {
-                        userScrolledAway = false
+                    if (source == NestedScrollSource.UserInput) {
+                        val attached =
+                            listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
+                        bottomAttached = attached
+                        userScrolledAway = !attached
                     }
                     return Offset.Zero
                 }
 
                 override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                    if (!listState.canScrollForward) userScrolledAway = false
+                    val attached = listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
+                    bottomAttached = attached
+                    userScrolledAway = !attached
                     return Velocity.Zero
                 }
             }
@@ -409,6 +462,37 @@ internal fun MessageList(
     // still guaranteeing the trailing scroll that pins the final delta.
     val followPacer = remember(controller) { FollowScrollPacer() }
     val renderGroups = groupTimelineItems(controller.items)
+    val quickJumpTargets = remember(renderGroups) { conversationQuickJumpTargets(renderGroups) }
+
+    // Pre-parse settled markdown blocks into MarkdownParseCache so scrolling a
+    // recycled LazyColumn item into view renders synchronously instead of
+    // flashing the renderer's zero-height async loading box. Streaming groups
+    // are skipped while their text is still changing; MarkdownView caches them
+    // itself once their parse lands. Warming is debounced so a burst of
+    // timeline updates (streaming deltas, live block growth) does not compete
+    // with the renderer's own parse for background threads mid-gesture.
+    LaunchedEffect(controller) {
+        snapshotFlow {
+            renderGroups.flatMap { group ->
+                when (group) {
+                    is TimelineRenderGroup.AssistantRun ->
+                        if (group.items.any { it is TimelineItem.AssistantItem && it.streaming }) {
+                            emptyList()
+                        } else {
+                            chunkAssistantRun(group.items).mapNotNull { chunk ->
+                                when (chunk) {
+                                    is AssistantRenderChunk.Text -> chunk.block.text
+                                    else -> null
+                                }
+                            }
+                        }
+                    is TimelineRenderGroup.Single -> emptyList()
+                }
+            }
+        }.debounce(600).collect { texts ->
+            texts.forEach { MarkdownParseCache.warm(it) }
+        }
+    }
     val lastGroupKey = renderGroups.lastOrNull()?.key
     val anyRunStreaming = renderGroups.any { group ->
         group is TimelineRenderGroup.AssistantRun &&
@@ -424,15 +508,16 @@ internal fun MessageList(
     // single item that can be taller than the viewport (a long assistant run),
     // so index proximity is not enough: require the tail of the last item to be
     // within a small distance of the viewport's content end.
-    val pinnedThresholdPx = with(LocalDensity.current) { 96.dp.roundToPx() }
-    LaunchedEffect(listState) {
+    val streamingPinnedThresholdPx =
+        with(LocalDensity.current) { StreamingTailFollowThreshold.roundToPx() }
+    LaunchedEffect(listState, streamingPinnedThresholdPx) {
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow true
             if (info.totalItemsCount == 0) return@snapshotFlow true
             if (last.index < info.totalItemsCount - 1) return@snapshotFlow false
             val contentEnd = info.viewportEndOffset - info.afterContentPadding
-            last.offset + last.size <= contentEnd + pinnedThresholdPx
+            last.offset + last.size <= contentEnd + streamingPinnedThresholdPx
         }.collect { pinned = it }
     }
 
@@ -508,7 +593,26 @@ internal fun MessageList(
         }
     }
 
-    Box(modifier = modifier.fillMaxWidth()) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val wideConversationLayout = usesWideConversationLayout(maxWidth)
+        val horizontalInset = conversationHorizontalInset(maxWidth)
+
+        fun requestJumpToGroup(targetIndex: Int) {
+            if (renderGroups.isEmpty()) return
+            val target = targetIndex.coerceIn(0, renderGroups.lastIndex)
+            val atBottom = target == renderGroups.lastIndex
+            initialPositionPending = false
+            bottomJumpAnimating = false
+            tailProcessBottomAnchored = false
+            userScrolledAway = !atBottom
+            pinned = atBottom
+            if (atBottom) {
+                listState.requestScrollToBottom(renderGroups.lastIndex)
+            } else {
+                listState.requestScrollToItem(target)
+            }
+        }
+
         // The Android stretch overscroll wedges against the auto-following
         // tail (each programmatic scroll interrupts the edge effect's release
         // animation), and desktop shows no meaningful edge feedback either.
@@ -540,7 +644,13 @@ internal fun MessageList(
                         }
                     },
             verticalArrangement = Arrangement.spacedBy(2.dp),
-            contentPadding = PaddingValues(top = 10.dp, bottom = bottomPadding + 10.dp),
+            contentPadding =
+                PaddingValues(
+                    start = horizontalInset,
+                    top = 10.dp,
+                    end = horizontalInset,
+                    bottom = bottomPadding + 10.dp,
+                ),
         ) {
             items(renderGroups, key = { it.key }) { group ->
                 when (group) {
@@ -553,9 +663,22 @@ internal fun MessageList(
                             isTailRun = group.key == lastGroupKey,
                             onProcessDetailsToggled = { expanding, isTailProcess ->
                                 val anchorBottom =
-                                    expanding && isTailProcess && !listState.canScrollForward
+                                    expanding &&
+                                        isTailProcess &&
+                                        listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
+                                if (anchorBottom) {
+                                    // Close the at-most-16dp gap before the first
+                                    // expansion frame, then keep correcting each
+                                    // subsequent frame in the tail-height watcher.
+                                    listState.requestScrollToBottom(renderGroups.lastIndex)
+                                }
                                 tailProcessBottomAnchored = anchorBottom
-                                if (!anchorBottom) userScrolledAway = true
+                                // Only an expansion decides whether tail following
+                                // should continue. Collapsing a bottom-anchored block
+                                // must preserve the existing follow state; otherwise
+                                // the next expansion grows down and only snaps back
+                                // to the bottom after its animation completes.
+                                if (expanding) userScrolledAway = !anchorBottom
                             },
                             onProcessDetailsExpanded = { isTailProcess ->
                                 if (isTailProcess && tailProcessBottomAnchored) {
@@ -585,8 +708,23 @@ internal fun MessageList(
             }
         }
 
+        if (wideConversationLayout) {
+            ConversationQuickJumpRail(
+                targets = quickJumpTargets,
+                currentItemIndex = listState.firstVisibleItemIndex,
+                totalItemsCount = renderGroups.size,
+                onJump = ::requestJumpToGroup,
+                modifier =
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .width(48.dp)
+                        .fillMaxHeight()
+                        .padding(start = 8.dp, top = 28.dp, bottom = bottomPadding + 28.dp),
+            )
+        }
+
         PlatformScrollToBottomButton(
-            visible = userScrolledAway && listState.canScrollForward,
+            visible = userScrolledAway && !bottomAttached,
             onClick = {
                 // Animate only the user-initiated jump. Once it finishes,
                 // the layout watcher handles deferred Markdown height
@@ -606,7 +744,10 @@ internal fun MessageList(
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 18.dp, bottom = bottomPadding + 16.dp),
+                    .padding(
+                        end = if (wideConversationLayout) horizontalInset + 18.dp else 18.dp,
+                        bottom = bottomPadding + 16.dp,
+                    ),
         )
     }
 

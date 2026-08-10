@@ -20,6 +20,17 @@ private fun LazyListState.visibleTailScrollDistance(lastIndex: Int): Int? {
     return (lastItem.offset + lastItem.size - contentEnd).coerceAtLeast(0)
 }
 
+/** Remaining forward scroll to the content end, or `null` while the tail is not measured. */
+internal fun LazyListState.remainingScrollToBottomPx(): Int? {
+    val totalItemsCount = layoutInfo.totalItemsCount
+    if (totalItemsCount == 0) return 0
+    return visibleTailScrollDistance(totalItemsCount - 1)
+}
+
+/** Whether the measured tail is no farther than [thresholdPx] from the content end. */
+internal fun LazyListState.isWithinBottomThreshold(thresholdPx: Int): Boolean =
+    remainingScrollToBottomPx()?.let { it <= thresholdPx.coerceAtLeast(0) } == true
+
 /**
  * Serializes tail-follow scrolls so at most one starts per [minInterval].
  * Callers wait out the remainder of the throttle window instead of being
