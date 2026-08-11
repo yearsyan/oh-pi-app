@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.2.1","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
 ```
 
 ```http
