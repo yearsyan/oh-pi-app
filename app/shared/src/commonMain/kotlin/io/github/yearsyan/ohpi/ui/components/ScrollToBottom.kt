@@ -113,9 +113,12 @@ internal suspend fun LazyListState.scrollToBottom(lastIndex: Int) {
 
 /**
  * Animated variant of [scrollToBottom]. A visible tail uses one relative
- * animation straight to the bottom. An off-screen tail still uses bounded
- * targets: first bring it into layout, then animate through the measured
- * remainder when that grouped item is taller than the viewport.
+ * animation straight to the bottom. An off-screen tail is first positioned
+ * instantly with the same bounded target, then animated through the measured
+ * remainder. Chaining a second `animateScrollToItem` instead would fully stop
+ * between the two spring passes, which reads as a two-stage jump — most
+ * visible on Android, where the final grouped run is usually taller than the
+ * phone viewport.
  */
 internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
     if (lastIndex < 0) return
@@ -125,10 +128,10 @@ internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
         return
     }
 
-    animateScrollToItem(lastIndex)
+    scrollToItem(lastIndex)
     val remainingOffset = visibleTailScrollDistance(lastIndex) ?: return
     if (remainingOffset > 0) {
-        animateScrollToItem(lastIndex, scrollOffset = remainingOffset)
+        animateScrollBy(remainingOffset.toFloat())
     }
 }
 
@@ -138,7 +141,17 @@ internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
  * `LaunchedEffect`s driven by recomposition (e.g. entering a session): a
  * suspending scroll launched from such an effect may never resume before the
  * composition goes idle, leaving the list stuck at the top.
+ *
+ * Requests stay bounded. When the tail is already measured, the exact
+ * remaining distance is requested from the current anchor. Otherwise the item
+ * lands with its top edge aligned and the tail-layout watcher applies the
+ * measured remainder once layout catches up. An unbounded `Int.MAX_VALUE`
+ * offset is avoided on purpose: Android's lazy-list implementation can
+ * overflow or stop one item early with it while the target is still
+ * off-screen, which surfaces as a visibly staged landing.
  */
 internal fun LazyListState.requestScrollToBottom(lastIndex: Int) {
-    if (lastIndex >= 0) requestScrollToItem(lastIndex, scrollOffset = Int.MAX_VALUE)
+    if (lastIndex < 0) return
+    if (compensateVisibleTailToBottom()) return
+    requestScrollToItem(lastIndex)
 }
