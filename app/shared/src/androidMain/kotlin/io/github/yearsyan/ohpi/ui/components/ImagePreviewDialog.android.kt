@@ -6,17 +6,37 @@ import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 /**
+ * Hosts the viewer in a full-screen dialog drawing edge-to-edge behind the
+ * system bars. Single-tap dismissal is enabled for the touch UI.
+ */
+@Composable
+internal actual fun ImagePreviewContainer(
+    onDismiss: () -> Unit,
+    title: String?,
+    content: @Composable (dismissOnTap: Boolean) -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = immersiveDialogProperties(),
+    ) {
+        ImmersiveDialogWindowEffect()
+        content(true)
+    }
+}
+
+/**
  * Keep the dialog window edge-to-edge. Setting this via [ImmersiveDialogWindowEffect]
  * loses to Compose re-applying [DialogProperties] on recomposition, so it must
  * be declared on the properties themselves.
  */
-internal actual fun immersiveDialogProperties(): DialogProperties =
+private fun immersiveDialogProperties(): DialogProperties =
     DialogProperties(
         usePlatformDefaultWidth = false,
         decorFitsSystemWindows = false,
@@ -27,7 +47,7 @@ internal actual fun immersiveDialogProperties(): DialogProperties =
  * light (white) status-bar icons over the dark viewer backdrop.
  */
 @Composable
-internal actual fun ImmersiveDialogWindowEffect() {
+private fun ImmersiveDialogWindowEffect() {
     val view = LocalView.current
     LaunchedEffect(view) {
         val window = (view.parent as? DialogWindowProvider)?.window ?: return@LaunchedEffect

@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -55,8 +56,6 @@ import io.github.yearsyan.ohpi.theme.rememberCodeFontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import io.github.yearsyan.ohpi.i18n.S
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -84,13 +83,16 @@ private val ZoomInOffset = tween<Offset>(durationMillis = 250)
 private val ZoomResetFloat = spring<Float>(stiffness = Spring.StiffnessMediumLow)
 private val ZoomResetOffset = spring<Offset>(stiffness = Spring.StiffnessMediumLow)
 private val Backdrop = Color.Black.copy(alpha = 0.94f)
+private const val WheelZoomInFactor = 1.2f
+private const val WheelZoomOutFactor = 1f / WheelZoomInFactor
 
 /**
- * Shared full-screen image viewer. The dialog window draws edge-to-edge behind
- * the system bars. Gestures: pinch to zoom and pan, double-tap to toggle
- * between 1x and [DoubleTapZoom], single tap to dismiss. Long-press opens a
- * bottom sheet with a save-to-album action when the undecoded source bytes are
- * available.
+ * Shared full-screen image viewer, hosted by the platform [ImagePreviewContainer]:
+ * a full-screen dialog on Android/iOS, a separate OS window on desktop.
+ * Gestures: pinch to zoom and pan, mouse wheel to zoom around the pointer,
+ * double-tap to toggle between 1x and [DoubleTapZoom], single tap to dismiss
+ * (dialog containers only). Long-press opens a bottom sheet with a
+ * save-to-album action when the undecoded source bytes are available.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,11 +103,7 @@ internal fun ImagePreviewDialog(
     subtitle: String? = null,
     testTag: String? = null,
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = immersiveDialogProperties(),
-    ) {
-        ImmersiveDialogWindowEffect()
+    ImagePreviewContainer(onDismiss = onDismiss, title = title) { dismissOnTap ->
         val scope = rememberCoroutineScope()
         var scale by remember { mutableFloatStateOf(MinZoom) }
         var offset by remember { mutableStateOf(Offset.Zero) }
@@ -173,9 +171,9 @@ internal fun ImagePreviewDialog(
                     .background(Backdrop)
                     .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
                     .onSizeChanged { viewSize = it }
-                    .pointerInput(onDismiss, zoomable) {
+                    .pointerInput(onDismiss, zoomable, dismissOnTap) {
                         detectTapGestures(
-                            onTap = { onDismiss() },
+                            onTap = if (dismissOnTap) ({ onDismiss() }) else null,
                             onLongPress =
                                 if (savableBytes != null) {
                                     { saveSheetOpen = true }
@@ -247,7 +245,31 @@ internal fun ImagePreviewDialog(
                                 },
                         )
                     }
-                    .transformable(transformState),
+                    .transformable(transformState)
+                    .pointerInput(zoomable) {
+                        // Mouse-wheel/trackpad scroll zooms around the pointer,
+                        // mirroring the pinch math; touch platforms simply never
+                        // deliver scroll events here.
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (!zoomable || event.type != PointerEventType.Scroll) continue
+                                val change = event.changes.firstOrNull() ?: continue
+                                val deltaY = change.scrollDelta.y
+                                if (deltaY == 0f) continue
+                                animJob?.cancel()
+                                animJob = null
+                                val factor = if (deltaY < 0f) WheelZoomInFactor else WheelZoomOutFactor
+                                val newScale = (scale * factor).coerceIn(MinZoom, MaxZoom)
+                                if (newScale == scale) continue
+                                // Keep the content point under the pointer stationary.
+                                val d = change.position - center()
+                                offset = clampOffset(newScale, (offset - d) * (newScale / scale) + d)
+                                scale = newScale
+                                change.consume()
+                            }
+                        }
+                    },
             contentAlignment = Alignment.Center,
         ) {
             when (state) {
@@ -360,15 +382,15 @@ internal fun ImagePreviewDialog(
 }
 
 /**
- * Platform hook making the dialog window draw edge-to-edge behind the system
- * bars. No-op on platforms whose dialogs already span the full screen.
+ * Platform container hosting the image viewer: a full-screen dialog on
+ * Android/iOS, a separate OS window on desktop. [content] receives whether a
+ * single tap on the backdrop should dismiss the viewer — true for dialogs;
+ * false for the desktop window, which is closed through its own window
+ * controls (close button, Escape).
  */
-@Composable internal expect fun ImmersiveDialogWindowEffect()
-
-/**
- * [DialogProperties] for the full-screen image viewer. On platforms whose
- * dialog windows can draw edge-to-edge behind the system bars, the properties
- * must opt into that (e.g. `decorFitsSystemWindows = false` on Android) so
- * Compose does not re-apply window decor insets on recomposition.
- */
-internal expect fun immersiveDialogProperties(): DialogProperties
+@Composable
+internal expect fun ImagePreviewContainer(
+    onDismiss: () -> Unit,
+    title: String?,
+    content: @Composable (dismissOnTap: Boolean) -> Unit,
+)

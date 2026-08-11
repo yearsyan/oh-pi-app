@@ -222,6 +222,7 @@ interface Strings {
     val imageAttachment: (Int) -> String
     val imageTooLarge: String
     val imageReadFailed: String
+    val imagePreviewTitle: String
     val saveToAlbum: String
     val imageSavedToAlbum: String
     val imageSaveFailed: String
@@ -719,6 +720,7 @@ object EnStrings : Strings {
     override val imageAttachment = { count: Int -> if (count == 1) "Image" else "$count images" }
     override val imageTooLarge = "The image must be smaller than 8 MB"
     override val imageReadFailed = "Could not read this image"
+    override val imagePreviewTitle = "Image preview"
     override val saveToAlbum = "Save to Photos"
     override val imageSavedToAlbum = "Saved to Photos"
     override val imageSaveFailed = "Could not save the image"
@@ -1216,6 +1218,7 @@ object ZhStrings : Strings {
     override val imageAttachment = { count: Int -> "图片 × $count" }
     override val imageTooLarge = "图片不能超过 8 MB"
     override val imageReadFailed = "无法读取这张图片"
+    override val imagePreviewTitle = "图片预览"
     override val saveToAlbum = "保存到相册"
     override val imageSavedToAlbum = "已保存到相册"
     override val imageSaveFailed = "保存图片失败"

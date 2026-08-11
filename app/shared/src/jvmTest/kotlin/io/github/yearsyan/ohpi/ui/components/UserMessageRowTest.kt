@@ -1,5 +1,6 @@
 package io.github.yearsyan.ohpi.ui.components
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -38,15 +39,19 @@ class UserMessageRowTest {
     @Test
     fun tappingThumbnailOpensImagePreview() = runComposeUiTest {
         setContent {
-            PiTheme {
-                UserMessageRow(
-                    TimelineItem.UserItem(
-                        key = 1L,
-                        text = "",
-                        ts = 1L,
-                        images = listOf(TimelineImage(OnePixelPng, "image/png")),
-                    ),
-                )
+            // The test root cannot see into the separate preview window's
+            // composition, so the preview falls back to the in-app dialog.
+            CompositionLocalProvider(LocalImagePreviewWindowed provides false) {
+                PiTheme {
+                    UserMessageRow(
+                        TimelineItem.UserItem(
+                            key = 1L,
+                            text = "",
+                            ts = 1L,
+                            images = listOf(TimelineImage(OnePixelPng, "image/png")),
+                        ),
+                    )
+                }
             }
         }
 

@@ -2,16 +2,30 @@ package io.github.yearsyan.ohpi.ui.components
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-/** The dialog layer itself needs no additional UIKit window configuration. */
-@Composable
-internal actual fun ImmersiveDialogWindowEffect() = Unit
-
-/** Let the viewer layer cover the status-bar and home-indicator safe areas. */
+/**
+ * Hosts the viewer in a full-screen dialog; iOS dialogs already span the full
+ * screen. Platform insets are disabled so the viewer also covers the status
+ * bar and home-indicator areas. Single-tap dismissal is enabled for the touch
+ * UI.
+ */
 @OptIn(ExperimentalComposeUiApi::class)
-internal actual fun immersiveDialogProperties(): DialogProperties =
-    DialogProperties(
-        usePlatformDefaultWidth = false,
-        usePlatformInsets = false,
-    )
+@Composable
+internal actual fun ImagePreviewContainer(
+    onDismiss: () -> Unit,
+    title: String?,
+    content: @Composable (dismissOnTap: Boolean) -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties =
+            DialogProperties(
+                usePlatformDefaultWidth = false,
+                usePlatformInsets = false,
+            ),
+    ) {
+        content(true)
+    }
+}
