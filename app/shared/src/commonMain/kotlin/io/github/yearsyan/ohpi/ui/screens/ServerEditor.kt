@@ -208,31 +208,47 @@ internal fun ServerEditorFields(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 6.dp),
     )
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        val options =
-            modes.map { mode ->
-                mode to
-                    when (mode) {
-                        ServerConnectionMode.Direct -> S.directConnection
-                        ServerConnectionMode.Ssh -> S.sshConnection
-                        ServerConnectionMode.ManagedSsh -> S.managedSshConnection
-                    }
+    val modeOptions =
+        modes.map { mode ->
+            mode to
+                when (mode) {
+                    ServerConnectionMode.Direct -> S.directConnection
+                    ServerConnectionMode.Ssh -> S.sshConnection
+                    ServerConnectionMode.ManagedSsh -> S.managedSshConnection
+                }
+        }
+    val selectedModeLabel =
+        modeOptions.firstOrNull { (mode, _) -> mode == editor.connectionMode }?.second.orEmpty()
+    AppDropdownMenu(
+        items =
+            modeOptions.map { (mode, label) ->
+                AppMenuItem(
+                    id = mode.name,
+                    title = label,
+                    checkable = true,
+                    selected = editor.connectionMode == mode,
+                )
+            },
+        onItemClick = { id ->
+            modes.firstOrNull { it.name == id }?.let { mode ->
+                editor.connectionMode = mode
+                if (mode.usesSsh) editor.gatewayTls = false
+                editor.clearError()
             }
-        options.forEachIndexed { index, (mode, label) ->
-            SegmentedButton(
-                selected = editor.connectionMode == mode,
-                onClick = {
-                    editor.connectionMode = mode
-                    if (mode.usesSsh) editor.gatewayTls = false
-                    editor.clearError()
-                },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+        },
+        modifier = Modifier.fillMaxWidth(),
+        accessibilityLabel = selectedModeLabel,
+    ) { openMenu ->
+        OutlinedButton(
+            onClick = openMenu,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                selectedModeLabel,
                 modifier = Modifier.weight(1f),
-            ) {
-                // Keep every segment two lines tall so a wrapping label does not
-                // make its segment taller than its siblings.
-                Text(label, minLines = 2, maxLines = 2, textAlign = TextAlign.Center)
-            }
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
         }
     }
     Spacer(Modifier.height(10.dp))

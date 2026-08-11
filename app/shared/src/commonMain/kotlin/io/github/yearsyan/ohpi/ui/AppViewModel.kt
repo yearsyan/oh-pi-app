@@ -379,7 +379,7 @@ class AppViewModel(
                 if (activeServerId == server.id) {
                     toast(
                         stringsProvider().managedGatewayStopFailed(
-                            failure.message ?: "unknown error",
+                            failure.message ?: stringsProvider().unknownError,
                         ),
                         Toast.Kind.Error,
                     )
@@ -502,7 +502,9 @@ class AppViewModel(
             } catch (failure: Throwable) {
                 if (generation == providerRefreshGeneration && activeServerId == server.id) {
                     toast(
-                        stringsProvider().providerLoadFailed(failure.message ?: "unknown error"),
+                        stringsProvider().providerLoadFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -685,7 +687,9 @@ class AppViewModel(
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
                     toast(
-                        stringsProvider().providerLogoutFailed(failure.message ?: "unknown error"),
+                        stringsProvider().providerLogoutFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -753,6 +757,8 @@ class AppViewModel(
     ) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
+        val expandedSessionWindows =
+            if (clearExisting) emptyMap() else expandedWorkspaceSessionWindows(workspaces)
         if (clearExisting) {
             workspaces.clear()
             sessions.clear()
@@ -787,11 +793,23 @@ class AppViewModel(
                     )
                 }
                 val loaded = listGatewayWorkspaces(gateway, server.token)
+                val refreshed = restoreExpandedWorkspaceSessions(
+                    workspaces = loaded,
+                    windows = expandedSessionWindows,
+                ) { workspace, cursor, limit ->
+                    listGatewayWorkspaceSessions(
+                        gateway = gateway,
+                        token = server.token,
+                        workspace = workspace,
+                        cursor = cursor,
+                        limit = limit,
+                    )
+                }
 
                 if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
                 workspaces.clear()
                 workspaces.addAll(
-                    loaded.map { workspace ->
+                    refreshed.map { workspace ->
                         workspace.copy(sessions = workspace.sessions.map(::mergeControllerStatus))
                     },
                 )
@@ -814,7 +832,9 @@ class AppViewModel(
                     !interruptedBySystemAlert
                 ) {
                     toast(
-                        "Could not load workspaces: ${failure.message ?: "unknown error"}",
+                        stringsProvider().workspaceLoadFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -869,7 +889,9 @@ class AppViewModel(
                         workspaces[currentIndex] = workspaces[currentIndex].copy(sessionsLoading = false)
                     }
                     toast(
-                        "Could not load more sessions: ${failure.message ?: "unknown error"}",
+                        stringsProvider().workspaceMoreSessionsLoadFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -925,7 +947,9 @@ class AppViewModel(
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
                     toast(
-                        "Could not update workspace: ${failure.message ?: "unknown error"}",
+                        stringsProvider().workspaceUpdateFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -1080,7 +1104,9 @@ class AppViewModel(
                         controllers[id]?.setSessionNameLocally(previous.name)
                     }
                     toast(
-                        "Could not rename session: ${failure.message ?: "unknown error"}",
+                        stringsProvider().sessionRenameFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -1115,7 +1141,7 @@ class AppViewModel(
                 if (activeServerId == server.id) {
                     toast(
                         stringsProvider().piProcessStopFailed(
-                            failure.message ?: "unknown error",
+                            failure.message ?: stringsProvider().unknownError,
                         ),
                         Toast.Kind.Error,
                     )
@@ -1153,7 +1179,9 @@ class AppViewModel(
                         upsertWorkspaceSession(removed)
                     }
                     toast(
-                        "Could not delete session: ${failure.message ?: "unknown error"}",
+                        stringsProvider().sessionDeleteFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
                         Toast.Kind.Error,
                     )
                 }
@@ -1204,6 +1232,8 @@ class AppViewModel(
                         retrying = s.retrying,
                         notify = s.appName,
                         modelOptionsFailed = s.modelOptionsFailed,
+                        unknownError = s.unknownError,
+                        sessionSyncFailed = s.sessionSyncFailed,
                     )
                 },
                 loadCapabilities = { workspaceId ->
@@ -1507,9 +1537,20 @@ class AppViewModel(
     // ---- toasts ----
 
     fun toast(text: String, kind: Toast.Kind = Toast.Kind.Info) {
-        if (text.isBlank()) return
-        val t = Toast(Random.nextLong(), text, kind)
+        val displayText =
+            when (kind) {
+                Toast.Kind.Error -> localizedErrorToast(text, stringsProvider())
+                Toast.Kind.Info, Toast.Kind.Success -> conciseToastText(text)
+            }
+        if (displayText.isBlank()) return
+
+        // A reconnect can report the same native failure from several sessions.
+        // Replace the existing copy so one compact toast remains visible without
+        // stacking duplicate cards or exposing repeated diagnostics.
+        toasts.removeAll { it.kind == kind && it.text == displayText }
+        val t = Toast(Random.nextLong(), displayText, kind)
         toasts.add(t)
+        while (toasts.size > 3) toasts.removeAt(0)
         viewModelScope.launch {
             delay(4000)
             toasts.remove(t)

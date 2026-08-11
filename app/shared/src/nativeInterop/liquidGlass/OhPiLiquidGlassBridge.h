@@ -25,4 +25,11 @@ FOUNDATION_EXPORT void OhPiLiquidGlassUpdateScrollButton(
 /// Applies the Compose-owned fade and scale animation progress to the native button.
 FOUNDATION_EXPORT void OhPiLiquidGlassSetScrollButtonProgress(UIView *view, CGFloat progress);
 
+/// Shows a non-interactive UIKit toast in a window above native interop views.
+/// kind: 0 = info, 1 = error, 2 = success.
+FOUNDATION_EXPORT void OhPiNativeToastShow(NSString *message, int32_t kind, BOOL isDark);
+
+/// Dismisses the currently visible UIKit toast, if any.
+FOUNDATION_EXPORT void OhPiNativeToastDismiss(void);
+
 NS_ASSUME_NONNULL_END

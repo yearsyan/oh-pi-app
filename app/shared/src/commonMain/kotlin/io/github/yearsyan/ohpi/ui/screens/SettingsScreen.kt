@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -1318,6 +1319,7 @@ private fun ServerRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServerEditDialog(
     initial: ServerProfile?,
@@ -1328,26 +1330,41 @@ fun ServerEditDialog(
     val editor = rememberServerEditor(initial)
     val strings = S
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) S.addServer else S.editServer) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                ServerEditorFields(editor, keys)
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            Text(
+                if (initial == null) S.addServer else S.editServer,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(12.dp))
+            ServerEditorFields(editor, keys)
+            Spacer(Modifier.height(16.dp))
+            Row(
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                TextButton(onClick = onDismiss) { Text(S.cancel) }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = {
+                    editor.build(strings, keys)?.let { result ->
+                        onSave(result.profile, result.newKey)
+                        onDismiss()
+                    }
+                }) { Text(S.confirm) }
             }
-        },
-        confirmButton = {
-            Button(onClick = {
-                editor.build(strings, keys)?.let { result ->
-                    onSave(result.profile, result.newKey)
-                    onDismiss()
-                }
-            }) { Text(S.confirm) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(S.cancel) }
-        },
-    )
+            Spacer(Modifier.height(20.dp))
+        }
+    }
 }
 
 @Composable

@@ -207,6 +207,8 @@ class ChatController(
         val retrying: String,
         val notify: String,
         val modelOptionsFailed: (String) -> String,
+        val unknownError: String = "Error",
+        val sessionSyncFailed: (String) -> String = { it },
     )
 
     var conn by mutableStateOf(ConnState.Disconnected); private set
@@ -415,7 +417,7 @@ class ChatController(
                 throw cancelled
             } catch (failure: Throwable) {
                 if (draftWorkspaceId != draft || generation != capabilitiesGeneration) return@launch
-                val message = failure.message ?: failure::class.simpleName ?: "unknown error"
+                val message = failure.message ?: strings().unknownError
                 capabilitiesError = message
                 onToast(strings().modelOptionsFailed(message), Toast.Kind.Error)
             } finally {
@@ -1477,7 +1479,10 @@ class ChatController(
         syncPhase = SessionSyncPhase.Idle
         syncProgress = null
         isLoadingHistory = false
-        onToast("Session synchronization failed: ${failure.message.orEmpty()}", Toast.Kind.Error)
+        onToast(
+            strings().sessionSyncFailed(failure.message ?: strings().unknownError),
+            Toast.Kind.Error,
+        )
     }
 
     // ---------- responses ----------
@@ -1503,7 +1508,7 @@ class ChatController(
             }
             val error = msg.strOrEmpty("error")
             if (command !in setOf("abort", "get_commands")) {
-                onToast("$command: $error", Toast.Kind.Error)
+                onToast("${strings().commandRejected}: $error", Toast.Kind.Error)
             }
             if (command == "set_model" || command == "set_thinking_level") {
                 sendCommand { put("type", "get_state"); this }

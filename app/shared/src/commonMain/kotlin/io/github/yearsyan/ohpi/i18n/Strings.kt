@@ -153,6 +153,9 @@ interface Strings {
     val stopPiProcessUnsupported: String
     val piProcessStopped: String
     val piProcessStopFailed: (String) -> String
+    val sessionRenameFailed: (String) -> String
+    val sessionDeleteFailed: (String) -> String
+    val sessionSyncFailed: (String) -> String
 
     // workspaces
     val workspaceDialogTitle: String
@@ -175,9 +178,13 @@ interface Strings {
     val workspaceNameLabel: String
     val additionalSystemPromptLabel: String
     val additionalSystemPromptHint: String
+    val workspaceLoadFailed: (String) -> String
+    val workspaceMoreSessionsLoadFailed: (String) -> String
+    val workspaceUpdateFailed: (String) -> String
 
     // file browser
     val browseFiles: String
+    val filesRoot: String
     val filesEmptyFolder: String
     val fileSelectHint: String
     val retry: String
@@ -430,6 +437,12 @@ interface Strings {
     // misc
     val back: String
     val close: String
+    val unknownError: String
+    val networkOfflineError: String
+    val connectionInterruptedError: String
+    val requestTimedOutError: String
+    val serverUnreachableError: String
+    val authenticationFailedError: String
 
     // port forwarding
     val portForwardsTitle: String
@@ -622,6 +635,9 @@ object EnStrings : Strings {
         "This gateway version does not support stopping individual Pi processes."
     override val piProcessStopped = "Pi process stopped"
     override val piProcessStopFailed = { error: String -> "Could not stop the Pi process: $error" }
+    override val sessionRenameFailed = { error: String -> "Could not rename the chat: $error" }
+    override val sessionDeleteFailed = { error: String -> "Could not delete the chat: $error" }
+    override val sessionSyncFailed = { error: String -> "Could not synchronize the chat: $error" }
 
     override val workspaceDialogTitle = "Choose a workspace"
     override val workspaceLabel = "Workspace"
@@ -644,8 +660,14 @@ object EnStrings : Strings {
     override val additionalSystemPromptLabel = "Additional system prompt"
     override val additionalSystemPromptHint =
         "Appended whenever a new pi process starts in this workspace."
+    override val workspaceLoadFailed = { error: String -> "Could not load workspaces: $error" }
+    override val workspaceMoreSessionsLoadFailed = { error: String ->
+        "Could not load more chats: $error"
+    }
+    override val workspaceUpdateFailed = { error: String -> "Could not update the workspace: $error" }
 
     override val browseFiles = "Browse files"
+    override val filesRoot = "Root"
     override val filesEmptyFolder = "This folder is empty"
     override val fileSelectHint = "Select a file to preview it here"
     override val retry = "Retry"
@@ -912,6 +934,12 @@ object EnStrings : Strings {
 
     override val back = "Back"
     override val close = "Close"
+    override val unknownError = "Something went wrong. Please try again."
+    override val networkOfflineError = "You're offline. Check your network connection."
+    override val connectionInterruptedError = "Connection interrupted. Please try again."
+    override val requestTimedOutError = "The request timed out. Please try again."
+    override val serverUnreachableError = "Could not reach the server."
+    override val authenticationFailedError = "Authentication failed. Check the server token."
 
     override val portForwardsTitle = "Port forwarding"
     override val portForwardAdd = "Add mapping"
@@ -1091,6 +1119,9 @@ object ZhStrings : Strings {
     override val stopPiProcessUnsupported = "当前网关版本不支持单独停止 Pi 进程。"
     override val piProcessStopped = "Pi 进程已停止"
     override val piProcessStopFailed = { error: String -> "停止 Pi 进程失败：$error" }
+    override val sessionRenameFailed = { error: String -> "无法重命名会话：$error" }
+    override val sessionDeleteFailed = { error: String -> "无法删除会话：$error" }
+    override val sessionSyncFailed = { error: String -> "无法同步会话：$error" }
 
     override val workspaceDialogTitle = "选择工作区"
     override val workspaceLabel = "工作区"
@@ -1112,8 +1143,12 @@ object ZhStrings : Strings {
     override val workspaceNameLabel = "显示名称"
     override val additionalSystemPromptLabel = "追加系统提示词"
     override val additionalSystemPromptHint = "每次在此工作区启动新的 pi 进程时追加。"
+    override val workspaceLoadFailed = { error: String -> "无法加载工作区：$error" }
+    override val workspaceMoreSessionsLoadFailed = { error: String -> "无法加载更多会话：$error" }
+    override val workspaceUpdateFailed = { error: String -> "无法更新工作区：$error" }
 
     override val browseFiles = "浏览文件"
+    override val filesRoot = "根目录"
     override val filesEmptyFolder = "此文件夹为空"
     override val fileSelectHint = "选择文件后在此处预览"
     override val retry = "重试"
@@ -1378,6 +1413,12 @@ object ZhStrings : Strings {
 
     override val back = "返回"
     override val close = "关闭"
+    override val unknownError = "发生错误，请重试。"
+    override val networkOfflineError = "网络不可用，请检查网络连接。"
+    override val connectionInterruptedError = "连接已中断，请重试。"
+    override val requestTimedOutError = "请求超时，请重试。"
+    override val serverUnreachableError = "无法连接服务器。"
+    override val authenticationFailedError = "认证失败，请检查服务器令牌。"
 
     override val portForwardsTitle = "端口映射"
     override val portForwardAdd = "添加映射"

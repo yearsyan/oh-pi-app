@@ -1,5 +1,8 @@
 package io.github.yearsyan.ohpi.ui.components
 
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.animateTo
+import androidx.compose.animation.core.copy
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
@@ -11,6 +14,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 private val pacerBaseMark = TimeSource.Monotonic.markNow()
+private const val BottomSeekViewportMultiplier = 3f
+private const val BottomSeekHandoffFraction = 0.6f
+private const val ScrollConsumptionTolerancePx = 0.5f
 
 /** Remaining forward scroll when the final item is already measured. */
 private fun LazyListState.visibleTailScrollDistance(lastIndex: Int): Int? {
@@ -113,12 +119,15 @@ internal suspend fun LazyListState.scrollToBottom(lastIndex: Int) {
 
 /**
  * Animated variant of [scrollToBottom]. A visible tail uses one relative
- * animation straight to the bottom. An off-screen tail is first positioned
- * instantly with the same bounded target, then animated through the measured
- * remainder. Chaining a second `animateScrollToItem` instead would fully stop
- * between the two spring passes, which reads as a two-stage jump — most
- * visible on Android, where the final grouped run is usually taller than the
- * phone viewport.
+ * animation straight to the bottom. When the tail is still off-screen, short
+ * forward animation segments bring it into layout and hand off before their
+ * spring velocity reaches zero. Once measured, the same animation state keeps
+ * its velocity while retargeting to the exact remaining distance.
+ *
+ * Keeping the whole seek inside one scroll mutation matters for a long final
+ * assistant run: snapping to that grouped item's top and only animating its
+ * measured remainder makes the earlier process blocks disappear instantly,
+ * while two independent animations visibly stop between the same two phases.
  */
 internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
     if (lastIndex < 0) return
@@ -128,10 +137,56 @@ internal suspend fun LazyListState.animateScrollToBottom(lastIndex: Int) {
         return
     }
 
-    scrollToItem(lastIndex)
-    val remainingOffset = visibleTailScrollDistance(lastIndex) ?: return
-    if (remainingOffset > 0) {
-        animateScrollBy(remainingOffset.toFloat())
+    scroll {
+        var animationState = AnimationState(initialValue = 0f)
+        var tailMeasured = false
+        var reachedContentEnd = false
+
+        while (!tailMeasured && !reachedContentEnd) {
+            val viewportSize =
+                (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset)
+                    .coerceAtLeast(1)
+            val segmentTarget = viewportSize * BottomSeekViewportMultiplier
+            val handoffAt = segmentTarget * BottomSeekHandoffFraction
+            var consumedInSegment = 0f
+
+            animationState = animationState.copy(value = 0f)
+            animationState.animateTo(
+                targetValue = segmentTarget,
+                sequentialAnimation = animationState.velocity != 0f,
+            ) {
+                val requested = value - consumedInSegment
+                if (requested > 0f) {
+                    val consumed = scrollBy(requested)
+                    consumedInSegment += consumed
+                    tailMeasured = visibleTailScrollDistance(lastIndex) != null
+                    reachedContentEnd = consumed < requested - ScrollConsumptionTolerancePx
+                }
+
+                if (tailMeasured || reachedContentEnd || value >= handoffAt) {
+                    cancelAnimation()
+                }
+            }
+        }
+
+        val remainingOffset = visibleTailScrollDistance(lastIndex) ?: return@scroll
+        if (remainingOffset <= 0) return@scroll
+
+        var consumedInFinalSegment = 0f
+        animationState = animationState.copy(value = 0f)
+        animationState.animateTo(
+            targetValue = remainingOffset.toFloat(),
+            sequentialAnimation = animationState.velocity != 0f,
+        ) {
+            val requested = value - consumedInFinalSegment
+            if (requested > 0f) {
+                val consumed = scrollBy(requested)
+                consumedInFinalSegment += consumed
+                if (consumed < requested - ScrollConsumptionTolerancePx) {
+                    cancelAnimation()
+                }
+            }
+        }
     }
 }
 

@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -103,6 +104,36 @@ class ScrollToBottomTest {
         waitUntil(timeoutMillis = 15_000) { animationFinished }
         runOnIdle {
             assertFalse(state.canScrollForward, "list must not be scrollable further down")
+            assertEquals(0, state.tailGapToContentEnd())
+        }
+    }
+
+    @Test
+    fun offscreenTailAnimationDoesNotTeleportToItsTop() = runComposeUiTest {
+        lateinit var state: LazyListState
+        val visitedFirstIndices = mutableListOf<Int>()
+        var animationFinished by mutableStateOf(false)
+        setContent {
+            state = rememberLazyListState()
+            LaunchedEffect(state) {
+                snapshotFlow { state.firstVisibleItemIndex }
+                    .collect { visitedFirstIndices += it }
+            }
+            LaunchedEffect(Unit) {
+                state.animateScrollToBottom(49)
+                animationFinished = true
+            }
+            ProbeList(state, tallLastItem = true)
+        }
+
+        waitUntil(timeoutMillis = 15_000) { animationFinished }
+        runOnIdle {
+            assertTrue(
+                visitedFirstIndices.any { it in 1 until 49 },
+                "an off-screen tail must enter through visible intermediate items: " +
+                    visitedFirstIndices.joinToString(),
+            )
+            assertFalse(state.canScrollForward)
             assertEquals(0, state.tailGapToContentEnd())
         }
     }

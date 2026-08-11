@@ -103,7 +103,7 @@ fun App(
                             onCancel = vm::dismissLoopbackLinkPrompt,
                         )
                     }
-                    ToastHost(vm.toasts)
+                    ToastHost(vm.toasts, darkTheme = dark)
                 }
             }
         }

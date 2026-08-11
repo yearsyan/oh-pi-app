@@ -16,6 +16,9 @@ import io.ktor.http.contentType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+internal const val DEFAULT_GATEWAY_WORKSPACE_SESSION_PREVIEW = 5
+internal const val MAX_GATEWAY_WORKSPACE_SESSION_PAGE_SIZE = 100
+
 /** Failure returned by the gateway workspace/session API. */
 class SessionApiException(message: String) : Exception(message)
 
@@ -143,10 +146,11 @@ data class GatewaySessionMetrics(
 suspend fun listGatewayWorkspaces(
     gateway: String,
     token: String,
-    sessionLimit: Int = 5,
+    sessionLimit: Int = DEFAULT_GATEWAY_WORKSPACE_SESSION_PREVIEW,
 ): List<WorkspaceSummary> {
+    val boundedLimit = sessionLimit.coerceIn(1, MAX_GATEWAY_WORKSPACE_SESSION_PAGE_SIZE)
     val response = gatewayHttp.get(
-        "${gatewayHttpBase(gateway)}/api/workspaces?session_limit=${sessionLimit.coerceIn(1, 100)}",
+        "${gatewayHttpBase(gateway)}/api/workspaces?session_limit=$boundedLimit",
     ) { authenticate(token) }
     val body = response.requireSuccess()
     return decodeWorkspaceList(body)
@@ -196,7 +200,7 @@ suspend fun listGatewayWorkspaceSessions(
     limit: Int = 20,
 ): WorkspaceSessionPage {
     val suffix = buildString {
-        append("?limit=").append(limit.coerceIn(1, 100))
+        append("?limit=").append(limit.coerceIn(1, MAX_GATEWAY_WORKSPACE_SESSION_PAGE_SIZE))
         if (cursor.isNotBlank()) append("&cursor=").append(urlEncode(cursor))
     }
     val response = gatewayHttp.get(

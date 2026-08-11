@@ -103,6 +103,8 @@ private val transientNetworkErrorHints =
         "network connection was lost",
         // NSURLErrorNotConnectedToInternet (-1009)
         "appears to be offline",
+        // NSPOSIXErrorDomain 57 (ENOTCONN), commonly delivered after iOS resumes.
+        "socket is not connected",
         // OkHttp after the process was frozen
         "socket closed",
         "socket is closed",

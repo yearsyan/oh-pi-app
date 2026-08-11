@@ -567,7 +567,11 @@ internal fun MessageList(
                         !userScrolledAway && !pointerInContact &&
                         listState.canScrollForward && lastIndex >= 0
                     ) {
-                        listState.scrollToBottom(lastIndex)
+                        // This snapshot can be emitted from a measure pass when
+                        // deferred Markdown changes the tail height. Queue the
+                        // correction for the next layout instead of forcing a
+                        // nested remeasure through scrollBy.
+                        listState.requestScrollToBottom(lastIndex)
                     }
                 }
             }

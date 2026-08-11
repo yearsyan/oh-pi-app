@@ -29,6 +29,14 @@ class TransientNetworkErrorTest {
     }
 
     @Test
+    fun iosSocketNotConnectedIsTransient() {
+        val message =
+            "Exception in http request: Error Domain=NSPOSIXErrorDomain Code=57 " +
+                "\"Socket is not connected\""
+        assertTrue(isTransientNetworkError(message))
+    }
+
+    @Test
     fun iosLostAndOfflineAreTransient() {
         assertTrue(
             isTransientNetworkError(

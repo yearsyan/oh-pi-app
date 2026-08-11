@@ -18,18 +18,28 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.yearsyan.ohpi.chat.Toast
 
 @Composable
-fun ToastHost(toasts: List<Toast>) {
+fun ToastHost(toasts: List<Toast>, darkTheme: Boolean) {
+    PlatformToastHost(toasts = toasts, darkTheme = darkTheme)
+}
+
+@Composable
+internal expect fun PlatformToastHost(toasts: List<Toast>, darkTheme: Boolean)
+
+/** Material fallback used by Android and desktop. iOS presents a UIKit toast. */
+@Composable
+internal fun ComposeToastHost(toasts: List<Toast>) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             modifier = Modifier.padding(bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.Bottom,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            toasts.forEach { toast ->
+            toasts.lastOrNull()?.let { toast ->
                 AnimatedVisibility(
                     visible = true,
                     enter = fadeIn() + slideInVertically { it / 2 },
@@ -48,6 +58,8 @@ fun ToastHost(toasts: List<Toast>) {
                             toast.text,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp).widthIn(max = 420.dp),
                             style = MaterialTheme.typography.labelLarge,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
                             color = when (toast.kind) {
                                 Toast.Kind.Error -> MaterialTheme.colorScheme.onErrorContainer
                                 Toast.Kind.Success, Toast.Kind.Info -> MaterialTheme.colorScheme.inverseOnSurface

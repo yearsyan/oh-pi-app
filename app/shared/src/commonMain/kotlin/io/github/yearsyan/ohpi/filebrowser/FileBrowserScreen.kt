@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
@@ -43,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +93,9 @@ class FilePreview(
     val isImage: Boolean = false,
 )
 
+/** One segment of the breadcrumb bar: display [name] and its directory [path]. */
+data class PathSegment(val name: String, val path: String)
+
 /** Drives a FileBrowserScreen: directory navigation and file preview state. */
 class FileBrowserController(
     private val scope: CoroutineScope,
@@ -99,7 +105,6 @@ class FileBrowserController(
     private val downloadFile: suspend (String) -> ByteArray,
 ) {
     var currentPath by mutableStateOf(initialPath); private set
-    var parentPath by mutableStateOf(""); private set
     val entries = mutableStateListOf<FileEntry>()
     var loading by mutableStateOf(false); private set
     var errorMessage by mutableStateOf<String?>(null); private set
@@ -111,7 +116,27 @@ class FileBrowserController(
         navigateTo(initialPath)
     }
 
-    val canGoUp: Boolean get() = parentPath.isNotBlank() && parentPath != currentPath
+    /**
+     * Path segments from the filesystem root down to [currentPath], for the
+     * breadcrumb bar; empty until the first listing resolves. The root
+     * segment carries a blank [PathSegment.name] and the UI renders it as a
+     * localized label instead.
+     */
+    val breadcrumbs: List<PathSegment>
+        get() {
+            if (currentPath.isBlank()) return emptyList()
+            val segments = ArrayList<PathSegment>()
+            var path = ""
+            if (currentPath.startsWith("/")) {
+                segments += PathSegment("", "/")
+            }
+            for (part in currentPath.split('/')) {
+                if (part.isEmpty()) continue
+                path += "/$part"
+                segments += PathSegment(part, path)
+            }
+            return segments
+        }
 
     fun navigateTo(path: String) {
         val gen = ++generation
@@ -122,7 +147,6 @@ class FileBrowserController(
                 val result = listFiles(path)
                 if (gen != generation) return@launch
                 currentPath = result.path
-                parentPath = result.parent
                 entries.clear()
                 entries.addAll(result.entries)
             } catch (cancelled: CancellationException) {
@@ -135,10 +159,6 @@ class FileBrowserController(
                 if (gen == generation) loading = false
             }
         }
-    }
-
-    fun goUp() {
-        if (canGoUp) navigateTo(parentPath)
     }
 
     fun refresh() = navigateTo(currentPath)
@@ -291,9 +311,8 @@ fun FileBrowserScreen(
 }
 
 /**
- * Directory listing half of the browser. The ".." row stays pinned above the
- * content states so an empty or unreadable folder never strands the user
- * without a way back to the parent directory.
+ * Directory listing half of the browser. Ancestor navigation lives in the
+ * top bar breadcrumbs, so the pane itself only renders the content states.
  */
 @Composable
 private fun FileListPane(
@@ -301,38 +320,32 @@ private fun FileListPane(
     onOpenApk: (FileEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier) {
-        if (controller.canGoUp) {
-            UpDirectoryRow(onClick = controller::goUp)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            when {
-                controller.entries.isEmpty() && controller.loading ->
-                    CenteredState { CircularProgressIndicator(Modifier.size(32.dp)) }
+    Box(modifier) {
+        when {
+            controller.entries.isEmpty() && controller.loading ->
+                CenteredState { CircularProgressIndicator(Modifier.size(32.dp)) }
 
-                controller.entries.isEmpty() && controller.errorMessage != null ->
-                    CenteredState {
-                        Text(
-                            S.folderLoadFailed(controller.errorMessage.orEmpty()),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = controller::refresh) { Text(S.retry) }
-                    }
+            controller.entries.isEmpty() && controller.errorMessage != null ->
+                CenteredState {
+                    Text(
+                        S.folderLoadFailed(controller.errorMessage.orEmpty()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = controller::refresh) { Text(S.retry) }
+                }
 
-                controller.entries.isEmpty() ->
-                    CenteredState {
-                        Text(
-                            S.filesEmptyFolder,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+            controller.entries.isEmpty() ->
+                CenteredState {
+                    Text(
+                        S.filesEmptyFolder,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
-                else -> FileList(controller, onOpenApk)
-            }
+            else -> FileList(controller, onOpenApk)
         }
     }
 }
@@ -348,22 +361,18 @@ private fun FileBrowserTopBar(controller: FileBrowserController, onBack: () -> U
         }
         Column(Modifier.weight(1f)) {
             Text(
-                controller.currentPath.substringAfterLast('/').ifBlank { controller.currentPath }
-                    .ifBlank { S.browseFiles },
+                controller.currentPath.substringAfterLast('/').ifBlank {
+                    if (controller.currentPath.isBlank()) S.browseFiles else S.filesRoot
+                },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (controller.currentPath.isNotBlank()) {
-                Text(
-                    controller.currentPath,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            PathBreadcrumbs(
+                segments = controller.breadcrumbs,
+                onNavigate = controller::navigateTo,
+            )
         }
         if (controller.loading) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -375,29 +384,55 @@ private fun FileBrowserTopBar(controller: FileBrowserController, onBack: () -> U
     }
 }
 
+/**
+ * Horizontally scrollable breadcrumb bar mirroring the current path; tapping
+ * any segment jumps straight to that ancestor directory. The trailing segment
+ * is the current directory: highlighted, not clickable, and kept scrolled
+ * into view.
+ */
 @Composable
-private fun UpDirectoryRow(onClick: () -> Unit) {
+private fun PathBreadcrumbs(
+    segments: List<PathSegment>,
+    onNavigate: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (segments.isEmpty()) return
+    val scrollState = rememberScrollState()
+    // maxValue changes only when the crumbs or the viewport resize, so keying
+    // the scroll on it pins the deepest segment after navigation without
+    // fighting the user's own horizontal scrolling.
+    LaunchedEffect(scrollState.maxValue) {
+        scrollState.scrollTo(scrollState.maxValue)
+    }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier.horizontalScroll(scrollState),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
-            Icon(
-                Icons.Filled.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        segments.forEachIndexed { index, segment ->
+            if (index > 0) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val current = index == segments.lastIndex
+            Text(
+                segment.name.ifBlank { S.filesRoot },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (current) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.primary,
+                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .widthIn(max = 160.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .then(if (current) Modifier else Modifier.clickable { onNavigate(segment.path) })
+                    .padding(horizontal = 3.dp, vertical = 2.dp),
             )
         }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            "..",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
