@@ -410,11 +410,11 @@ internal fun MessageList(
     var bottomAttached by remember(controller) { mutableStateOf(true) }
     var initialPositionPending by remember(controller) { mutableStateOf(true) }
     var bottomJumpAnimating by remember(controller) { mutableStateOf(false) }
-    // Expanding the final process block from within the 16dp attachment zone
-    // first closes that small gap, then uses the block's bottom edge as its
-    // anchor. The tail-height watcher below compensates every animation step,
-    // so the details grow upward. Starting farther away keeps the normal
-    // top-edge anchor instead.
+    // Expanding any process block in the final assistant run from within the
+    // 16dp attachment zone first closes that small gap, then uses the block's
+    // bottom edge as its anchor. The tail-height watcher below compensates every
+    // animation step, so the details grow upward. Starting farther away keeps
+    // the normal top-edge anchor instead.
     var tailProcessBottomAnchored by remember(controller) { mutableStateOf(false) }
     val gestureState = remember(controller) { MessageListGestureState() }
     val scope = rememberCoroutineScope()
@@ -695,10 +695,10 @@ internal fun MessageList(
                                 group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
                                     (caretUnderLastGroup && group.key == lastGroupKey),
                             isTailRun = group.key == lastGroupKey,
-                            onProcessDetailsToggled = { expanding, isTailProcess ->
+                            onProcessDetailsToggled = { expanding, isTailRunProcess ->
                                 val anchorBottom =
                                     expanding &&
-                                        isTailProcess &&
+                                        isTailRunProcess &&
                                         listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
                                 tailProcessBottomAnchored = anchorBottom
                                 if (anchorBottom) {
@@ -714,8 +714,8 @@ internal fun MessageList(
                                 // to the bottom after its animation completes.
                                 if (expanding) userScrolledAway = !anchorBottom
                             },
-                            onProcessDetailsExpanded = { isTailProcess ->
-                                if (isTailProcess && tailProcessBottomAnchored) {
+                            onProcessDetailsExpanded = { isTailRunProcess ->
+                                if (isTailRunProcess && tailProcessBottomAnchored) {
                                     // Finish on the exact bottom even if the last
                                     // animation frame and its layout notification race.
                                     listState.compensateVisibleTailToBottom()

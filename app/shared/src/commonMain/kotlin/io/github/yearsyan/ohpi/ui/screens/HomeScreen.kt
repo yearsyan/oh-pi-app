@@ -127,6 +127,10 @@ fun HomeScreen(vm: AppViewModel) {
         if (wasActive) returnToSessionList()
     }
 
+    fun archiveWorkspace(workspace: WorkspaceSummary) {
+        if (vm.archiveWorkspace(workspace.id)) returnToSessionList()
+    }
+
     fun openCompactChat(sessionId: String) {
         vm.openChat(sessionId)
         navController.navigate(ChatRoute(sessionId))
@@ -187,6 +191,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
                     onEditWorkspace = { editingWorkspace = it },
+                    onArchiveWorkspace = ::archiveWorkspace,
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
                     onOpenProviders = ::openProviders,
@@ -210,6 +215,7 @@ fun HomeScreen(vm: AppViewModel) {
                     onDeleteSession = ::deleteSession,
                     onRenameSession = { renaming = it },
                     onEditWorkspace = { editingWorkspace = it },
+                    onArchiveWorkspace = ::archiveWorkspace,
                     onRequestNewChat = { newChatWide = it },
                     onBrowseFiles = ::openFileBrowser,
                     onOpenProviders = ::openProviders,
@@ -332,7 +338,7 @@ fun HomeScreen(vm: AppViewModel) {
     newChatWide?.let { wide ->
         WorkspaceDialog(
             initialWorkspaceId = vm.lastWorkspaceId,
-            workspaces = vm.workspaces,
+            workspaces = vm.homeWorkspaces,
             fetchDirs = { path -> vm.listDirs(path) },
             createDir = { parent, name -> vm.createDir(parent, name) },
             addWorkspace = vm::addWorkspace,
@@ -357,6 +363,7 @@ private fun MainDestination(
     onDeleteSession: (String) -> Unit,
     onRenameSession: (SavedSession) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
+    onArchiveWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
     onBrowseFiles: (String) -> Unit,
     onOpenProviders: () -> Unit,
@@ -367,6 +374,7 @@ private fun MainDestination(
             vm = vm,
             onRenameSession = onRenameSession,
             onEditWorkspace = onEditWorkspace,
+            onArchiveWorkspace = onArchiveWorkspace,
             onRequestNewChat = { onRequestNewChat(true) },
             onSelectServer = onSelectServer,
             onOpenSettings = onOpenSettings,
@@ -395,7 +403,7 @@ private fun MainDestination(
         )
 
         else -> SessionListPane(
-            workspaces = vm.workspaces,
+            workspaces = vm.homeWorkspaces,
             servers = vm.servers,
             activeServer = vm.activeServer,
             activeChatId = vm.activeChatId,
@@ -412,6 +420,7 @@ private fun MainDestination(
             onStopSessionProcess = { vm.stopSessionProcess(it.id) },
             onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
             onEditWorkspace = onEditWorkspace,
+            onArchiveWorkspace = onArchiveWorkspace,
             sessionProcessStopSupported =
                 vm.activeGatewayInfo?.supportsSessionProcessStop == true,
             hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
@@ -427,6 +436,7 @@ private fun WideHome(
     vm: AppViewModel,
     onRenameSession: (SavedSession) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
+    onArchiveWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: () -> Unit,
     onSelectServer: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -453,7 +463,7 @@ private fun WideHome(
                 )
             } else {
                 SessionListPane(
-                    workspaces = vm.workspaces,
+                    workspaces = vm.homeWorkspaces,
                     servers = vm.servers,
                     activeServer = vm.activeServer,
                     activeChatId = vm.activeChatId,
@@ -470,6 +480,7 @@ private fun WideHome(
                     onStopSessionProcess = { vm.stopSessionProcess(it.id) },
                     onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
                     onEditWorkspace = onEditWorkspace,
+                    onArchiveWorkspace = onArchiveWorkspace,
                     sessionProcessStopSupported =
                         vm.activeGatewayInfo?.supportsSessionProcessStop == true,
                     hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,

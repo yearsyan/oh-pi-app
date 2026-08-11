@@ -153,6 +153,38 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         settings.putString("$KEY_LAST_WORKSPACE_ID$serverId", workspaceId)
     }
 
+    /** Workspaces hidden from the home screen but available for restoration in settings. */
+    fun archivedWorkspaceIds(serverId: String): Set<String> =
+        decodeList<String>(settings.getString("$KEY_ARCHIVED_WORKSPACES$serverId", ""))
+            .filterTo(linkedSetOf()) { it.isNotBlank() }
+
+    fun saveArchivedWorkspaceIds(serverId: String, workspaceIds: Set<String>) {
+        saveWorkspaceIds("$KEY_ARCHIVED_WORKSPACES$serverId", workspaceIds)
+    }
+
+    /**
+     * Locally suppressed empty workspaces whose remote sessions were deleted.
+     * A later session revives the workspace automatically.
+     */
+    fun deletedWorkspaceIds(serverId: String): Set<String> =
+        decodeList<String>(settings.getString("$KEY_DELETED_WORKSPACES$serverId", ""))
+            .filterTo(linkedSetOf()) { it.isNotBlank() }
+
+    fun saveDeletedWorkspaceIds(serverId: String, workspaceIds: Set<String>) {
+        saveWorkspaceIds("$KEY_DELETED_WORKSPACES$serverId", workspaceIds)
+    }
+
+    fun clearWorkspaceVisibility(serverId: String) {
+        settings.remove("$KEY_ARCHIVED_WORKSPACES$serverId")
+        settings.remove("$KEY_DELETED_WORKSPACES$serverId")
+        settings.remove("$KEY_LAST_WORKSPACE_ID$serverId")
+    }
+
+    private fun saveWorkspaceIds(key: String, workspaceIds: Set<String>) {
+        val normalized = workspaceIds.filter { it.isNotBlank() }.distinct().sorted()
+        if (normalized.isEmpty()) settings.remove(key) else settings.putString(key, encode(normalized))
+    }
+
     private inline fun <reified T> decodeList(raw: String): List<T> {
         if (raw.isBlank()) return emptyList()
         return runCatching { storeJson.decodeFromString<List<T>>(raw) }.getOrDefault(emptyList())
@@ -172,5 +204,7 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         private const val KEY_LAST_SESSION = "last_session"
         private const val KEY_SESSIONS = "sessions_" // pre-server-list releases
         private const val KEY_LAST_WORKSPACE_ID = "last_workspace_id_"
+        private const val KEY_ARCHIVED_WORKSPACES = "archived_workspaces_"
+        private const val KEY_DELETED_WORKSPACES = "deleted_workspaces_"
     }
 }

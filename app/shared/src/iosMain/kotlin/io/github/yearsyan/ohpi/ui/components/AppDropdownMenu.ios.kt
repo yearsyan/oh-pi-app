@@ -145,6 +145,7 @@ private val AppMenuIcon.systemImageName: String
             AppMenuIcon.Folder -> "folder"
             AppMenuIcon.Refresh -> "arrow.clockwise"
             AppMenuIcon.Edit -> "pencil"
+            AppMenuIcon.Archive -> "archivebox"
             AppMenuIcon.Info -> "info.circle"
             AppMenuIcon.Stop -> "stop.circle"
             AppMenuIcon.Delete -> "trash"

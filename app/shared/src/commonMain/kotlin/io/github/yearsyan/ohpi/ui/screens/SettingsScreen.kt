@@ -44,6 +44,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Cloud
@@ -59,6 +60,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.Circle
@@ -88,6 +90,7 @@ import io.github.yearsyan.ohpi.data.AppLanguage
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
+import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
@@ -115,6 +118,7 @@ private const val SupportEmailUrl =
 /** Top-level settings destinations shown in the master list; each opens a detail page. */
 enum class SettingsSection {
     Servers,
+    Workspaces,
     Gateway,
     SshKeys,
     Providers,
@@ -187,6 +191,7 @@ fun SettingsScreen(
                 SettingsListPane(
                     servers = servers,
                     sshKeys = sshKeys,
+                    archivedWorkspaceCount = vm.archivedWorkspaces.size,
                     activeServerId = activeServerId,
                     themeMode = themeMode,
                     language = language,
@@ -258,6 +263,7 @@ fun SettingsScreen(
             SettingsListPane(
                 servers = servers,
                 sshKeys = sshKeys,
+                archivedWorkspaceCount = vm.archivedWorkspaces.size,
                 activeServerId = activeServerId,
                 themeMode = themeMode,
                 language = language,
@@ -289,6 +295,7 @@ fun SettingsScreen(
 private fun SettingsListPane(
     servers: List<ServerProfile>,
     sshKeys: List<SshPrivateKey>,
+    archivedWorkspaceCount: Int,
     activeServerId: String,
     themeMode: ThemeMode,
     language: AppLanguage,
@@ -330,6 +337,7 @@ private fun SettingsListPane(
                             strings,
                             activeServer,
                             sshKeys.size,
+                            archivedWorkspaceCount,
                             themeMode,
                             language,
                         ),
@@ -441,6 +449,14 @@ private fun SettingsDetail(
             onAddServer = onAddServer,
         )
 
+        SettingsSection.Workspaces -> ArchivedWorkspacesSettingsDetail(
+            workspaces = vm.archivedWorkspaces,
+            deletingWorkspaceId = vm.workspaceDeletingId,
+            onBack = onBack,
+            onRestore = vm::restoreWorkspace,
+            onDelete = vm::deleteWorkspace,
+        )
+
         SettingsSection.Gateway -> GatewayRuntimeSettingsDetail(
             vm = vm,
             onBack = onBack,
@@ -520,6 +536,111 @@ private fun SettingsDetailScaffold(
         ) {
             content()
         }
+    }
+}
+
+@Composable
+private fun ArchivedWorkspacesSettingsDetail(
+    workspaces: List<WorkspaceSummary>,
+    deletingWorkspaceId: String?,
+    onBack: (() -> Unit)?,
+    onRestore: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    var deleteCandidate by remember { mutableStateOf<WorkspaceSummary?>(null) }
+    SettingsDetailScaffold(title = S.archivedWorkspacesSection, onBack = onBack) {
+        if (workspaces.isEmpty()) {
+            Text(
+                S.archivedWorkspacesEmpty,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            workspaces.forEach { workspace ->
+                val deleting = deletingWorkspaceId == workspace.id
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.Archive,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    workspace.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    workspace.directory,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (deleting) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Text(
+                                    "${workspace.sessionCount}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = { onRestore(workspace.id) },
+                                enabled = deletingWorkspaceId == null,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Restore,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(S.restoreWorkspace)
+                            }
+                            IconButton(
+                                onClick = { deleteCandidate = workspace },
+                                enabled = deletingWorkspaceId == null,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = S.delete,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+    deleteCandidate?.let { workspace ->
+        ConfirmDialog(
+            title = S.deleteWorkspaceTitle,
+            body = S.deleteWorkspaceBody(workspace.displayName),
+            confirmLabel = S.delete,
+            onDismiss = { deleteCandidate = null },
+            onConfirm = { onDelete(workspace.id) },
+        )
     }
 }
 
@@ -1170,6 +1291,7 @@ private fun AboutLinkRow(
 
 private fun settingsSectionIcon(section: SettingsSection): ImageVector = when (section) {
     SettingsSection.Servers -> Icons.Filled.Cloud
+    SettingsSection.Workspaces -> Icons.Filled.Archive
     SettingsSection.Gateway -> Icons.Filled.Settings
     SettingsSection.SshKeys -> Icons.Filled.Key
     SettingsSection.Providers -> Icons.Filled.Psychology
@@ -1182,6 +1304,7 @@ private fun settingsSectionIcon(section: SettingsSection): ImageVector = when (s
 private fun settingsSectionTitle(section: SettingsSection, strings: Strings): String =
     when (section) {
         SettingsSection.Servers -> strings.serversSection
+        SettingsSection.Workspaces -> strings.archivedWorkspacesSection
         SettingsSection.Gateway -> strings.gatewayRuntimeSection
         SettingsSection.SshKeys -> strings.sshKeysSection
         SettingsSection.Providers -> strings.providersSection
@@ -1196,10 +1319,12 @@ private fun settingsSectionSubtitle(
     strings: Strings,
     activeServer: ServerProfile?,
     sshKeyCount: Int,
+    archivedWorkspaceCount: Int,
     themeMode: ThemeMode,
     language: AppLanguage,
 ): String? = when (section) {
     SettingsSection.Servers -> activeServer?.displayName
+    SettingsSection.Workspaces -> strings.archivedWorkspacesDescription(archivedWorkspaceCount)
     SettingsSection.Gateway -> strings.gatewayRuntimeDescription
     SettingsSection.SshKeys -> strings.sshKeyCount(sshKeyCount)
     SettingsSection.Providers -> strings.providerSettingsDescription

@@ -9,6 +9,7 @@ internal enum class AppMenuIcon {
     Folder,
     Refresh,
     Edit,
+    Archive,
     Info,
     Stop,
     Delete,

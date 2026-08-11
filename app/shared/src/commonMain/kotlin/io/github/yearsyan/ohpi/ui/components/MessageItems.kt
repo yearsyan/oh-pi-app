@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -114,6 +116,17 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
 
 internal const val AGENT_PROCESS_BLOCK_TEST_TAG = "agent-process-block"
+internal const val THINKING_TITLE_MAX_CHARACTERS = 120
+
+private const val THINKING_TITLE_ELLIPSIS = '\u2026'
+
+/**
+ * Italic style for process-block chrome (summary header, thinking preview,
+ * tool target). Touch platforms keep the light italic; desktop renders them
+ * upright.
+ */
+private val processChromeFontStyle: FontStyle =
+    if (getPlatform().target == PlatformTarget.Desktop) FontStyle.Normal else FontStyle.Italic
 
 @Composable
 fun UserMessageRow(item: TimelineItem.UserItem) {
@@ -175,10 +188,16 @@ private fun AgentProcessBlock(
     // A blank thinking (e.g. encrypted reasoning from GPT models) has nothing
     // to show, so neither the header nor the row is interactive.
     val singleDetail = details.singleOrNull()
+    val singleThinkingHasContent by
+        remember(singleDetail) {
+            derivedStateOf(structuralEqualityPolicy()) {
+                (singleDetail as? AssistantProcessDetail.Thinking)?.block?.text?.isNotBlank() == true
+            }
+        }
     val singleSheetDetail =
         when (singleDetail) {
             is AssistantProcessDetail.Thinking ->
-                singleDetail.takeIf { it.block.text.isNotBlank() }
+                singleDetail.takeIf { singleThinkingHasContent }
             else -> singleDetail
         }
     val headerInteractive = singleDetail == null || singleSheetDetail != null
@@ -234,7 +253,7 @@ private fun AgentProcessBlock(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 highlightColor = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.labelLarge,
-                fontStyle = FontStyle.Italic,
+                fontStyle = processChromeFontStyle,
                 // fill=false: the text only takes the width it needs so the
                 // expand/collapse arrow sits right at the end of the text
                 // instead of at the far right edge of the row.
@@ -425,9 +444,15 @@ private fun ThinkingRow(
     block: AssistantBlock,
     onClick: () -> Unit,
 ) {
-    val preview = block.text.trim().replace(Regex("\\s+"), " ")
+    // Observe a bounded derived value rather than the complete streaming text.
+    // Once the visible prefix is full, later deltas keep the same value and no
+    // longer invalidate this title row.
+    val preview by
+        remember(block) {
+            derivedStateOf(structuralEqualityPolicy()) { thinkingTitlePreview(block.text) }
+        }
     // Blank thinking (e.g. encrypted reasoning) has no detail to show in a sheet.
-    val hasContent = block.text.isNotBlank()
+    val hasContent = preview.isNotEmpty()
     Row(
         modifier =
             Modifier
@@ -453,12 +478,66 @@ private fun ThinkingRow(
             preview,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
-            fontStyle = FontStyle.Italic,
+            fontStyle = processChromeFontStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/**
+ * Produces the bounded one-line title shown for an inline thinking detail.
+ * Whitespace is collapsed before counting; content beyond the limit is
+ * represented by one ellipsis. The scan stops as soon as truncation is known,
+ * so its cost does not grow with a long reasoning payload.
+ */
+internal fun thinkingTitlePreview(
+    text: String,
+    maxCharacters: Int = THINKING_TITLE_MAX_CHARACTERS,
+): String {
+    require(maxCharacters > 0) { "maxCharacters must be positive" }
+    val preview = StringBuilder(minOf(text.length, maxCharacters + 1))
+    var index = 0
+    var characterCount = 0
+    var pendingSpace = false
+
+    while (index < text.length) {
+        val current = text[index]
+        if (current.isWhitespace()) {
+            if (preview.isNotEmpty()) pendingSpace = true
+            index++
+            continue
+        }
+
+        val codeUnitCount =
+            if (
+                current in '\uD800'..'\uDBFF' &&
+                index + 1 < text.length &&
+                text[index + 1] in '\uDC00'..'\uDFFF'
+            ) {
+                2
+            } else {
+                1
+            }
+        val requiredCharacters = 1 + if (pendingSpace) 1 else 0
+        if (characterCount + requiredCharacters > maxCharacters) {
+            preview.append(THINKING_TITLE_ELLIPSIS)
+            return preview.toString()
+        }
+
+        if (pendingSpace) {
+            preview.append(' ')
+            characterCount++
+            pendingSpace = false
+        }
+        preview.append(current)
+        if (codeUnitCount == 2) preview.append(text[index + 1])
+        characterCount++
+        index += codeUnitCount
+    }
+
+    return preview.toString()
 }
 
 /** Compact expanded-row for a tool call: one header line only; tap opens the sheet. */
@@ -649,7 +728,7 @@ private fun ToolHeader(
                 action.target,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
-                fontStyle = FontStyle.Italic,
+                fontStyle = processChromeFontStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -998,8 +1077,8 @@ fun AssistantRunRow(
     items: List<TimelineItem>,
     isStreaming: Boolean,
     isTailRun: Boolean = false,
-    onProcessDetailsToggled: (expanding: Boolean, isTailProcess: Boolean) -> Unit = { _, _ -> },
-    onProcessDetailsExpanded: (isTailProcess: Boolean) -> Unit = {},
+    onProcessDetailsToggled: (expanding: Boolean, isTailRunProcess: Boolean) -> Unit = { _, _ -> },
+    onProcessDetailsExpanded: (isTailRunProcess: Boolean) -> Unit = {},
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
     val chunks = chunkAssistantRun(items)
@@ -1014,15 +1093,14 @@ fun AssistantRunRow(
             chunks.forEachIndexed { index, chunk ->
                 when (chunk) {
                     is AssistantRenderChunk.Process -> {
-                        val isTailProcess = isTailRun && index == chunks.lastIndex
                         AgentProcessBlock(
                             details = chunk.details,
                             isStreaming = isStreaming && index == chunks.lastIndex,
                             onDetailsToggled = { expanding ->
-                                onProcessDetailsToggled(expanding, isTailProcess)
+                                onProcessDetailsToggled(expanding, isTailRun)
                             },
                             onDetailsExpanded = {
-                                onProcessDetailsExpanded(isTailProcess)
+                                onProcessDetailsExpanded(isTailRun)
                             },
                             onLoadToolImage = onLoadToolImage,
                         )

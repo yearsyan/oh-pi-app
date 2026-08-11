@@ -54,7 +54,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -63,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.chrisbanes.haze.HazeState
+import io.github.yearsyan.ohpi.PlatformTarget
 import io.github.yearsyan.ohpi.chat.ChatController
 import io.github.yearsyan.ohpi.chat.PromptImage
 import io.github.yearsyan.ohpi.chat.QueuedPromptItem
@@ -72,6 +78,7 @@ import io.github.yearsyan.ohpi.chat.SlashCommand
 import io.github.yearsyan.ohpi.chat.SlashCommandSource
 import io.github.yearsyan.ohpi.chat.matchingSlashCommands
 import io.github.yearsyan.ohpi.chat.queuedPromptItems
+import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.i18n.S
 import kotlin.io.encoding.Base64
 import kotlinx.coroutines.Dispatchers
@@ -112,6 +119,7 @@ fun Composer(
     var observedConfirmation by
         remember(controller) { mutableStateOf(controller.lastConfirmedPromptSourceId) }
     val focusRequester = remember { FocusRequester() }
+    val platformTarget = remember { getPlatform().target }
     val promptPending = controller.isPromptPending
     LaunchedEffect(controller.lastConfirmedPromptSourceId) {
         val confirmed = controller.lastConfirmedPromptSourceId
@@ -227,7 +235,30 @@ fun Composer(
                             Modifier
                                 .fillMaxWidth()
                                 .focusRequester(focusRequester)
-                                .onPreviewKeyEvent(clipboardImagePasteHandler),
+                                .onPreviewKeyEvent { event ->
+                                    if (clipboardImagePasteHandler(event)) {
+                                        true
+                                    } else {
+                                        when (
+                                            composerEnterKeyAction(
+                                                platformTarget = platformTarget,
+                                                eventType = event.type,
+                                                key = event.key,
+                                                ctrlPressed = event.isCtrlPressed,
+                                            )
+                                        ) {
+                                            ComposerEnterKeyAction.Submit -> {
+                                                if (canSend) onSubmitInput(text, images)
+                                                true
+                                            }
+                                            ComposerEnterKeyAction.InsertLineBreak -> {
+                                                editorState.insertComposerLineBreak()
+                                                true
+                                            }
+                                            ComposerEnterKeyAction.Ignore -> false
+                                        }
+                                    }
+                                },
                         textStyle =
                             MaterialTheme.typography.bodyLarge.copy(
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -328,6 +359,37 @@ fun Composer(
                 }
             }
         }
+    }
+}
+
+internal enum class ComposerEnterKeyAction {
+    Ignore,
+    Submit,
+    InsertLineBreak,
+}
+
+internal fun composerEnterKeyAction(
+    platformTarget: PlatformTarget,
+    eventType: KeyEventType,
+    key: Key,
+    ctrlPressed: Boolean,
+): ComposerEnterKeyAction {
+    if (platformTarget != PlatformTarget.Desktop || eventType != KeyEventType.KeyDown) {
+        return ComposerEnterKeyAction.Ignore
+    }
+    if (key != Key.Enter && key != Key.NumPadEnter) return ComposerEnterKeyAction.Ignore
+    return if (ctrlPressed) {
+        ComposerEnterKeyAction.InsertLineBreak
+    } else {
+        ComposerEnterKeyAction.Submit
+    }
+}
+
+internal fun TextFieldState.insertComposerLineBreak() {
+    edit {
+        val insertionStart = selection.min
+        replace(insertionStart, selection.max, "\n")
+        selection = TextRange(insertionStart + 1)
     }
 }
 

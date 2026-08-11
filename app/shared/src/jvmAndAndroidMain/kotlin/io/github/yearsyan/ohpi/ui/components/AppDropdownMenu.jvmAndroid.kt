@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -138,6 +139,7 @@ private val AppMenuIcon.imageVector: ImageVector
             AppMenuIcon.Folder -> Icons.Filled.Folder
             AppMenuIcon.Refresh -> Icons.Filled.Refresh
             AppMenuIcon.Edit -> Icons.Filled.Edit
+            AppMenuIcon.Archive -> Icons.Filled.Archive
             AppMenuIcon.Info -> Icons.Filled.Info
             AppMenuIcon.Stop -> Icons.Filled.PowerSettingsNew
             AppMenuIcon.Delete -> Icons.Filled.Delete

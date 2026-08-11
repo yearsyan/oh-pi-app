@@ -27,6 +27,7 @@ import io.github.yearsyan.ohpi.chat.TimelineItem
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.ui.components.AGENT_PROCESS_BLOCK_TEST_TAG
 import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
+import io.github.yearsyan.ohpi.ui.components.scrollToBottom
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -559,7 +560,8 @@ class MessageListEntryTest {
     }
 
     @Test
-    fun expandingProcessWithLaterContentKeepsItsHeaderAnchored() = runComposeUiTest {
+    fun expandingProcessWithLaterContentKeepsItsBottomAnchored() = runComposeUiTest {
+        mainClock.autoAdvance = true
         val controller = testController(CoroutineScope(Dispatchers.Default))
         fillConversation(controller, "a")
         val detailCount = 20
@@ -575,16 +577,62 @@ class MessageListEntryTest {
             it.blocks.add(AssistantBlock(BlockKind.Text, text = "content after process"))
         }
         controller.items.add(assistant)
+        lateinit var listState: LazyListState
+        var attachmentThresholdPx = 0
         lateinit var processSummary: String
         setContent {
+            listState = rememberLazyListState()
+            attachmentThresholdPx = with(LocalDensity.current) { 16.dp.roundToPx() }
             processSummary = S.processThoughtTimes(detailCount)
-            MessageList(controller = controller, bottomPadding = 0.dp, scrollToBottomTick = 0)
+            MessageList(
+                controller = controller,
+                bottomPadding = 0.dp,
+                scrollToBottomTick = 0,
+                listStateOverride = listState,
+            )
         }
         waitForIdle()
-
-        onNodeWithText(processSummary).performClick()
+        runBlocking {
+            listState.scrollToBottom(listState.layoutInfo.totalItemsCount - 1)
+        }
         waitForIdle()
+        runOnIdle {
+            assertTrue(listState.isWithinBottomThreshold(attachmentThresholdPx))
+        }
 
-        onNodeWithText(processSummary).assertIsDisplayed()
+        val processBlock = onNodeWithTag(AGENT_PROCESS_BLOCK_TEST_TAG)
+        val collapsedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        mainClock.autoAdvance = false
+        onNodeWithText(processSummary).performClick()
+        var sawGrowth = false
+        repeat(12) {
+            mainClock.advanceTimeByFrame()
+            val frameBounds = processBlock.fetchSemanticsNode().boundsInRoot
+            sawGrowth = sawGrowth || frameBounds.height > collapsedBounds.height
+            assertTrue(
+                abs(frameBounds.bottom - collapsedBounds.bottom) <= 1f,
+                "every expansion frame must keep a process in the tail run anchored: " +
+                    "collapsed=$collapsedBounds frame=$frameBounds",
+            )
+        }
+
+        assertTrue(
+            sawGrowth,
+            "the process with later content must begin expanding",
+        )
+        val expandingBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            expandingBounds.top < collapsedBounds.top,
+            "a bottom-anchored process with later content must grow upward",
+        )
+
+        mainClock.autoAdvance = true
+        waitForIdle()
+        val expandedBounds = processBlock.fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            abs(expandedBounds.bottom - collapsedBounds.bottom) <= 1f,
+            "the completed expansion must keep a process in the tail run anchored: " +
+                "collapsed=$collapsedBounds expanded=$expandedBounds",
+        )
     }
 }

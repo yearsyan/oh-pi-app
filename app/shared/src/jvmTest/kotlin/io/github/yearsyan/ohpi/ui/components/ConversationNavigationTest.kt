@@ -78,6 +78,19 @@ class ConversationNavigationTest {
     }
 
     @Test
+    fun quickJumpMarkersKeepTheirLeftEdgeWhileGrowing() {
+        val markerStartX =
+            conversationQuickJumpMarkerStartX(
+                railWidth = 40f,
+                restingMarkerWidth = 9f,
+            )
+
+        assertEquals(15.5f, markerStartX)
+        assertEquals(24.5f, markerStartX + 9f)
+        assertEquals(53.5f, markerStartX + 38f)
+    }
+
+    @Test
     fun quickJumpPreviewContainsThePromptAndVisibleResponseForThatTurn() {
         val assistant = TimelineItem.AssistantItem(key = 2, streaming = false).also {
             it.blocks += AssistantBlock(BlockKind.Thinking, text = "hidden reasoning")
@@ -99,6 +112,24 @@ class ConversationNavigationTest {
             ),
             conversationQuickJumpPreview(groups, 0),
         )
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun singleQuickJumpTargetDoesNotShowTheRail() = runComposeUiTest {
+        setContent {
+            PiTheme {
+                ConversationQuickJumpRail(
+                    targets = listOf(0),
+                    currentItemIndex = 0,
+                    totalItemsCount = 1,
+                    onJump = {},
+                    modifier = Modifier.size(width = 48.dp, height = 200.dp),
+                )
+            }
+        }
+
+        onNodeWithTag(CONVERSATION_QUICK_JUMP_RAIL_TEST_TAG).assertDoesNotExist()
     }
 
     @OptIn(ExperimentalTestApi::class)

@@ -165,6 +165,12 @@ internal fun conversationQuickJumpMarkerWidthDp(
     return QuickJumpRestingWidthDp + (expandedWidth - QuickJumpRestingWidthDp) * progress
 }
 
+/** Keeps the resting marker centered while every animated width shares its left edge. */
+internal fun conversationQuickJumpMarkerStartX(
+    railWidth: Float,
+    restingMarkerWidth: Float,
+): Float = ((railWidth - restingMarkerWidth) / 2f).coerceAtLeast(0f)
+
 /** Prompt and visible assistant response belonging to one quick-jump turn. */
 internal fun conversationQuickJumpPreview(
     groups: List<TimelineRenderGroup>,
@@ -228,7 +234,7 @@ internal fun ConversationQuickJumpRail(
     onJump: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (targets.isEmpty() || totalItemsCount < 1) return
+    if (targets.size < 2 || totalItemsCount < 1) return
 
     val activeTarget = targets.lastOrNull { it <= currentItemIndex } ?: targets.first()
     val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.26f)
@@ -323,6 +329,11 @@ internal fun ConversationQuickJumpRail(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val markerHeight = 2.dp.toPx()
+            val markerStartX =
+                conversationQuickJumpMarkerStartX(
+                    railWidth = size.width,
+                    restingMarkerWidth = QuickJumpRestingWidthDp.dp.toPx(),
+                )
             val clusterHeight = (visibleTargets.size - 1) * markerSpacingPx
             val clusterTop = (size.height - clusterHeight) / 2f
 
@@ -338,7 +349,7 @@ internal fun ConversationQuickJumpRail(
                 val y = markerCenterY - markerHeight / 2f
                 drawRoundRect(
                     color = if (active) activeColor else inactiveColor,
-                    topLeft = Offset((size.width - markerWidth) / 2f, y),
+                    topLeft = Offset(markerStartX, y),
                     size = Size(markerWidth, markerHeight),
                     cornerRadius = CornerRadius(markerHeight / 2f),
                 )

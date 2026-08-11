@@ -149,6 +149,8 @@ class AppViewModel(
     var language by mutableStateOf(AppLanguage.System); private set
     var sidebarCollapsed by mutableStateOf(false); private set
     var workspaces = mutableStateListOf<WorkspaceSummary>(); private set
+    private val archivedWorkspaceIds = mutableStateListOf<String>()
+    private val deletedWorkspaceIds = mutableStateListOf<String>()
     var sessions = mutableStateListOf<SavedSession>(); private set
     var providers = mutableStateListOf<GatewayProvider>(); private set
 
@@ -158,6 +160,7 @@ class AppViewModel(
     var sessionsLoading by mutableStateOf(false); private set
     /** True only while a load triggered by the user's pull-to-refresh gesture is in flight. */
     var sessionsRefreshing by mutableStateOf(false); private set
+    var workspaceDeletingId by mutableStateOf<String?>(null); private set
     var providersLoading by mutableStateOf(false); private set
     var providerLogoutId by mutableStateOf<String?>(null); private set
     var providerAuthFlow by mutableStateOf<ProviderAuthFlowState?>(null); private set
@@ -191,6 +194,7 @@ class AppViewModel(
         themeMode = store.themeMode
         language = store.language
         sidebarCollapsed = store.sidebarCollapsed
+        loadWorkspaceVisibility()
         loadSessionsForActive()
         syncPortForwards()
     }
@@ -201,6 +205,16 @@ class AppViewModel(
 
     val activeServer: ServerProfile? get() = servers.firstOrNull { it.id == activeServerId }
     val hasServers: Boolean get() = servers.isNotEmpty()
+    val homeWorkspaces: List<WorkspaceSummary>
+        get() {
+            val hiddenIds = archivedWorkspaceIds.toSet() + deletedWorkspaceIds
+            return workspaces.filterNot { it.id in hiddenIds }
+        }
+    val archivedWorkspaces: List<WorkspaceSummary>
+        get() {
+            val archivedIds = archivedWorkspaceIds.toSet()
+            return workspaces.filter { it.id in archivedIds }
+        }
 
     /** Selects a chat, preparing new chats locally and attaching saved sessions. */
     fun openChat(
@@ -343,10 +357,12 @@ class AppViewModel(
         servers.removeAll { it.id == id }
         if (!persistServers(rollback)) return
         store.clearLegacySessions(id)
+        store.clearWorkspaceVisibility(id)
         if (activeServerId == id) {
             resetActiveConnections()
             activeServerId = servers.firstOrNull()?.id ?: ""
             store.activeServerId = activeServerId
+            loadWorkspaceVisibility()
             loadSessionsForActive()
             syncPortForwards()
             activeChatId = null
@@ -359,6 +375,7 @@ class AppViewModel(
         activeServerId = id
         store.activeServerId = id
         activeChatId = null
+        loadWorkspaceVisibility()
         loadSessionsForActive()
         syncPortForwards()
     }
@@ -482,6 +499,63 @@ class AppViewModel(
     fun updateSidebarCollapsed(collapsed: Boolean) {
         sidebarCollapsed = collapsed
         store.sidebarCollapsed = collapsed
+    }
+
+    // ---- local workspace visibility ----
+
+    /** Archives a workspace on this device and returns whether its active chat was closed. */
+    fun archiveWorkspace(workspaceId: String): Boolean {
+        if (workspaces.none { it.id == workspaceId }) return false
+        val activeWorkspaceId = activeChatId?.let { chatId ->
+            sessions.firstOrNull { it.id == chatId }?.workspaceId
+                ?: controllers[chatId]?.workspaceId
+        }
+        deletedWorkspaceIds.removeAll { it == workspaceId }
+        if (workspaceId !in archivedWorkspaceIds) archivedWorkspaceIds.add(workspaceId)
+        persistWorkspaceVisibility()
+        val closedActiveChat = activeWorkspaceId == workspaceId
+        if (closedActiveChat) activeChatId = null
+        toast(stringsProvider().workspaceArchived, Toast.Kind.Success)
+        return closedActiveChat
+    }
+
+    fun restoreWorkspace(workspaceId: String) {
+        if (!unhideWorkspace(workspaceId)) return
+        toast(stringsProvider().workspaceRestored, Toast.Kind.Success)
+    }
+
+    private fun unhideWorkspace(workspaceId: String): Boolean {
+        val restoredArchive = archivedWorkspaceIds.removeAll { it == workspaceId }
+        val restoredDeletion = deletedWorkspaceIds.removeAll { it == workspaceId }
+        if (!restoredArchive && !restoredDeletion) return false
+        persistWorkspaceVisibility()
+        return true
+    }
+
+    private fun loadWorkspaceVisibility() {
+        archivedWorkspaceIds.clear()
+        deletedWorkspaceIds.clear()
+        val serverId = activeServerId.takeIf { it.isNotBlank() } ?: return
+        archivedWorkspaceIds.addAll(store.archivedWorkspaceIds(serverId))
+        deletedWorkspaceIds.addAll(store.deletedWorkspaceIds(serverId))
+    }
+
+    private fun persistWorkspaceVisibility() {
+        val serverId = activeServerId.takeIf { it.isNotBlank() } ?: return
+        store.saveArchivedWorkspaceIds(serverId, archivedWorkspaceIds.toSet())
+        store.saveDeletedWorkspaceIds(serverId, deletedWorkspaceIds.toSet())
+    }
+
+    /** Deleted empty workspaces return automatically if another client creates a new session. */
+    private fun revealDeletedWorkspacesWithActivity(loaded: List<WorkspaceSummary>) {
+        val revivedIds =
+            loaded.asSequence()
+                .filter { it.sessionCount > 0 && it.id in deletedWorkspaceIds }
+                .map(WorkspaceSummary::id)
+                .toSet()
+        if (revivedIds.isEmpty()) return
+        deletedWorkspaceIds.removeAll { it in revivedIds }
+        persistWorkspaceVisibility()
     }
 
     // ---- built-in providers ----
@@ -813,6 +887,7 @@ class AppViewModel(
                 }
 
                 if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
+                revealDeletedWorkspacesWithActivity(refreshed)
                 workspaces.clear()
                 workspaces.addAll(
                     refreshed.map { workspace ->
@@ -910,6 +985,8 @@ class AppViewModel(
         val gateway = transportFor(server).resolveGateway()
         val created = createGatewayWorkspace(gateway, server.token, directory)
         if (activeServerId == server.id) {
+            // Explicitly choosing an archived/deleted directory makes it visible again.
+            unhideWorkspace(created.id)
             val index = workspaces.indexOfFirst { it.id == created.id }
             if (index >= 0) {
                 val current = workspaces[index]
@@ -963,6 +1040,118 @@ class AppViewModel(
         }
     }
 
+    /**
+     * Removes every remote chat in an archived workspace, then suppresses the now-empty
+     * workspace locally because current gateways do not expose workspace-metadata deletion.
+     */
+    fun deleteWorkspace(workspaceId: String) {
+        if (workspaceDeletingId != null) return
+        val workspace = workspaces.firstOrNull { it.id == workspaceId } ?: return
+        val server = activeServer ?: return
+        workspaceDeletingId = workspaceId
+        viewModelScope.launch {
+            val deletedSessions = mutableListOf<SavedSession>()
+            try {
+                val gateway = transportFor(server).resolveGateway()
+                val remoteSessions =
+                    loadAllWorkspaceSessions(workspace) { target, cursor, limit ->
+                        listGatewayWorkspaceSessions(
+                            gateway = gateway,
+                            token = server.token,
+                            workspace = target,
+                            cursor = cursor,
+                            limit = limit,
+                        )
+                    }
+                remoteSessions.forEach { session ->
+                    deleteGatewaySession(gateway, server.token, workspaceId, session.id)
+                    deletedSessions += session
+                }
+                val remaining =
+                    loadAllWorkspaceSessions(workspace) { target, cursor, limit ->
+                        listGatewayWorkspaceSessions(
+                            gateway = gateway,
+                            token = server.token,
+                            workspace = target,
+                            cursor = cursor,
+                            limit = limit,
+                        )
+                    }
+                if (remaining.isNotEmpty()) {
+                    error("workspace received new sessions while it was being deleted")
+                }
+
+                discardDeletedSessionState(server.id, deletedSessions)
+                markWorkspaceDeleted(server.id, workspaceId)
+                if (activeServerId == server.id) {
+                    val workspaceIndex = workspaces.indexOfFirst { it.id == workspaceId }
+                    if (workspaceIndex >= 0) {
+                        workspaces[workspaceIndex] =
+                            workspaces[workspaceIndex].copy(
+                                sessionCount = 0,
+                                sessions = emptyList(),
+                                nextCursor = "",
+                                sessionsLoading = false,
+                            )
+                    }
+                    workspaceDraftRoutes.remove(workspaceId)?.let { routeId ->
+                        controllers.remove(routeId)?.disconnect()
+                        if (activeChatId == routeId) activeChatId = null
+                    }
+                    composerDraftCache.remove(ComposerDraftKey.Workspace(server.id, workspaceId))
+                    syncSessionsFromWorkspaces()
+                    toast(stringsProvider().workspaceDeleted, Toast.Kind.Success)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                discardDeletedSessionState(server.id, deletedSessions)
+                if (activeServerId == server.id) {
+                    loadSessionsForActive(clearExisting = false)
+                    toast(
+                        stringsProvider().workspaceDeleteFailed(
+                            failure.message ?: stringsProvider().unknownError,
+                        ),
+                        Toast.Kind.Error,
+                    )
+                }
+            } finally {
+                if (workspaceDeletingId == workspaceId) workspaceDeletingId = null
+            }
+        }
+    }
+
+    private fun markWorkspaceDeleted(serverId: String, workspaceId: String) {
+        val archivedIds = store.archivedWorkspaceIds(serverId) - workspaceId
+        val deletedIds = store.deletedWorkspaceIds(serverId) + workspaceId
+        store.saveArchivedWorkspaceIds(serverId, archivedIds)
+        store.saveDeletedWorkspaceIds(serverId, deletedIds)
+        if (activeServerId != serverId) return
+        archivedWorkspaceIds.removeAll { it == workspaceId }
+        if (workspaceId !in deletedWorkspaceIds) deletedWorkspaceIds.add(workspaceId)
+    }
+
+    private suspend fun discardDeletedSessionState(
+        serverId: String,
+        deletedSessions: List<SavedSession>,
+    ) {
+        if (deletedSessions.isEmpty()) return
+        val sessionIds = deletedSessions.mapTo(linkedSetOf(), SavedSession::id)
+        if (activeServerId == serverId) {
+            sessionIds.forEach { sessionId ->
+                controllers.remove(sessionId)?.disconnect()
+                composerDraftCache.remove(ComposerDraftKey.Session(serverId, sessionId))
+                removeWorkspaceSession(sessionId)
+            }
+            if (activeChatId in sessionIds) activeChatId = null
+        }
+        withContext(Dispatchers.Default) {
+            sessionIds.forEach { sessionId ->
+                runCatching { clearEntryCache(serverId, sessionId) }
+            }
+        }
+    }
+
     private fun syncSessionsFromWorkspaces() {
         sessions.clear()
         sessions.addAll(workspaces.flatMap { it.sessions }.distinctBy { it.id })
@@ -1003,6 +1192,9 @@ class AppViewModel(
     }
 
     private fun upsertWorkspaceSession(session: SavedSession) {
+        if (deletedWorkspaceIds.removeAll { it == session.workspaceId }) {
+            persistWorkspaceVisibility()
+        }
         var workspaceIndex = workspaces.indexOfFirst { it.id == session.workspaceId }
         if (workspaceIndex < 0 && session.workspaceId.isNotBlank()) {
             workspaces.add(
@@ -1294,9 +1486,13 @@ class AppViewModel(
 
     /** Server-owned workspace selected for the previous new chat. */
     val lastWorkspaceId: String
-        get() = activeServerId.takeIf { it.isNotBlank() }
-            ?.let { store.lastWorkspaceId(it) }
-            .orEmpty()
+        get() {
+            val saved = activeServerId.takeIf { it.isNotBlank() }
+                ?.let { store.lastWorkspaceId(it) }
+                .orEmpty()
+            return saved.takeIf { id -> homeWorkspaces.any { it.id == id } }
+                ?: homeWorkspaces.firstOrNull()?.id.orEmpty()
+        }
 
     /** Lists subdirectories of [path] on the active gateway for the workspace browser. */
     suspend fun listDirs(path: String): FsListResponse {

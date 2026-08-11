@@ -67,6 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -96,6 +97,7 @@ fun SessionListPane(
     onStopSessionProcess: (SavedSession) -> Unit,
     onLoadMoreSessions: (WorkspaceSummary) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
+    onArchiveWorkspace: (WorkspaceSummary) -> Unit,
     sessionProcessStopSupported: Boolean,
     hostOs: GatewayHostOs,
     onBrowseFiles: () -> Unit,
@@ -105,7 +107,8 @@ fun SessionListPane(
 ) {
     var deleteCandidate by remember { mutableStateOf<SavedSession?>(null) }
     var stopCandidate by remember { mutableStateOf<SavedSession?>(null) }
-    var collapsedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var manuallyCollapsedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var manuallyExpandedWorkspaces by rememberSaveable { mutableStateOf(setOf<String>()) }
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         // header
         Row(
@@ -213,17 +216,26 @@ fun SessionListPane(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     workspaces.forEach { workspace ->
-                        val collapsed = workspace.id in collapsedWorkspaces
+                        val collapsed = when (workspace.id) {
+                            in manuallyCollapsedWorkspaces -> true
+                            in manuallyExpandedWorkspaces -> false
+                            else -> workspaceCollapsedByDefault(workspace, nowMillis())
+                        }
                         item(key = "ws-${workspace.id}") {
                             WorkspaceHeader(
                                 workspace = workspace,
                                 collapsed = collapsed,
                                 onToggle = {
-                                    collapsedWorkspaces =
-                                        if (collapsed) collapsedWorkspaces - workspace.id
-                                        else collapsedWorkspaces + workspace.id
+                                    if (collapsed) {
+                                        manuallyCollapsedWorkspaces -= workspace.id
+                                        manuallyExpandedWorkspaces += workspace.id
+                                    } else {
+                                        manuallyExpandedWorkspaces -= workspace.id
+                                        manuallyCollapsedWorkspaces += workspace.id
+                                    }
                                 },
                                 onEdit = { onEditWorkspace(workspace) },
+                                onArchive = { onArchiveWorkspace(workspace) },
                             )
                         }
                         if (!collapsed) {
@@ -276,60 +288,135 @@ fun SessionListPane(
     }
 }
 
+private const val RECENT_WORKSPACE_ACTIVITY_WINDOW_MS = 3L * 24 * 60 * 60 * 1_000
+
+internal fun workspaceCollapsedByDefault(
+    workspace: WorkspaceSummary,
+    now: Long,
+): Boolean {
+    val cutoff = now - RECENT_WORKSPACE_ACTIVITY_WINDOW_MS
+    return workspace.sessions.none { session -> session.running || session.lastActive >= cutoff }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspaceHeader(
     workspace: WorkspaceSummary,
     collapsed: Boolean,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
+    onArchive: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onToggle,
-                onLongClick = {
-                    longPressHaptic()
-                    onEdit()
-                },
-            )
-            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TechnologyIcon(workspace.technology)
-        Spacer(Modifier.width(6.dp))
-        Text(
-            workspace.displayName,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+    var actionSheetOpen by remember { mutableStateOf(false) }
+    val desktop = getPlatform().target == PlatformTarget.Desktop
+    val menuItems =
+        listOf(
+            AppMenuItem(id = "edit", title = S.editWorkspace, icon = AppMenuIcon.Edit),
+            AppMenuItem(id = "archive", title = S.archiveWorkspace, icon = AppMenuIcon.Archive),
         )
-        if (workspace.directory.isNotBlank()) {
-            Spacer(Modifier.width(8.dp))
+    val onMenuItemClick: (String) -> Unit = { action ->
+        when (action) {
+            "edit" -> onEdit()
+            "archive" -> onArchive()
+        }
+    }
+    AppContextMenu(
+        items = menuItems,
+        onItemClick = onMenuItemClick,
+        enabled = desktop,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onToggle,
+                    onLongClick = {
+                        longPressHaptic()
+                        actionSheetOpen = true
+                    },
+                )
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TechnologyIcon(workspace.technology)
+            Spacer(Modifier.width(6.dp))
             Text(
-                workspace.directory,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                workspace.displayName,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
-        } else {
-            Spacer(Modifier.weight(1f))
+            if (workspace.directory.isNotBlank()) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    workspace.directory,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            Text(
+                "${workspace.sessionCount}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Icon(
+                if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (collapsed) S.expandWorkspace else S.collapseWorkspace,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        Text(
-            "${workspace.sessionCount}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Icon(
-            if (collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
-            contentDescription = if (collapsed) S.expandWorkspace else S.collapseWorkspace,
-            modifier = Modifier.size(16.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    }
+    if (actionSheetOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { actionSheetOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = null,
+            shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                Text(
+                    workspace.displayName,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                )
+                SheetAction(
+                    icon = { tint -> Icon(Icons.Filled.Edit, null, Modifier.size(19.dp), tint = tint) },
+                    label = S.editWorkspace,
+                ) {
+                    actionSheetOpen = false
+                    onEdit()
+                }
+                SheetAction(
+                    icon = { tint -> Icon(Icons.Filled.Archive, null, Modifier.size(19.dp), tint = tint) },
+                    label = S.archiveWorkspace,
+                ) {
+                    actionSheetOpen = false
+                    onArchive()
+                }
+                Spacer(Modifier.height(6.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { actionSheetOpen = false }
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(S.cancel, style = MaterialTheme.typography.titleSmall)
+                }
+            }
+        }
     }
 }
 

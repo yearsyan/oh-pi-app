@@ -163,6 +163,8 @@ interface Strings {
     val workspaceHint: String
     val addWorkspace: String
     val defaultWorkspace: String
+    val editWorkspace: String
+    val archiveWorkspace: String
     val expandWorkspace: String
     val collapseWorkspace: String
     val expandSidebar: String
@@ -181,6 +183,10 @@ interface Strings {
     val workspaceLoadFailed: (String) -> String
     val workspaceMoreSessionsLoadFailed: (String) -> String
     val workspaceUpdateFailed: (String) -> String
+    val workspaceArchived: String
+    val workspaceRestored: String
+    val workspaceDeleted: String
+    val workspaceDeleteFailed: (String) -> String
 
     // file browser
     val browseFiles: String
@@ -332,6 +338,12 @@ interface Strings {
     // settings
     val settingsTitle: String
     val serversSection: String
+    val archivedWorkspacesSection: String
+    val archivedWorkspacesDescription: (Int) -> String
+    val archivedWorkspacesEmpty: String
+    val restoreWorkspace: String
+    val deleteWorkspaceTitle: String
+    val deleteWorkspaceBody: (String) -> String
     val addServer: String
     val editServer: String
     val deleteServerTitle: String
@@ -644,6 +656,8 @@ object EnStrings : Strings {
     override val workspaceHint = "Absolute path"
     override val addWorkspace = "Add workspace"
     override val defaultWorkspace = "Default workspace"
+    override val editWorkspace = "Edit workspace"
+    override val archiveWorkspace = "Archive workspace"
     override val expandWorkspace = "Expand workspace"
     override val collapseWorkspace = "Collapse workspace"
     override val expandSidebar = "Expand session list"
@@ -665,6 +679,10 @@ object EnStrings : Strings {
         "Could not load more chats: $error"
     }
     override val workspaceUpdateFailed = { error: String -> "Could not update the workspace: $error" }
+    override val workspaceArchived = "Workspace archived"
+    override val workspaceRestored = "Workspace restored"
+    override val workspaceDeleted = "Workspace and its remote chats deleted"
+    override val workspaceDeleteFailed = { error: String -> "Could not delete the workspace: $error" }
 
     override val browseFiles = "Browse files"
     override val filesRoot = "Root"
@@ -816,6 +834,16 @@ object EnStrings : Strings {
 
     override val settingsTitle = "Settings"
     override val serversSection = "Servers"
+    override val archivedWorkspacesSection = "Archived workspaces"
+    override val archivedWorkspacesDescription = { count: Int ->
+        "$count archived ${if (count == 1) "workspace" else "workspaces"}"
+    }
+    override val archivedWorkspacesEmpty = "No archived workspaces on this server."
+    override val restoreWorkspace = "Restore"
+    override val deleteWorkspaceTitle = "Delete workspace?"
+    override val deleteWorkspaceBody = { name: String ->
+        "This removes $name from this device and permanently deletes all of its chats and history from the remote server. Files in the workspace directory are not deleted. This cannot be undone."
+    }
     override val addServer = "Add server"
     override val editServer = "Edit server"
     override val deleteServerTitle = "Delete server?"
@@ -1128,6 +1156,8 @@ object ZhStrings : Strings {
     override val workspaceHint = "绝对路径"
     override val addWorkspace = "添加工作区"
     override val defaultWorkspace = "默认工作区"
+    override val editWorkspace = "编辑工作区"
+    override val archiveWorkspace = "归档工作区"
     override val expandWorkspace = "展开工作区"
     override val collapseWorkspace = "收起工作区"
     override val expandSidebar = "展开会话列表"
@@ -1146,6 +1176,10 @@ object ZhStrings : Strings {
     override val workspaceLoadFailed = { error: String -> "无法加载工作区：$error" }
     override val workspaceMoreSessionsLoadFailed = { error: String -> "无法加载更多会话：$error" }
     override val workspaceUpdateFailed = { error: String -> "无法更新工作区：$error" }
+    override val workspaceArchived = "工作区已归档"
+    override val workspaceRestored = "工作区已还原"
+    override val workspaceDeleted = "工作区及其远端会话已删除"
+    override val workspaceDeleteFailed = { error: String -> "无法删除工作区：$error" }
 
     override val browseFiles = "浏览文件"
     override val filesRoot = "根目录"
@@ -1295,6 +1329,14 @@ object ZhStrings : Strings {
 
     override val settingsTitle = "设置"
     override val serversSection = "服务器"
+    override val archivedWorkspacesSection = "已归档工作区"
+    override val archivedWorkspacesDescription = { count: Int -> "$count 个已归档工作区" }
+    override val archivedWorkspacesEmpty = "当前服务器没有已归档工作区。"
+    override val restoreWorkspace = "还原"
+    override val deleteWorkspaceTitle = "删除工作区？"
+    override val deleteWorkspaceBody = { name: String ->
+        "这会从本设备移除 $name，并永久删除远端服务器上该工作区的全部会话及历史记录；工作区目录中的文件不会被删除。此操作无法撤销。"
+    }
     override val addServer = "添加服务器"
     override val editServer = "编辑服务器"
     override val deleteServerTitle = "删除服务器？"
