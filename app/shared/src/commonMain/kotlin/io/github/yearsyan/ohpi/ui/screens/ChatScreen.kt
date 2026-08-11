@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -121,6 +122,11 @@ private enum class ChatBodyState {
     Messages,
 }
 
+private class MessageListGestureState {
+    var keyboardDismissRequested = false
+    var tailSignatureAtDown: TailFollowSignature? = null
+}
+
 private val BottomAttachmentThreshold = 16.dp
 private val StreamingTailFollowThreshold = 96.dp
 
@@ -145,6 +151,7 @@ fun ChatScreen(
     var stopProcessOpen by remember { mutableStateOf(false) }
     var composerHeightPx by remember { mutableIntStateOf(0) }
     var scrollToBottomTick by remember { mutableIntStateOf(0) }
+    var keyboardDismissTick by remember(controller) { mutableIntStateOf(0) }
     val composerBottomPadding = with(LocalDensity.current) { composerHeightPx.toDp() }
     val composerBackdropState =
         if (platformSupportsComposerBackdropBlur) rememberHazeState() else null
@@ -224,6 +231,7 @@ fun ChatScreen(
                             scrollToBottomTick = scrollToBottomTick,
                             modifier = Modifier.fillMaxSize(),
                             onLoadToolImage = onLoadToolImage,
+                            onKeyboardDismissRequested = { keyboardDismissTick++ },
                         )
                 }
             }
@@ -241,6 +249,7 @@ fun ChatScreen(
                 Composer(
                     controller = controller,
                     backdropState = activeComposerBackdropState,
+                    keyboardDismissTick = keyboardDismissTick,
                     onPromptSent = { scrollToBottomTick++ },
                     onSubmitInput = { text, images ->
                         val model = controller.currentModel
@@ -383,6 +392,7 @@ internal fun MessageList(
     listStateOverride: LazyListState? = null,
     modifier: Modifier = Modifier,
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
+    onKeyboardDismissRequested: () -> Unit = {},
 ) {
     // Each conversation gets its own list state: entering or switching to a
     // session starts at the tail instead of inheriting the previous
@@ -390,6 +400,7 @@ internal fun MessageList(
     val rememberedListState = key(controller) { rememberLazyListState() }
     val listState = listStateOverride ?: rememberedListState
     val focusManager = LocalFocusManager.current
+    val currentOnKeyboardDismissRequested by rememberUpdatedState(onKeyboardDismissRequested)
     val density = LocalDensity.current
     val bottomAttachmentThresholdPx =
         with(density) { BottomAttachmentThreshold.roundToPx() }
@@ -405,6 +416,7 @@ internal fun MessageList(
     // so the details grow upward. Starting farther away keeps the normal
     // top-edge anchor instead.
     var tailProcessBottomAnchored by remember(controller) { mutableStateOf(false) }
+    val gestureState = remember(controller) { MessageListGestureState() }
     val scope = rememberCoroutineScope()
     LaunchedEffect(listState, bottomAttachmentThresholdPx) {
         snapshotFlow { listState.isWithinBottomThreshold(bottomAttachmentThresholdPx) }
@@ -421,6 +433,12 @@ internal fun MessageList(
                     source: NestedScrollSource,
                 ): Offset {
                     if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                        if (!gestureState.keyboardDismissRequested) {
+                            gestureState.keyboardDismissRequested = true
+                            // The iOS 26 Liquid Glass composer is hosted in a
+                            // child ComposeUIView with its own focus manager.
+                            currentOnKeyboardDismissRequested()
+                        }
                         focusManager.clearFocus()
                         userScrolledAway = true
                         tailProcessBottomAnchored = false
@@ -459,18 +477,21 @@ internal fun MessageList(
     // actively streaming, so auto-scrolls are paused during contact and the
     // list catches up once the finger lifts.
     var pointerInContact by remember(controller) { mutableStateOf(false) }
+    var pointerReleaseTick by remember(controller) { mutableIntStateOf(0) }
     // Streaming deltas arrive far more often than one scroll is worth doing:
     // the pacer spaces tail-follow scrolls to at most one per window while
     // still guaranteeing the trailing scroll that pins the final delta.
     val followPacer = remember(controller) { FollowScrollPacer() }
     val renderGroups = groupTimelineItems(controller.items)
+    val tailSignature = tailFollowSignature(renderGroups.lastOrNull())
+    val currentTailSignature by rememberUpdatedState(tailSignature)
     val quickJumpTargets = remember(renderGroups) { conversationQuickJumpTargets(renderGroups) }
 
     // Pre-parse settled markdown blocks into MarkdownParseCache so scrolling a
     // recycled LazyColumn item into view renders synchronously instead of
     // flashing the renderer's zero-height async loading box. Streaming groups
-    // are skipped while their text is still changing; MarkdownView caches them
-    // itself once their parse lands. Warming is debounced so a burst of
+    // are skipped while their text is still changing; only the exact settled
+    // text is admitted to the shared cache. Warming is debounced so a burst of
     // timeline updates (streaming deltas, live block growth) does not compete
     // with the renderer's own parse for background threads mid-gesture.
     LaunchedEffect(controller) {
@@ -643,12 +664,16 @@ internal fun MessageList(
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                             pointerInContact = true
+                            gestureState.keyboardDismissRequested = false
+                            gestureState.tailSignatureAtDown = currentTailSignature
                             try {
                                 do {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                 } while (event.changes.fastAny { it.pressed })
                             } finally {
                                 pointerInContact = false
+                                gestureState.keyboardDismissRequested = false
+                                pointerReleaseTick++
                             }
                         }
                     },
@@ -766,7 +791,6 @@ internal fun MessageList(
     // Position a newly entered conversation once. Subsequent streaming updates
     // follow only while the list remains near the bottom and no scroll is in
     // progress; a synchronous request on every delta would fight user input.
-    val tailSignature = tailFollowSignature(renderGroups.lastOrNull())
     LaunchedEffect(controller, tailSignature) {
         if (controller.items.isEmpty()) return@LaunchedEffect
         if (initialPositionPending) {
@@ -792,8 +816,12 @@ internal fun MessageList(
 
     // Catch up once the finger lifts: deltas that arrived during the press
     // were deliberately not followed, leaving the tail short of the bottom.
-    LaunchedEffect(pointerInContact) {
+    LaunchedEffect(pointerReleaseTick) {
+        val tailChangedDuringContact =
+            pointerReleaseTick > 0 && gestureState.tailSignatureAtDown != tailSignature
+        gestureState.tailSignatureAtDown = tailSignature
         if (
+            tailChangedDuringContact &&
             !pointerInContact &&
             !tailProcessBottomAnchored &&
             followingTail &&

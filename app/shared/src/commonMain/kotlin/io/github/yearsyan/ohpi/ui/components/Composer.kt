@@ -56,6 +56,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,6 +83,7 @@ import org.jetbrains.compose.resources.decodeToImageBitmap
 fun Composer(
     controller: ChatController,
     backdropState: HazeState? = null,
+    keyboardDismissTick: Int = 0,
     modifier: Modifier = Modifier,
     onPromptSent: () -> Unit = {},
     onSubmitInput: (String, List<PromptImage>) -> Unit = { text, images ->
@@ -186,6 +189,7 @@ fun Composer(
             backdropState = backdropState,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
+            ComposerKeyboardDismissEffect(keyboardDismissTick)
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -323,6 +327,19 @@ fun Composer(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Handles keyboard dismissal inside the composer's own Compose view on iOS. */
+@Composable
+private fun ComposerKeyboardDismissEffect(keyboardDismissTick: Int) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(keyboardDismissTick) {
+        if (keyboardDismissTick > 0) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
         }
     }
 }

@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.yearsyan.ohpi.chat.ChatController
+import io.github.yearsyan.ohpi.chat.ComposerDraftCache
+import io.github.yearsyan.ohpi.chat.ComposerDraftKey
 import io.github.yearsyan.ohpi.chat.Toast
 import io.github.yearsyan.ohpi.chat.clearEntryCache
 import io.github.yearsyan.ohpi.data.AppLanguage
@@ -164,6 +166,8 @@ class AppViewModel(
     val toasts = mutableStateListOf<Toast>()
 
     private val controllers = HashMap<String, ChatController>()
+    private val composerDraftCache = ComposerDraftCache()
+    private val workspaceDraftRoutes = HashMap<String, String>()
     private var gatewayTransport: GatewayTransport? = null
     private var gatewayTransportServerId = ""
     private var forwardManager: PortForwardManager? = null
@@ -442,6 +446,8 @@ class AppViewModel(
     private fun resetActiveConnections() {
         disconnectAll()
         controllers.clear()
+        composerDraftCache.clear()
+        workspaceDraftRoutes.clear()
         gatewayTransport?.close()
         gatewayTransport = null
         gatewayTransportServerId = ""
@@ -1153,6 +1159,10 @@ class AppViewModel(
 
     fun removeSession(id: String) {
         controllers[id]?.takeIf { it.isDraft }?.let { draft ->
+            composerDraftCache.remove(
+                ComposerDraftKey.Workspace(activeServerId, draft.workspaceId),
+            )
+            forgetWorkspaceDraftRoute(id)
             controllers.remove(id)
             draft.disconnect()
             if (activeChatId == id) activeChatId = null
@@ -1169,6 +1179,7 @@ class AppViewModel(
             try {
                 val gateway = transportFor(server).resolveGateway()
                 deleteGatewaySession(gateway, server.token, removed.workspaceId, id)
+                composerDraftCache.remove(ComposerDraftKey.Session(server.id, id))
                 withContext(Dispatchers.Default) { clearEntryCache(server.id, id) }
                 if (activeServerId == server.id) loadSessionsForActive(clearExisting = false)
             } catch (cancelled: CancellationException) {
@@ -1201,18 +1212,22 @@ class AppViewModel(
                 token = server.token,
                 onToast = ::toast,
                 onSessionReady = { sid, isNew, workspaceId, workspaceDirectory ->
+                    if (isNew && sid.isNotBlank()) {
+                        forgetWorkspaceDraftRoute(sessionId)
+                        if (sessionId != sid) {
+                            controllers.remove(sessionId)?.let { created ->
+                                controllers.put(sid, created)
+                                    ?.takeIf { it !== created }
+                                    ?.disconnect()
+                            }
+                        }
+                        if (activeChatId == sessionId) activeChatId = sid
+                    }
                     addOrTouchSession(
                         sid,
                         workspaceId = workspaceId,
                         workspaceDirectory = workspaceDirectory,
                     )
-                    if (activeChatId != sid && sessionId == activeChatId) {
-                        // gateway assigned a fresh id for a create action
-                        controllers.remove(sessionId)?.let { old ->
-                            controllers[sid] = old
-                        }
-                        activeChatId = sid
-                    }
                     loadSessionsForActive(clearExisting = false)
                 },
                 onSessionNameChanged = { sid, title ->
@@ -1241,16 +1256,27 @@ class AppViewModel(
                 },
                 resolveGateway = transport::resolveGateway,
                 cacheNamespace = server.id,
+                composerDraftCache = composerDraftCache,
             )
         }
     }
 
-    /** Creates a local-only draft and returns its temporary route ID. */
+    /** Creates or resumes this workspace's local-only draft and returns its route ID. */
     fun startNewChat(workspaceId: String): String {
         val workspace = workspaces.firstOrNull { it.id == workspaceId }
             ?: error("unknown workspace")
         activeServerId.takeIf { it.isNotBlank() }
             ?.let { store.saveLastWorkspaceId(it, workspace.id) }
+
+        workspaceDraftRoutes[workspace.id]?.let { routeId ->
+            val draft = controllers[routeId]
+            if (draft?.isDraft == true && draft.workspaceId == workspace.id) {
+                activeChatId = routeId
+                return routeId
+            }
+            workspaceDraftRoutes.remove(workspace.id)
+        }
+
         val tempId = "new-" + Random.nextLong().toString(16)
         openChat(
             tempId,
@@ -1258,7 +1284,12 @@ class AppViewModel(
             workspaceId = workspace.id,
             workspaceDirectory = workspace.directory,
         )
+        workspaceDraftRoutes[workspace.id] = tempId
         return tempId
+    }
+
+    private fun forgetWorkspaceDraftRoute(routeId: String) {
+        workspaceDraftRoutes.entries.removeAll { it.value == routeId }
     }
 
     /** Server-owned workspace selected for the previous new chat. */

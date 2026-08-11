@@ -183,6 +183,7 @@ class ChatController(
     private val loadCapabilities: suspend (workspaceId: String) -> GatewayCapabilities,
     private val resolveGateway: suspend () -> String = { gateway },
     private val cacheNamespace: String = gateway,
+    private val composerDraftCache: ComposerDraftCache = ComposerDraftCache(),
 ) {
     private data class PendingPrompt(
         val sourceId: String,
@@ -243,7 +244,7 @@ class ChatController(
     var dialog by mutableStateOf<UiDialogRequest?>(null); private set
     private val uiDialogs = UiDialogQueue()
 
-    /** Per-session composer state survives navigation and transient reconnects. */
+    /** Workspace/session-scoped composer state survives navigation and transient reconnects. */
     var composerText by mutableStateOf(""); private set
     var composerImages by mutableStateOf<List<PromptImage>>(emptyList()); private set
 
@@ -336,6 +337,8 @@ class ChatController(
     private var capabilitiesGeneration = 0L
     private var reconnectAttempt = 0
     private var reconnectEnabled = false
+    /** A live reducer failure must rebuild from persisted state, not its partially mutated UI. */
+    private var reconnectNeedsFullSync = false
     private var connectionGeneration = 0L
     /** True once the gateway answered get_available_models on this connection. */
     private var modelsSynced = false
@@ -367,6 +370,7 @@ class ChatController(
     private var pendingPrompt by mutableStateOf<PendingPrompt?>(null)
     private var pendingCompactId by mutableStateOf<String?>(null)
     private var composerSubmissionSourceId: String? = null
+    private var composerDraftKey: ComposerDraftKey? = null
     var lastConfirmedPromptSourceId by mutableStateOf<String?>(null); private set
 
     // ---------- connection ----------
@@ -383,7 +387,7 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
-        resetComposer()
+        bindComposerDraft(ComposerDraftKey.Workspace(cacheNamespace, workspaceId))
         models.clear()
         thinkingLevels.clear()
         slashCommands.clear()
@@ -483,7 +487,15 @@ class ChatController(
         pendingCreatePrompt = null
         pendingPrompt = null
         pendingCompactId = null
-        resetComposer()
+        bindComposerDraft(
+            when {
+                action == "attach" && !sessionId.isNullOrBlank() ->
+                    ComposerDraftKey.Session(cacheNamespace, sessionId)
+                action == "create" && workspaceId.isNotBlank() ->
+                    ComposerDraftKey.Workspace(cacheNamespace, workspaceId)
+                else -> null
+            },
+        )
         slashCommands.clear()
         sessionStats = null
         sessionStatsLoading = false
@@ -508,6 +520,7 @@ class ChatController(
         reconnectJob = null
         reconnectAttempt = 0
         reconnectEnabled = true
+        reconnectNeedsFullSync = false
         lastAction = action
         lastSessionId = sessionId
         lastWorkspaceId = workspaceId
@@ -521,6 +534,7 @@ class ChatController(
     }
 
     private fun startConnection(clearTimeline: Boolean) {
+        val resetTimeline = clearTimeline || reconnectNeedsFullSync
         val generation = ++connectionGeneration
         println("[PiChat] connect action=$lastAction sid=$lastSessionId workspace=$lastWorkspaceId")
         connectionSetupJob?.cancel()
@@ -531,7 +545,7 @@ class ChatController(
         syncProgress = null
         stagedItems = null
         resetUiDialogs()
-        if (clearTimeline) {
+        if (resetTimeline) {
             items.clear()
         }
         entryCache.abort()
@@ -546,7 +560,7 @@ class ChatController(
                 val key = entryCacheKey(cacheNamespace, lastSessionId.orEmpty())
                 val cached = withContext(Dispatchers.Default) {
                     runCatching {
-                        val entries = if (clearTimeline) {
+                        val entries = if (resetTimeline) {
                             entryCache.snapshot(key)
                         } else {
                             EntryCacheSnapshot(entryCache.cursor(key), ByteArray(0))
@@ -562,7 +576,7 @@ class ChatController(
                 activeEntryCacheKey = key
                 entryCursor = cached.entries.cursor
                 var replay = cached.replay?.takeIf { it.baseEntryId == entryCursor }
-                if (clearTimeline) {
+                if (resetTimeline) {
                     val decoded = withContext(Dispatchers.Default) { decodeEntryCache(cached.entries.entries) }
                     if (decoded == null || decoded.lastEntryId != cached.entries.cursor) {
                         withContext(Dispatchers.Default) { runCatching { entryCache.clear(key) } }
@@ -678,6 +692,7 @@ class ChatController(
         capabilitiesGeneration++
         capabilitiesLoading = false
         reconnectAttempt = 0
+        reconnectNeedsFullSync = false
         connectionGeneration++
         entryCache.abort()
         abortReplayBinary()
@@ -862,11 +877,17 @@ class ChatController(
     }
 
     fun updateComposerText(text: String) {
-        if (!isPromptPending) composerText = text
+        if (!isPromptPending) {
+            composerText = text
+            saveComposerDraft()
+        }
     }
 
     fun updateComposerImages(images: List<PromptImage>) {
-        if (!isPromptPending) composerImages = images.toList()
+        if (!isPromptPending) {
+            composerImages = images.toList()
+            saveComposerDraft()
+        }
     }
 
     /** Routes app-owned slash commands to RPC and all other input through pi's prompt handler. */
@@ -882,6 +903,7 @@ class ChatController(
             composerText = text
             composerImages = images.toList()
             composerSubmissionSourceId = sourceId
+            saveComposerDraft()
         }
         return sourceId
     }
@@ -1051,7 +1073,19 @@ class ChatController(
             dispatchMessage(msg)
         } catch (t: Throwable) {
             println("[PiChat] dispatch error: ${t.stackTraceToString().take(800)}")
-            if (attachFrame) failAttachSync(t)
+            when {
+                attachFrame -> failAttachSync(t)
+                msg.str("type") == "ohpi" && gatewayEvent == "live" -> {
+                    // The replay cursor has not advanced yet. Drop this socket
+                    // and rebuild the visible timeline from persisted state so
+                    // the same event can be applied again without a gap.
+                    reconnectNeedsFullSync = true
+                    client.disconnect()
+                    handleConnectionFailure(
+                        strings().sessionSyncFailed(t.message ?: strings().unknownError),
+                    )
+                }
+            }
         }
     }
 
@@ -1158,6 +1192,7 @@ class ChatController(
             "live" -> handleLiveEvent(msg)
             "ready" -> {
                 swapStagedTimeline()
+                reconnectNeedsFullSync = false
                 val created = msg.str("action") == "create"
                 conn = ConnState.Ready
                 syncUiDialog()
@@ -1167,6 +1202,9 @@ class ChatController(
                 sessionId = sid
                 workspaceId = msg.strOrEmpty("workspace_id")
                 workDir = msg.strOrEmpty("workspace_directory")
+                if (sid.isNotBlank()) {
+                    rekeyComposerDraft(ComposerDraftKey.Session(cacheNamespace, sid))
+                }
                 reconnectJob?.cancel()
                 reconnectJob = null
                 reconnectAttempt = 0
@@ -1358,6 +1396,10 @@ class ChatController(
     private fun handleLiveEvent(msg: JsonObject) {
         val seq = msg.long("seq") ?: return
         val payload = msg.obj("payload") ?: return
+        // Apply the event before acknowledging it in the local replay cache.
+        // If the reducer throws, onGatewayMessage reconnects from the previous
+        // cursor and the gateway replays this event.
+        dispatchMessage(payload, showTransientErrors = true)
         if (replayCacheReady && seq > replayCacheThroughSeq) {
             runCatching {
                 appendReplayEvent(seq, payload)
@@ -1369,7 +1411,6 @@ class ChatController(
                 }
             }.onFailure { disableReplayCache() }
         }
-        dispatchMessage(payload, showTransientErrors = true)
     }
 
     private fun initializeCreatedReplayCache(createdSessionId: String) {
@@ -1788,18 +1829,37 @@ class ChatController(
         composerText = ""
         composerImages = emptyList()
         composerSubmissionSourceId = null
+        saveComposerDraft()
     }
 
     private fun releaseComposerSubmission(sourceId: String) {
-        if (composerSubmissionSourceId == sourceId) composerSubmissionSourceId = null
+        if (composerSubmissionSourceId != sourceId) return
+        composerSubmissionSourceId = null
+        saveComposerDraft()
     }
 
-    private fun resetComposer() {
-        composerText = ""
-        composerImages = emptyList()
+    private fun bindComposerDraft(key: ComposerDraftKey?) {
+        composerDraftKey = key
+        val draft = key?.let(composerDraftCache::read) ?: ComposerDraft()
+        composerText = draft.text
+        composerImages = draft.images
         composerSubmissionSourceId = null
         steeringQueue.clear()
         followUpQueue.clear()
+    }
+
+    private fun rekeyComposerDraft(key: ComposerDraftKey) {
+        composerDraftCache.move(
+            from = composerDraftKey,
+            to = key,
+            draft = ComposerDraft(composerText, composerImages),
+        )
+        composerDraftKey = key
+    }
+
+    private fun saveComposerDraft() {
+        val key = composerDraftKey ?: return
+        composerDraftCache.write(key, ComposerDraft(composerText, composerImages))
     }
 
     // ---------- timeline: tools ----------

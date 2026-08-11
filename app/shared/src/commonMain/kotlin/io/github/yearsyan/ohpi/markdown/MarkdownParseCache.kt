@@ -38,12 +38,17 @@ object MarkdownParseCache {
     /** Returns the parsed state for [content], refreshing its recency. */
     fun peek(content: String): State.Success? {
         val state = entries.remove(content) ?: return null
+        // A retained MarkdownState can still expose the previous successful
+        // parse while its new input is being parsed. Never let such a stale
+        // result survive under the new content key.
+        if (state.content != content) return null
         entries[content] = state
         return state
     }
 
     /** Caches a finished parse result, e.g. one observed from an async render. */
     fun put(content: String, state: State.Success) {
+        if (state.content != content) return
         entries.remove(content)
         entries[content] = state
         while (entries.size > MAX_ENTRIES) {
@@ -58,7 +63,7 @@ object MarkdownParseCache {
      * so the cached state is interchangeable with a freshly parsed one.
      */
     suspend fun warm(content: String) {
-        if (content.isBlank() || entries.containsKey(content) || !inFlight.add(content)) return
+        if (content.isBlank() || peek(content) != null || !inFlight.add(content)) return
         try {
             val parsed = withContext(Dispatchers.Default) {
                 runCatching {

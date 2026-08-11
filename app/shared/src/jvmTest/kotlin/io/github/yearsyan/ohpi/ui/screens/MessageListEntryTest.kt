@@ -29,6 +29,7 @@ import io.github.yearsyan.ohpi.ui.components.AGENT_PROCESS_BLOCK_TEST_TAG
 import io.github.yearsyan.ohpi.ui.components.isWithinBottomThreshold
 import kotlin.math.abs
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -228,6 +229,30 @@ class MessageListEntryTest {
         waitForIdle()
 
         onNodeWithText("status-a-near-tail").assertDoesNotExist()
+    }
+
+    @Test
+    fun userDragRequestsKeyboardDismissOncePerGesture() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        fillConversation(controller, "a")
+        var dismissRequests = 0
+        setContent {
+            MessageList(
+                controller = controller,
+                bottomPadding = 0.dp,
+                scrollToBottomTick = 0,
+                onKeyboardDismissRequested = { dismissRequests++ },
+            )
+        }
+        waitForIdle()
+
+        onRoot().performTouchInput { swipeDown() }
+        waitForIdle()
+        runOnIdle { assertEquals(1, dismissRequests) }
+
+        onRoot().performTouchInput { swipeDown() }
+        waitForIdle()
+        runOnIdle { assertEquals(2, dismissRequests) }
     }
 
     @Test

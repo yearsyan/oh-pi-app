@@ -289,6 +289,7 @@ private fun AgentProcessBlock(
     sheetContent?.let { content ->
         ProcessDetailSheet(
             content = content,
+            cacheMarkdown = !isStreaming,
             onDismiss = { sheetContent = null },
             onLoadToolImage = onLoadToolImage,
         )
@@ -307,6 +308,7 @@ private sealed interface ProcessSheetContent {
 @Composable
 private fun ProcessDetailSheet(
     content: ProcessSheetContent,
+    cacheMarkdown: Boolean,
     onDismiss: () -> Unit,
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
@@ -328,7 +330,7 @@ private fun ProcessDetailSheet(
                 .padding(bottom = 32.dp),
         ) {
             when (content) {
-                is ProcessSheetContent.Thinking -> ThinkingDetail(content.block)
+                is ProcessSheetContent.Thinking -> ThinkingDetail(content.block, cacheMarkdown)
                 is ProcessSheetContent.Tool -> ToolDetail(content.tool, onLoadToolImage)
             }
         }
@@ -478,7 +480,7 @@ private fun ToolRow(
 
 /** Full thinking content shown in the bottom sheet; thinking is markdown, like visible text. */
 @Composable
-private fun ThinkingDetail(block: AssistantBlock) {
+private fun ThinkingDetail(block: AssistantBlock, cacheMarkdown: Boolean) {
     Text(
         S.thinking,
         style = MaterialTheme.typography.labelSmall,
@@ -488,6 +490,7 @@ private fun ThinkingDetail(block: AssistantBlock) {
         MarkdownView(
             block.text,
             modifier = Modifier.padding(top = 4.dp),
+            cacheable = cacheMarkdown,
         )
     }
 }
@@ -1024,7 +1027,11 @@ fun AssistantRunRow(
                             onLoadToolImage = onLoadToolImage,
                         )
                     }
-                    is AssistantRenderChunk.Text -> MarkdownView(chunk.block.text)
+                    is AssistantRenderChunk.Text ->
+                        MarkdownView(
+                            markdown = chunk.block.text,
+                            cacheable = !isStreaming,
+                        )
                 }
             }
             val lastChunkIsText = chunks.lastOrNull() is AssistantRenderChunk.Text

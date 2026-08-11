@@ -84,7 +84,11 @@ private val highlightedCodeBlock: MarkdownComponent = { model ->
  * same client-side highlighter and language aliases as the file browser.
  */
 @Composable
-fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
+fun MarkdownView(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    cacheable: Boolean = true,
+) {
     val extras = piExtras
     val colors = markdownColor(
         text = MaterialTheme.colorScheme.onSurface,
@@ -111,7 +115,9 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
     // A cache hit renders synchronously at the final height on the first
     // frame; a miss falls back to the renderer's async parse, which starts as
     // a zero-height loading box and jumps once parsing lands.
-    val preparsed = remember(markdown) { MarkdownParseCache.peek(markdown) }
+    val preparsed = remember(markdown, cacheable) {
+        if (cacheable) MarkdownParseCache.peek(markdown) else null
+    }
     val state: MarkdownState = if (preparsed != null) {
         remember(preparsed) { PreparsedMarkdownState(preparsed) }
     } else {
@@ -120,11 +126,15 @@ fun MarkdownView(markdown: String, modifier: Modifier = Modifier) {
             retainState = true,
         )
     }
-    // Persist the async parse result so a recycled LazyColumn item re-entering
-    // the viewport hits the cache instead of flashing the loading box again.
-    if (preparsed == null) {
-        LaunchedEffect(state, markdown) {
-            val success = state.state.filterIsInstance<State.Success>().first()
+    // Persist only the parse that belongs to this exact input. With
+    // retainState=true the flow intentionally keeps exposing its previous
+    // Success while a new value is parsed, so taking the first unfiltered
+    // Success would poison the new cache key with an older, shorter AST.
+    if (cacheable && preparsed == null) {
+        LaunchedEffect(state, markdown, cacheable) {
+            val success = state.state
+                .filterIsInstance<State.Success>()
+                .first { it.content == markdown }
             MarkdownParseCache.put(markdown, success)
         }
     }
