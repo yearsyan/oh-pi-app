@@ -42,6 +42,7 @@ import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASKS
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASK_SKILLS
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_SESSION_MANAGEMENT
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_HTTP_TRIGGERS
 import io.github.yearsyan.ohpi.net.GatewayProvider
 import io.github.yearsyan.ohpi.net.GatewayProviderAuthMethod
 import io.github.yearsyan.ohpi.net.PiClient
@@ -163,6 +164,9 @@ data class GatewayServerInfo(
 
     val supportsScheduledTaskSessions: Boolean
         get() = GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS in features
+
+    val supportsScheduledHTTPTriggers: Boolean
+        get() = GATEWAY_FEATURE_SCHEDULED_HTTP_TRIGGERS in features
 
     val hostOs: GatewayHostOs
         get() =

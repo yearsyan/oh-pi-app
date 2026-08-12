@@ -54,7 +54,7 @@ Windows 不使用需要管理员权限的系统 Service，而是注册 `RunLevel
 
 ## macOS 签名
 
-Release workflow 在 macOS runner 上构建 Darwin 二进制，使用 Developer ID Application、Hardened Runtime 与可信时间戳签名，并将两个架构一起提交 Apple notarization。架构独立的已签名裸二进制继续供 SSH 自动安装下载，同时 Release 还提供已公证的 Darwin ZIP 供直接分发。完整凭据与轮换要求见[发布与签名](releasing.md)。
+Release workflow 在 macOS runner 上构建 Darwin 二进制，使用 Team `2XX5KZ6X3G` 的 Developer ID Application、固定代码标识 `io.github.yearsyan.ohpi.gateway`、Hardened Runtime 与可信时间戳签名，并将两个架构一起提交 Apple notarization。固定 designated requirement 让 macOS TCC 在升级后仍把网关识别为同一程序，从而保留用户授予的 Documents、Desktop 与 Downloads 访问。架构独立的已签名裸二进制继续供 SSH 自动安装下载，同时 Release 还提供已公证的 Darwin ZIP 供直接分发。完整凭据与轮换要求见[发布与签名](releasing.md)。
 
 SSH 直接写入远端的路径通常不会附带浏览器下载产生的 quarantine 属性，但正式签名仍可满足 Gatekeeper、MDM 和企业安全策略的校验要求。命令行裸二进制不能附加 stapled ticket；Apple 公证服务会在线发布与代码签名对应的 ticket。
 

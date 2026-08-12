@@ -20,6 +20,7 @@ object ScheduledTaskKinds {
     const val Cron = "cron"
     const val Interval = "interval"
     const val Once = "once"
+    const val HTTP = "http"
 }
 
 @Serializable
@@ -55,6 +56,7 @@ data class GatewayScheduledTask(
     @SerialName("no_skills") val noSkills: Boolean = false,
     val prompt: String,
     val schedule: GatewayTaskSchedule,
+    @SerialName("event_key") val eventKey: String = "",
     val enabled: Boolean,
     @SerialName("next_run_at") val nextRunAt: String? = null,
     @SerialName("current_run") val currentRun: GatewayScheduledRun? = null,

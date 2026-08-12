@@ -8,6 +8,9 @@ import okio.buffer
 
 internal expect fun entryCacheRootPath(): String
 
+/** The platform filesystem; Okio exposes its singleton only after target resolution. */
+internal expect fun entryCacheFileSystem(): FileSystem
+
 internal const val DefaultMaxReplayCacheBytes = 4L * 1024L * 1024L
 
 internal class ReplayCacheCapacityExceededException(maxBytes: Long) :
@@ -20,7 +23,7 @@ internal data class EntryCacheSnapshot(
 
 /** Transactional stable-entry cache plus a recoverable active replay WAL. */
 internal class EntryCacheStore(
-    private val fileSystem: FileSystem = FileSystem.SYSTEM,
+    private val fileSystem: FileSystem = entryCacheFileSystem(),
     rootPath: String = entryCacheRootPath(),
     private val maxReplayBytes: Long = DefaultMaxReplayCacheBytes,
 ) {

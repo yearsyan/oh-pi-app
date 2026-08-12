@@ -40,6 +40,7 @@ import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.SshServerProfile
+import io.github.yearsyan.ohpi.PlatformTarget
 import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.secureRandomHex
 import io.github.yearsyan.ohpi.i18n.S
@@ -48,6 +49,7 @@ import io.github.yearsyan.ohpi.net.buildGatewayUrl
 import io.github.yearsyan.ohpi.net.parseGatewayAddress
 import io.github.yearsyan.ohpi.ui.components.AppDropdownMenu
 import io.github.yearsyan.ohpi.ui.components.AppMenuItem
+import io.github.yearsyan.ohpi.ui.components.LocalSshKeyPickerDialog
 import kotlin.random.Random
 
 /** Default ohpi gateway port used for new server profiles on all platforms. */
@@ -73,6 +75,8 @@ internal class SshKeySelectionState(initialKeyId: String = "") {
     var newKeyName by mutableStateOf("")
     var newKeyContents by mutableStateOf("")
     var newKeyPassphrase by mutableStateOf("")
+    var newKeyPublicKey by mutableStateOf("")
+    var newKeyEncrypted by mutableStateOf(false)
 
     /** With no managed keys at all, importing a new key is the only option. */
     fun effectiveCreatingNew(keys: List<SshPrivateKey>): Boolean =
@@ -82,6 +86,8 @@ internal class SshKeySelectionState(initialKeyId: String = "") {
         when {
             effectiveCreatingNew(keys) && newKeyContents.isBlank() ->
                 strings.sshPrivateKeyRequired
+            effectiveCreatingNew(keys) && newKeyEncrypted && newKeyPassphrase.isEmpty() ->
+                strings.sshLocalKeyPassphraseRequired
             !effectiveCreatingNew(keys) && keys.none { it.id == selectedKeyId } ->
                 strings.sshKeyRequired
             else -> null
@@ -95,6 +101,7 @@ internal class SshKeySelectionState(initialKeyId: String = "") {
             name = newKeyName.trim().ifBlank { strings.sshKeyDefaultName },
             privateKey = newKeyContents.trim(),
             passphrase = newKeyPassphrase,
+            publicKey = newKeyPublicKey.trim(),
         )
     }
 }
@@ -463,6 +470,7 @@ internal fun SshKeyPickerFields(
     onFieldEdited: () -> Unit = {},
 ) {
     val creatingNew = keySelection.effectiveCreatingNew(keys)
+    var choosingLocalKey by remember { mutableStateOf(false) }
     if (keys.isNotEmpty()) {
         val selectedName =
             if (creatingNew) S.sshKeyCreateNew
@@ -522,6 +530,21 @@ internal fun SshKeyPickerFields(
     }
 
     if (creatingNew) {
+        if (getPlatform().target == PlatformTarget.Desktop) {
+            OutlinedButton(
+                onClick = { choosingLocalKey = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Filled.Key,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(S.sshLocalKeyChooseTitle)
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         OutlinedTextField(
             value = keySelection.newKeyName,
             onValueChange = { keySelection.newKeyName = it; onFieldEdited() },
@@ -533,7 +556,12 @@ internal fun SshKeyPickerFields(
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = keySelection.newKeyContents,
-            onValueChange = { keySelection.newKeyContents = it; onFieldEdited() },
+            onValueChange = {
+                keySelection.newKeyContents = it
+                keySelection.newKeyPublicKey = ""
+                keySelection.newKeyEncrypted = false
+                onFieldEdited()
+            },
             label = { Text(S.sshPrivateKeyLabel) },
             minLines = 4,
             maxLines = 8,
@@ -544,9 +572,36 @@ internal fun SshKeyPickerFields(
             value = keySelection.newKeyPassphrase,
             onValueChange = { keySelection.newKeyPassphrase = it; onFieldEdited() },
             label = { Text(S.sshPrivateKeyPassphraseLabel) },
+            supportingText = {
+                if (keySelection.newKeyEncrypted) {
+                    Text(S.sshLocalKeyEncryptedPassphraseHint)
+                }
+            },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    if (choosingLocalKey) {
+        LocalSshKeyPickerDialog(
+            savedKeys = keys,
+            onDismiss = { choosingLocalKey = false },
+            onSelect = { candidate, savedKey ->
+                if (savedKey != null) {
+                    keySelection.selectedKeyId = savedKey.id
+                    keySelection.creatingNew = false
+                } else {
+                    keySelection.selectedKeyId = ""
+                    keySelection.creatingNew = true
+                    keySelection.newKeyName = candidate.fileName
+                    keySelection.newKeyContents = candidate.privateKey
+                    keySelection.newKeyPassphrase = ""
+                    keySelection.newKeyPublicKey = candidate.publicKey
+                    keySelection.newKeyEncrypted = candidate.encrypted
+                }
+                onFieldEdited()
+            },
         )
     }
 }

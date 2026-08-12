@@ -3,13 +3,17 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strings"
 
 	"github.com/yearsyan/oh-pi-app/internal/scheduledtask"
 )
 
-const scheduledTaskRequestLimit = 256 << 10
+const (
+	scheduledTaskRequestLimit      = 256 << 10
+	scheduledTaskEventRequestLimit = 256 << 10
+)
 
 type scheduledTaskListResponse struct {
 	Tasks []scheduledtask.Task `json:"tasks"`
@@ -20,6 +24,11 @@ type scheduledTaskSessionPageResponse struct {
 	SessionCount int               `json:"session_count"`
 	Sessions     []sessionResponse `json:"sessions"`
 	NextCursor   string            `json:"next_cursor,omitempty"`
+}
+
+type scheduledTaskEventResponse struct {
+	Status string `json:"status"`
+	RunID  string `json:"run_id"`
 }
 
 type scheduledTaskMutationRequest struct {
@@ -147,6 +156,79 @@ func (g *Gateway) handleScheduledTask(writer http.ResponseWriter, request *http.
 		writer.Header().Set("Cache-Control", "no-store")
 		writer.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (g *Gateway) handleScheduledTaskEvent(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writer.Header().Set("Allow", http.MethodPost)
+		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only POST is allowed")
+		return
+	}
+	eventKey := strings.TrimPrefix(request.URL.Path, "/api/task-events/")
+	if len(eventKey) != 32 || strings.ContainsRune(eventKey, '/') {
+		writeHTTPError(writer, http.StatusNotFound, "scheduled_task_event_not_found", "event trigger does not exist")
+		return
+	}
+	eventData, ok := decodeScheduledTaskEvent(writer, request)
+	if !ok {
+		return
+	}
+	_, run, err := g.scheduledTasks.TriggerEvent(eventKey, eventData)
+	switch {
+	case err == nil:
+		writer.Header().Set("Cache-Control", "no-store")
+		writeJSONResponse(writer, http.StatusAccepted, scheduledTaskEventResponse{
+			Status: "accepted",
+			RunID:  run.ID,
+		})
+	case errors.Is(err, scheduledtask.ErrNotFound):
+		writeHTTPError(writer, http.StatusNotFound, "scheduled_task_event_not_found", "event trigger does not exist")
+	case errors.Is(err, scheduledtask.ErrDisabled):
+		writeHTTPError(writer, http.StatusConflict, "scheduled_task_disabled", "scheduled task is disabled")
+	case errors.Is(err, scheduledtask.ErrRunning):
+		writeHTTPError(writer, http.StatusConflict, "scheduled_task_running", "scheduled task is already running")
+	default:
+		// event_key is a bearer secret and must never be included in logs.
+		g.cfg.Logger.Error("trigger scheduled task event", "error", err)
+		writeHTTPError(
+			writer,
+			http.StatusInternalServerError,
+			"scheduled_task_event_failed",
+			"could not trigger scheduled task",
+		)
+	}
+}
+
+func decodeScheduledTaskEvent(writer http.ResponseWriter, request *http.Request) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeHTTPError(
+			writer,
+			http.StatusUnsupportedMediaType,
+			"json_body_required",
+			"Content-Type must be application/json",
+		)
+		return "", false
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, scheduledTaskEventRequestLimit)
+	decoder := json.NewDecoder(request.Body)
+	decoder.UseNumber()
+	var payload any
+	if err := decoder.Decode(&payload); err != nil || ensureJSONEOF(decoder) != nil {
+		writeHTTPError(
+			writer,
+			http.StatusBadRequest,
+			"invalid_event_data",
+			"body must contain exactly one JSON value",
+		)
+		return "", false
+	}
+	canonical, err := json.Marshal(payload)
+	if err != nil {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_event_data", "body must be valid JSON")
+		return "", false
+	}
+	return string(canonical), true
 }
 
 func (g *Gateway) handleScheduledTaskSessions(

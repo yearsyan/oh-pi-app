@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -62,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -131,6 +133,7 @@ fun ScheduledTaskEditorScreen(
     var prompt by remember { mutableStateOf("") }
     var enabled by remember { mutableStateOf(true) }
     var scheduleKind by remember { mutableStateOf(ScheduledTaskKinds.Cron) }
+    var eventKey by remember { mutableStateOf("") }
     var cronWeekdays by remember { mutableStateOf((1..5).toSet()) }
     var cronTime by remember { mutableStateOf(LocalTime(9, 0)) }
     var cronTimezone by remember { mutableStateOf(timeZone.id) }
@@ -144,6 +147,7 @@ fun ScheduledTaskEditorScreen(
     var capabilitiesLoading by remember { mutableStateOf(false) }
     var capabilitiesError by remember { mutableStateOf<String?>(null) }
     val supportsSkillConfiguration = vm.activeGatewayInfo?.supportsScheduledTaskSkills == true
+    val supportsHTTPTriggers = vm.activeGatewayInfo?.supportsScheduledHTTPTriggers == true
 
     LaunchedEffect(taskId, vm.activeServerId) {
         loading = true
@@ -154,6 +158,7 @@ fun ScheduledTaskEditorScreen(
         runAtDateTime = (now + 1.hours).toLocalDateTime(timeZone)
         skillPaths = ""
         noSkills = false
+        eventKey = ""
         try {
             if (taskId == null) {
                 workspaceId = vm.workspaces.firstOrNull()?.id.orEmpty()
@@ -168,6 +173,7 @@ fun ScheduledTaskEditorScreen(
                 prompt = task.prompt
                 enabled = task.enabled
                 scheduleKind = task.schedule.kind
+                eventKey = task.eventKey
                 if (task.schedule.kind == ScheduledTaskKinds.Cron) {
                     val weeklySchedule = parseScheduledTaskWeeklyCron(task.schedule.expression)
                         ?: throw IllegalArgumentException(strings.scheduledTaskUnsupportedCron)
@@ -383,6 +389,7 @@ fun ScheduledTaskEditorScreen(
                     EditorSection(title = strings.scheduledTaskScheduleType) {
                         ScheduledTaskKindSelector(
                             value = scheduleKind,
+                            supportsHTTPTriggers = supportsHTTPTriggers,
                             enabled = !saving,
                             onSelect = { selected -> scheduleKind = selected; error = null },
                         )
@@ -452,6 +459,31 @@ fun ScheduledTaskEditorScreen(
                                     onPickDate = { activePicker = ScheduledTaskEditorPicker.RunAtDate },
                                     onPickTime = { activePicker = ScheduledTaskEditorPicker.RunAtTime },
                                 )
+                            }
+
+                            ScheduledTaskKinds.HTTP -> {
+                                EditorDivider()
+                                if (eventKey.isBlank()) {
+                                    EditorHint(strings.scheduledTaskHTTPCreateHint)
+                                } else {
+                                    EditorCaption(
+                                        strings.scheduledTaskHTTPEndpoint,
+                                        modifier = Modifier.padding(start = 16.dp, top = 10.dp),
+                                    )
+                                    SelectionContainer {
+                                        Text(
+                                            "POST /api/task-events/$eventKey",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                            ),
+                                            modifier = Modifier.fillMaxWidth().padding(
+                                                horizontal = 16.dp,
+                                                vertical = 10.dp,
+                                            ),
+                                        )
+                                    }
+                                }
+                                EditorHint(strings.scheduledTaskHTTPHint)
                             }
                         }
                     }
@@ -828,27 +860,43 @@ private data class ScheduledTaskKindOption(
 @Composable
 private fun ScheduledTaskKindSelector(
     value: String,
+    supportsHTTPTriggers: Boolean,
     enabled: Boolean,
     onSelect: (String) -> Unit,
 ) {
     val strings = S
-    val kinds = listOf(
-        ScheduledTaskKindOption(
-            kind = ScheduledTaskKinds.Cron,
-            title = strings.scheduledTaskCron,
-            description = strings.scheduledTaskCronDesc,
-        ),
-        ScheduledTaskKindOption(
-            kind = ScheduledTaskKinds.Interval,
-            title = strings.scheduledTaskInterval,
-            description = strings.scheduledTaskIntervalDesc,
-        ),
-        ScheduledTaskKindOption(
-            kind = ScheduledTaskKinds.Once,
-            title = strings.scheduledTaskOnce,
-            description = strings.scheduledTaskOnceDesc,
-        ),
-    )
+    val kinds = buildList {
+        add(
+            ScheduledTaskKindOption(
+                kind = ScheduledTaskKinds.Cron,
+                title = strings.scheduledTaskCron,
+                description = strings.scheduledTaskCronDesc,
+            ),
+        )
+        add(
+            ScheduledTaskKindOption(
+                kind = ScheduledTaskKinds.Interval,
+                title = strings.scheduledTaskInterval,
+                description = strings.scheduledTaskIntervalDesc,
+            ),
+        )
+        add(
+            ScheduledTaskKindOption(
+                kind = ScheduledTaskKinds.Once,
+                title = strings.scheduledTaskOnce,
+                description = strings.scheduledTaskOnceDesc,
+            ),
+        )
+        if (supportsHTTPTriggers || value == ScheduledTaskKinds.HTTP) {
+            add(
+                ScheduledTaskKindOption(
+                    kind = ScheduledTaskKinds.HTTP,
+                    title = strings.scheduledTaskHTTP,
+                    description = strings.scheduledTaskHTTPDesc,
+                ),
+            )
+        }
+    }
     val selected = kinds.firstOrNull { it.kind == value } ?: kinds.first()
     EditorDropdownRow(
         label = null,
@@ -1162,6 +1210,8 @@ private fun validateScheduledTaskEditor(
                 at = localDateTimeToRfc3339(runAtDateTime, timeZone),
             )
         }
+
+        ScheduledTaskKinds.HTTP -> GatewayTaskSchedule(kind = ScheduledTaskKinds.HTTP)
 
         else -> error("unsupported schedule kind")
     }

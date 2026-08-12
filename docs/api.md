@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","workspace_delete_v1","workspace_resources_v1","scheduled_tasks_v1","scheduled_task_skills_v1","scheduled_session_management_v1","scheduled_task_sessions_v1","runtime_config_v1"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","workspace_delete_v1","workspace_resources_v1","scheduled_tasks_v1","scheduled_task_skills_v1","scheduled_session_management_v1","scheduled_task_sessions_v1","scheduled_http_triggers_v1","runtime_config_v1"]}
 ```
 
 ```http
@@ -241,11 +241,12 @@ Authorization: Bearer <TOKEN>
 
 带有 `scheduled_tasks_v1` feature 的网关提供服务端持久化调度。任务是网关级资源，不从属于某一个 API 路径中的工作空间，因为编辑时可以更换工作空间。所有接口均需 Bearer token。
 
-支持三种 `schedule`：
+支持四种 `schedule`：
 
 - `cron`：标准五段式 `分钟 小时 日期 月份 星期`，精确到分钟；必须同时提供 IANA 时区，如 `Asia/Shanghai`。不接受秒或年份字段。
 - `interval`：从 `anchor_at` 锚点按 `every_seconds` 固定节拍运行，最小间隔 60 秒。
 - `once`：在未来的 RFC 3339 `at` 时间执行一次，领取执行后自动停用。
+- `http`：不计算自动执行时间；由服务端生成的私密 `event_key` 通过固定公开接口触发。
 
 ### 创建和列出任务
 
@@ -316,6 +317,46 @@ Authorization: Bearer <TOKEN>
 
 执行期间返回 `current_run`，结束后转为 `last_run`。状态可为 `running`、`succeeded`、`failed`、`interrupted` 或 `skipped`；失败原因在 `error` 中。任务 session 与普通 session 一样持久化，可以在 App 会话列表中打开；其会话元数据包含 `source: "scheduled_task"`，因此列表可以单独过滤。
 
+### HTTP 事件触发器
+
+带有 `scheduled_http_triggers_v1` feature 的网关支持 `{"kind":"http"}`。创建 HTTP 任务时，响应会新增不可由请求指定或修改的 `event_key`：
+
+```json
+{
+  "id": "a73ec34b-691d-4a76-ac6f-b5b191082757",
+  "name": "部署事件处理",
+  "schedule": {"kind": "http"},
+  "event_key": "0123456789abcdef0123456789abcdef",
+  "enabled": true,
+  "next_run_at": null
+}
+```
+
+`event_key` 是由加密安全随机源生成的 32 位小写十六进制字符串，并充当该公开入口的 Bearer secret。HTTP 任务保持同一类型进行其他编辑时 key 不变；从其他类型改为 HTTP 时生成新 key，改离 HTTP 后旧入口立即失效，再次改回 HTTP 会生成另一个 key。不要把 key 写入公开仓库或日志。
+
+触发接口路径固定，不需要 `Authorization` 或网关 Token，但必须使用 `POST`、`Content-Type: application/json` 并提供且只提供一个有效 JSON 值；正文上限为 256 KiB：
+
+```http
+POST /api/task-events/0123456789abcdef0123456789abcdef
+Content-Type: application/json
+
+{"ref":"main","deployment_id":42}
+```
+
+接受后返回 HTTP 202，公开响应不会包含任务名称、Prompt、工作空间或 event key：
+
+```json
+{"status":"accepted","run_id":"e177689f-3fa0-432c-aac1-7c6150dac163"}
+```
+
+网关会规范化收到的 JSON，并在用户填写的初始化 Prompt 后追加两个换行和以下内容，作为同一条首次用户消息提交：
+
+```text
+<system-reminder>本次任务由外部触发器触发，是非交互式任务，不要执行需要用户交互的操作，本次触发器数据为 {"ref":"main","deployment_id":42} </system-reminder>
+```
+
+因此事件数据会进入该次任务 session 的聊天历史，并遵循定时任务 session 的保留策略。未知或已经失效的 key 返回 404；任务已停用或同一任务仍在运行时返回 409。HTTP 触发同样受全局并发限制、一小时执行超时、非交互式 UI 请求拦截和任务禁止重叠规则约束。
+
 ### 查询、编辑、删除和立即执行
 
 ```http
@@ -331,9 +372,9 @@ DELETE /api/tasks/<TASK_ID>
 POST /api/tasks/<TASK_ID>/run
 ```
 
-PATCH 可提交任意任务字段；App 编辑页提交完整定义。修改启用中的空闲任务会从当前时间重新计算下次执行。任务运行期间 PATCH 和 DELETE 均返回 HTTP 409；删除任务不会删除它已经创建的 session。
+PATCH 可提交任意任务定义字段，但不接受 `event_key`；App 编辑页提交完整定义。修改启用中的空闲时间任务会从当前时间重新计算下次执行。任务运行期间 PATCH 和 DELETE 均返回 HTTP 409；删除任务不会删除它已经创建的 session。
 
-立即执行返回 HTTP 202，允许在任务暂停时使用，且不改变原计划的 `next_run_at`。同一任务不会并发执行；上一次仍在运行时，立即执行返回 HTTP 409，计划 occurrence 则跳过并推进到下一次。
+立即执行返回 HTTP 202，允许在任务暂停时使用，且不改变原计划的 `next_run_at`。对 HTTP 任务使用此管理接口时不会附加外部事件 reminder。同一任务不会并发执行；上一次仍在运行时，立即执行返回 HTTP 409，计划 occurrence 则跳过并推进到下一次。
 
 ### 分页查询任务关联会话
 

@@ -88,8 +88,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.random.Random
+import io.github.yearsyan.ohpi.PlatformTarget
 import io.github.yearsyan.ohpi.appVersion
+import io.github.yearsyan.ohpi.getPlatform
 import io.github.yearsyan.ohpi.data.AppLanguage
+import io.github.yearsyan.ohpi.data.LocalSshKeyCandidate
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
@@ -103,6 +106,8 @@ import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.GatewayServerInfo
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
+import io.github.yearsyan.ohpi.ui.components.DesktopLocalSshKeyPanel
+import io.github.yearsyan.ohpi.ui.components.LocalSshKeyImportDialog
 import io.github.yearsyan.ohpi.ui.components.longPressHaptic
 import io.github.yearsyan.ohpi.ui.privacy.rememberAiDataConsentPresenter
 import kotlinx.coroutines.CancellationException
@@ -1057,8 +1062,16 @@ private fun SshKeysSettingsDetail(
     var actionKey by remember { mutableStateOf<SshPrivateKey?>(null) }
     var viewingPublicKey by remember { mutableStateOf<SshPrivateKey?>(null) }
     var deletingKey by remember { mutableStateOf<SshPrivateKey?>(null) }
+    var importingLocalKey by remember { mutableStateOf<LocalSshKeyCandidate?>(null) }
 
     SettingsDetailScaffold(title = S.sshKeysSection, onBack = onBack) {
+        if (getPlatform().target == PlatformTarget.Desktop) {
+            DesktopLocalSshKeyPanel(
+                savedKeys = sshKeys,
+                onImport = { importingLocalKey = it },
+            )
+            Spacer(Modifier.height(16.dp))
+        }
         if (sshKeys.isEmpty()) {
             Text(
                 S.sshKeysEmpty,
@@ -1107,6 +1120,16 @@ private fun SshKeysSettingsDetail(
             onDismiss = { addingKeyType = null },
             onSave = {
                 addingKeyType = null
+                onSaveSshKey(it)
+            },
+        )
+    }
+    importingLocalKey?.let { candidate ->
+        LocalSshKeyImportDialog(
+            candidate = candidate,
+            onDismiss = { importingLocalKey = null },
+            onSave = {
+                importingLocalKey = null
                 onSaveSshKey(it)
             },
         )

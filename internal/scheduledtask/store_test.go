@@ -222,3 +222,95 @@ func TestStoreRejectsDefinitionUpdateWhileRunning(t *testing.T) {
 		t.Fatalf("Update error = %v", err)
 	}
 }
+
+func TestStoreCreatesAndClaimsHTTPTriggeredTask(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 0, 0, 0, 0, time.UTC)
+	store, err := newStore(filepath.Join(t.TempDir(), "tasks"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.Create(Definition{
+		Name: "webhook", WorkspaceID: "workspace", Prompt: "deploy", Enabled: true,
+		Schedule: Schedule{Kind: ScheduleHTTP},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validEventKey(task.EventKey) || task.NextRunAt != nil {
+		t.Fatalf("HTTP task = %#v", task)
+	}
+
+	claimed, run, err := store.claimEvent(task.EventKey, `{"ref":"main"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.CurrentRun == nil || claimed.CurrentRun.ID != run.ID || run.EventData != `{"ref":"main"}` {
+		t.Fatalf("claimed task=%#v run=%#v", claimed, run)
+	}
+	persisted, err := store.Get(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.CurrentRun == nil || persisted.CurrentRun.EventData != "" {
+		t.Fatalf("persisted event data = %#v", persisted.CurrentRun)
+	}
+	if _, _, err := store.claimEvent(task.EventKey, `{}`); !errors.Is(err, ErrRunning) {
+		t.Fatalf("overlapping event error = %v", err)
+	}
+	if err := store.complete(task.ID, run.ID, RunSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.Update(task.ID, task.Definition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.EventKey != task.EventKey {
+		t.Fatalf("event key changed during HTTP update: %q -> %q", task.EventKey, updated.EventKey)
+	}
+	updated, err = store.SetEnabled(task.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.claimEvent(updated.EventKey, `{}`); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("disabled event error = %v", err)
+	}
+}
+
+func TestStoreRotatesEventKeyWhenChangingScheduleType(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 0, 0, 0, 0, time.UTC)
+	store, err := newStore(filepath.Join(t.TempDir(), "tasks"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := now.Add(time.Minute)
+	task, err := store.Create(Definition{
+		Name: "timer", WorkspaceID: "workspace", Prompt: "check", Enabled: false,
+		Schedule: Schedule{Kind: ScheduleInterval, EverySeconds: 60, AnchorAt: &anchor},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpTask, err := store.Update(task.ID, Definition{
+		Name: "event", WorkspaceID: "workspace", Prompt: "check", Enabled: false,
+		Schedule: Schedule{Kind: ScheduleHTTP},
+	})
+	if err != nil || !validEventKey(httpTask.EventKey) {
+		t.Fatalf("HTTP update = %#v, err=%v", httpTask, err)
+	}
+	oldKey := httpTask.EventKey
+	intervalTask, err := store.Update(task.ID, Definition{
+		Name: "timer", WorkspaceID: "workspace", Prompt: "check", Enabled: false,
+		Schedule: Schedule{Kind: ScheduleInterval, EverySeconds: 60, AnchorAt: &anchor},
+	})
+	if err != nil || intervalTask.EventKey != "" {
+		t.Fatalf("interval update = %#v, err=%v", intervalTask, err)
+	}
+	httpTask, err = store.Update(task.ID, Definition{
+		Name: "event", WorkspaceID: "workspace", Prompt: "check", Enabled: false,
+		Schedule: Schedule{Kind: ScheduleHTTP},
+	})
+	if err != nil || !validEventKey(httpTask.EventKey) || httpTask.EventKey == oldKey {
+		t.Fatalf("rotated HTTP update = %#v, err=%v", httpTask, err)
+	}
+}

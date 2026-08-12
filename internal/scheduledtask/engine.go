@@ -188,6 +188,21 @@ func (engine *Engine) RunNow(id string) (Task, Run, error) {
 	return task, run, nil
 }
 
+// TriggerEvent claims one HTTP-triggered occurrence by its secret event key.
+// The canonical JSON event data is passed only to the in-memory runner and is
+// deliberately excluded from persisted task state.
+func (engine *Engine) TriggerEvent(eventKey, eventData string) (Task, Run, error) {
+	task, run, err := engine.store.claimEvent(eventKey, eventData)
+	if err != nil {
+		return Task{}, Run{}, err
+	}
+	if err := engine.dispatch(task, run); err != nil {
+		_ = engine.store.complete(task.ID, run.ID, RunInterrupted, err.Error())
+		return Task{}, Run{}, err
+	}
+	return task, run, nil
+}
+
 func (engine *Engine) loop() {
 	defer engine.wg.Done()
 	for {

@@ -4,23 +4,36 @@
 
 ## macOS LaunchAgent 部署
 
-仓库提供可重复执行的生产部署脚本。首次执行时传入 token；脚本会构建去除本地路径和调试符号的二进制、安装到 `~/.local/bin/ohpi-gateway`，然后创建并启动当前用户的 LaunchAgent：
+仓库提供严格校验签名身份的本地部署脚本。推荐入口会按当前架构下载 GitHub Release、核对 `SHA256SUMS.txt`，并验证 Developer ID、Apple notarization、固定代码标识 `io.github.yearsyan.ohpi.gateway` 与 Team ID `2XX5KZ6X3G`，然后安装到 `~/.local/bin/ohpi-gateway` 并启动当前用户的 LaunchAgent。首次执行时传入 token：
 
 ```bash
-OHPI_TOKEN="$(openssl rand -hex 32)" ./scripts/deploy-launchd.sh
+OHPI_TOKEN="<TOKEN>" \
+  ./scripts/deploy-signed-release.sh deploy
 ```
 
-之后更新代码时直接重复执行即可；现有 token 和部署配置会被保留：
+之后更新到最新正式 Release 时直接重复执行即可；现有 token、部署配置和 session 数据都会保留：
 
 ```bash
-./scripts/deploy-launchd.sh
+./scripts/deploy-signed-release.sh deploy
 ```
 
-脚本默认用当前 Git 描述（例如 `1.10.8` 或 `1.10.8-dirty`）写入网关版本；构建候选版本时可通过 `OHPI_VERSION` 显式指定：
+需要固定版本时使用 `--version`：
 
 ```bash
-OHPI_VERSION="1.10.9" ./scripts/deploy-launchd.sh
+./scripts/deploy-signed-release.sh \
+  deploy --version 2.3.0
 ```
+
+`scripts/deploy-launchd.sh` 是底层安装器，本身不负责构建或签名。直接调用时通过 `OHPI_BINARY` 指向已签名并公证的二进制；它既可以来自 Release，也可以是在可信 Mac 上导入 `.p12` 后本机构建、签名并公证的产物。`OHPI_VERSION` 仅用于断言产物版本，不能改写版本或绕过签名：
+
+```bash
+OHPI_BINARY="/absolute/path/to/ohpi-gateway-2.3.0-darwin-arm64" \
+  ./scripts/deploy-launchd.sh
+```
+
+未签名、ad-hoc 签名、版本化/错误 identifier、错误 Team ID、缺少 Hardened Runtime 或可信时间戳、CDHash-only designated requirement、错误架构及未公证产物都会在停止现有服务之前被拒绝。这样 macOS TCC 才能把升级前后的网关视为同一个程序；从旧身份迁移到首个固定身份版本时，用户仍需最后授权一次 Documents、Desktop 或 Downloads。
+
+本机构建与 `.p12` 签名没有被禁止；可复用与 CI 相同的临时 keychain、签名、公证和校验流程，具体命令见[本机构建、签名和公证](releasing.md#本机构建签名和公证)。证书、私钥、密码和公证 API Key 仍不得提交到 Git。
 
 首次部署或需要修改配置时，可通过环境变量覆盖默认值：
 
@@ -32,7 +45,7 @@ OHPI_WORK_DIR="/path/to/project" \
 OHPI_TITLE_MODEL="openai/gpt-5-nano" \
 OHPI_PI_COMMAND="/absolute/path/to/pi" \
 OHPI_SCHEDULED_SESSION_RETENTION="168h" \
-./scripts/deploy-launchd.sh
+./scripts/deploy-signed-release.sh deploy
 ```
 
 部署文件及运行状态：

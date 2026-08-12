@@ -20,6 +20,8 @@ var (
 	ErrNotFound = errors.New("scheduled task not found")
 	// ErrRunning is returned when an operation conflicts with an active run.
 	ErrRunning = errors.New("scheduled task is running")
+	// ErrDisabled is returned when an external event targets a paused task.
+	ErrDisabled = errors.New("scheduled task is disabled")
 	// ErrNotDue indicates that a stale scheduler entry no longer matches a task.
 	ErrNotDue = errors.New("scheduled task is not due")
 	// ErrNoFutureOccurrence indicates an enabled schedule that can never fire again.
@@ -47,6 +49,10 @@ type Run struct {
 	SessionID    string     `json:"session_id,omitempty"`
 	Error        string     `json:"error,omitempty"`
 	Manual       bool       `json:"manual,omitempty"`
+	// EventData is the canonical JSON supplied by an HTTP trigger. It is kept
+	// only in memory for the claimed execution and is never persisted or
+	// returned by the task-management API.
+	EventData string `json:"-"`
 }
 
 // Definition contains all user-editable task fields.
@@ -73,6 +79,7 @@ type Task struct {
 	NoSkills    bool       `json:"no_skills,omitempty"`
 	Prompt      string     `json:"prompt"`
 	Schedule    Schedule   `json:"schedule"`
+	EventKey    string     `json:"event_key,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	NextRunAt   *time.Time `json:"next_run_at,omitempty"`
 	CurrentRun  *Run       `json:"current_run,omitempty"`

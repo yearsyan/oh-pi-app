@@ -224,6 +224,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           bash scripts/ci/sign-notarize-macos.sh release "$VERSION"
 
+      # sign-notarize-macos.sh removes its temporary signing keychain before
+      # this step. Re-verifying here catches signatures that only validate
+      # while the CI certificate is installed locally.
+      - name: Verify macOS release identity independently
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/ci/verify-macos-gateway-signature.sh \
+            "release/ohpi-gateway-${VERSION}-darwin-amd64" \
+            "release/ohpi-gateway-${VERSION}-darwin-arm64"
+
       - name: Upload signed macOS release artifacts
         uses: actions/upload-artifact@v6
         with:

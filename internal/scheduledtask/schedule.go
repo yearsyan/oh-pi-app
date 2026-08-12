@@ -19,6 +19,7 @@ const (
 	ScheduleCron     ScheduleKind = "cron"
 	ScheduleInterval ScheduleKind = "interval"
 	ScheduleOnce     ScheduleKind = "once"
+	ScheduleHTTP     ScheduleKind = "http"
 )
 
 const minimumInterval = time.Minute
@@ -53,6 +54,12 @@ func (schedule intervalSchedule) Next(after time.Time) time.Time {
 
 type onceSchedule struct {
 	at time.Time
+}
+
+type httpSchedule struct{}
+
+func (httpSchedule) Next(time.Time) time.Time {
+	return time.Time{}
 }
 
 func (schedule onceSchedule) Next(after time.Time) time.Time {
@@ -105,6 +112,9 @@ func (schedule Schedule) parse() (parsedSchedule, error) {
 		}
 		return onceSchedule{at: schedule.At.UTC()}, nil
 
+	case ScheduleHTTP:
+		return httpSchedule{}, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported schedule kind %q", schedule.Kind)
 	}
@@ -124,6 +134,9 @@ func (schedule Schedule) Next(after time.Time) (time.Time, error) {
 }
 
 func (schedule Schedule) normalized() Schedule {
+	if schedule.Kind == ScheduleHTTP {
+		return Schedule{Kind: ScheduleHTTP}
+	}
 	normalized := schedule
 	normalized.Expression = strings.TrimSpace(normalized.Expression)
 	normalized.TimeZone = strings.TrimSpace(normalized.TimeZone)

@@ -113,6 +113,7 @@ class ServerEditorStateTest {
         editor.keySelection.newKeyName = "  Laptop key  "
         editor.keySelection.newKeyContents = "  -----BEGIN KEY-----\nabc\n-----END KEY-----\n"
         editor.keySelection.newKeyPassphrase = "secret"
+        editor.keySelection.newKeyPublicKey = "  ssh-ed25519 AAAATEST laptop  "
 
         // No managed keys exist, so importing a new one is the implied choice.
         val result = assertNotNull(editor.build(EnStrings, keys = emptyList()))
@@ -121,6 +122,7 @@ class ServerEditorStateTest {
         assertEquals("Laptop key", newKey.name)
         assertEquals("-----BEGIN KEY-----\nabc\n-----END KEY-----", newKey.privateKey)
         assertEquals("secret", newKey.passphrase)
+        assertEquals("ssh-ed25519 AAAATEST laptop", newKey.publicKey)
         assertEquals(newKey.id, result.profile.ssh.privateKeyId)
     }
 
@@ -136,6 +138,22 @@ class ServerEditorStateTest {
         )
         selection.newKeyContents = "key material"
         assertNull(selection.validate(EnStrings, keys = listOf(managedKey("key-1"))))
+    }
+
+    @Test
+    fun discoveredEncryptedKeyRequiresItsPassphrase() {
+        val selection = SshKeySelectionState()
+        selection.creatingNew = true
+        selection.newKeyContents = "encrypted key material"
+        selection.newKeyEncrypted = true
+
+        assertEquals(
+            EnStrings.sshLocalKeyPassphraseRequired,
+            selection.validate(EnStrings, keys = emptyList()),
+        )
+
+        selection.newKeyPassphrase = "secret"
+        assertNull(selection.validate(EnStrings, keys = emptyList()))
     }
 
     private fun managedKey(id: String) =

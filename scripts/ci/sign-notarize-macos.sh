@@ -4,16 +4,21 @@ set -euo pipefail
 
 release_dir="${1:?usage: sign-notarize-macos.sh <release-dir> <version>}"
 version="${2:?usage: sign-notarize-macos.sh <release-dir> <version>}"
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+verify_signature_script="${script_dir}/verify-macos-gateway-signature.sh"
+readonly gateway_code_identifier="io.github.yearsyan.ohpi.gateway"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS signing must run on a Darwin host" >&2
   exit 1
 fi
+if [[ -z "$version" || "$version" == *[!0-9A-Za-z._+-]* ]]; then
+  echo "invalid macOS release version: ${version}" >&2
+  exit 1
+fi
 
 required_secrets=(
-  MACOS_CERTIFICATE_P12_BASE64
   MACOS_CERTIFICATE_PASSWORD
-  APPLE_NOTARY_KEY_P8_BASE64
   APPLE_NOTARY_KEY_ID
   APPLE_NOTARY_ISSUER_ID
 )
@@ -25,16 +30,35 @@ for secret_name in "${required_secrets[@]}"; do
   fi
 done
 
-if [[ -z "${RUNNER_TEMP:-}" ]]; then
-  echo "RUNNER_TEMP is required" >&2
+if [[ -z "${MACOS_CERTIFICATE_P12_PATH:-}" && -z "${MACOS_CERTIFICATE_P12_BASE64:-}" ]]; then
+  echo "set MACOS_CERTIFICATE_P12_PATH or MACOS_CERTIFICATE_P12_BASE64" >&2
+  exit 1
+fi
+if [[ -n "${MACOS_CERTIFICATE_P12_PATH:-}" && ! -f "$MACOS_CERTIFICATE_P12_PATH" ]]; then
+  echo "Developer ID PKCS#12 archive does not exist: ${MACOS_CERTIFICATE_P12_PATH}" >&2
+  exit 1
+fi
+if [[ -z "${APPLE_NOTARY_KEY_P8_PATH:-}" && -z "${APPLE_NOTARY_KEY_P8_BASE64:-}" ]]; then
+  echo "set APPLE_NOTARY_KEY_P8_PATH or APPLE_NOTARY_KEY_P8_BASE64" >&2
+  exit 1
+fi
+if [[ -n "${APPLE_NOTARY_KEY_P8_PATH:-}" && ! -f "$APPLE_NOTARY_KEY_P8_PATH" ]]; then
+  echo "App Store Connect API key does not exist: ${APPLE_NOTARY_KEY_P8_PATH}" >&2
   exit 1
 fi
 
+temporary_parent="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+if [[ ! -d "$temporary_parent" ]]; then
+  echo "temporary directory does not exist: ${temporary_parent}" >&2
+  exit 1
+fi
+temporary_root="$(/usr/bin/mktemp -d "${temporary_parent}/ohpi-macos-sign.XXXXXX")"
+
 run_suffix="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-certificate_path="${RUNNER_TEMP}/ohpi-developer-id-${run_suffix}.p12"
-notary_key_path="${RUNNER_TEMP}/ohpi-notary-key-${run_suffix}.p8"
-keychain_path="${RUNNER_TEMP}/ohpi-signing-${run_suffix}.keychain-db"
-payload_dir="${RUNNER_TEMP}/ohpi-gateway-${version}-darwin"
+certificate_path="${temporary_root}/ohpi-developer-id-${run_suffix}.p12"
+notary_key_path="${temporary_root}/ohpi-notary-key-${run_suffix}.p8"
+keychain_path="${temporary_root}/ohpi-signing-${run_suffix}.keychain-db"
+payload_dir="${temporary_root}/ohpi-gateway-${version}-darwin"
 archive_path="${release_dir}/ohpi-gateway-${version}-darwin.zip"
 original_keychains=()
 while IFS= read -r existing_keychain; do
@@ -51,16 +75,23 @@ cleanup() {
   if [[ -f "$keychain_path" ]]; then
     /usr/bin/security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
   fi
-  /bin/rm -f "$certificate_path" "$notary_key_path"
-  /bin/rm -rf "$payload_dir"
+  /bin/rm -rf "$temporary_root"
 }
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$release_dir"
 test ! -e "$archive_path"
 
-printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 --decode > "$certificate_path"
-printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | /usr/bin/base64 --decode > "$notary_key_path"
+if [[ -n "${MACOS_CERTIFICATE_P12_PATH:-}" ]]; then
+  /bin/cp "$MACOS_CERTIFICATE_P12_PATH" "$certificate_path"
+else
+  printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 --decode > "$certificate_path"
+fi
+if [[ -n "${APPLE_NOTARY_KEY_P8_PATH:-}" ]]; then
+  /bin/cp "$APPLE_NOTARY_KEY_P8_PATH" "$notary_key_path"
+else
+  printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | /usr/bin/base64 --decode > "$notary_key_path"
+fi
 /bin/chmod 600 "$certificate_path" "$notary_key_path"
 
 ci_keychain_password="$(/usr/bin/openssl rand -hex 32)"
@@ -97,11 +128,12 @@ for binary in "${binaries[@]}"; do
 
   /usr/bin/codesign \
     --force \
+    --identifier "$gateway_code_identifier" \
     --sign "$signing_identity" \
     --options runtime \
     --timestamp \
     "$binary"
-  /usr/bin/codesign --verify --strict --verbose=2 "$binary"
+  /bin/bash "$verify_signature_script" --signature-only "$binary"
 done
 
 mkdir -p "$payload_dir"
@@ -117,13 +149,6 @@ done
   --wait \
   --timeout 30m
 
-for binary in "${binaries[@]}"; do
-  /usr/bin/codesign \
-    --verify \
-    --strict \
-    --verbose=2 \
-    --check-notarization \
-    "$binary"
-done
+/bin/bash "$verify_signature_script" "${binaries[@]}"
 
 echo "Signed and notarized ${archive_path} with ${signing_identity}"

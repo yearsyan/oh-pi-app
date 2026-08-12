@@ -10,7 +10,7 @@ GitHub 的 `windows-latest` runner 使用 Compose Multiplatform 的 `createDistr
 
 ## macOS 产物
 
-Darwin 二进制必须在 GitHub 的 macOS runner 上构建。CI 使用 `Developer ID Application` 证书为两个架构分别执行带 Hardened Runtime 和可信时间戳的签名，再将它们放入 ZIP 并通过 `xcrun notarytool` 提交 Apple 公证。
+正式 Release 默认在 GitHub 的 macOS runner 上构建。CI 使用 Team `2XX5KZ6X3G` 的 `Developer ID Application` 证书为两个架构分别执行带 Hardened Runtime 和可信时间戳的签名，并强制使用固定代码标识 `io.github.yearsyan.ohpi.gateway`，再将它们放入 ZIP 并通过 `xcrun notarytool` 提交 Apple 公证。代码标识不得包含版本或架构；固定 designated requirement 用于让 macOS TCC 在网关升级后继续识别同一程序。可信 Mac 也可以导入同一 `.p12`，在本机构建、签名并公证；验收条件与 CI 完全相同。
 
 相关平台要求见 Apple 的 [Developer ID 证书说明](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/)与[自定义公证流程](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)，Secret 存储方式见 GitHub 的 [Actions Secrets 文档](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)。
 
@@ -19,7 +19,45 @@ Release 同时包含：
 - `ohpi-gateway-<version>-darwin-amd64` 与 `ohpi-gateway-<version>-darwin-arm64`：已签名的裸二进制，供 SSH 自动安装按架构下载；
 - `ohpi-gateway-<version>-darwin.zip`：包含两个已签名二进制并已提交 Apple 公证，供直接下载或人工分发。
 
-命令行可执行文件不能像 `.app`、`.pkg` 或 `.dmg` 那样附加 stapled ticket。公证成功后 Apple 会在线发布与代码签名对应的 ticket；因此 CI 会在公证后用 `codesign --check-notarization` 强制在线查询并验证两个裸二进制。`spctl --type execute` 会把裸 CLI 判为“代码有效但不是 app”，不适合作为这里的验收命令。
+命令行可执行文件不能像 `.app`、`.pkg` 或 `.dmg` 那样附加 stapled ticket。公证成功后 Apple 会在线发布与代码签名对应的 ticket；因此 CI 会在公证后用 `codesign --check-notarization` 强制在线查询，并校验 Developer ID authority、Hardened Runtime、可信时间戳、固定 identifier、Team ID 以及不含 `cdhash` 的 designated requirement。签名脚本退出并移除临时签名 keychain 后，workflow 还会独立复验一次，避免发布只能在 CI 临时证书存在时通过的产物。`spctl --type execute` 会把裸 CLI 判为“代码有效但不是 app”，不适合作为这里的验收命令。
+
+### 本机构建、签名和公证
+
+本地签名不受禁止。`scripts/ci/sign-notarize-macos.sh` 同时支持 CI 的 Base64 Secret 和本机凭据文件路径；使用路径时会把 `.p12` 导入临时 keychain，并在成功或失败后删除临时副本和 keychain，不会删除原始凭据文件。
+
+先把敏感值放进当前 shell 环境，不要把密码写进命令历史：
+
+```bash
+export MACOS_CERTIFICATE_P12_PATH="/absolute/path/to/DeveloperIDApplication.p12"
+export APPLE_NOTARY_KEY_P8_PATH="/absolute/path/to/AuthKey_XXXXXXXXXX.p8"
+export APPLE_NOTARY_KEY_ID="XXXXXXXXXX"
+export APPLE_NOTARY_ISSUER_ID="00000000-0000-0000-0000-000000000000"
+read -s -p "PKCS#12 password: " MACOS_CERTIFICATE_PASSWORD
+export MACOS_CERTIFICATE_PASSWORD
+printf '\n'
+```
+
+然后按与 CI 相同的参数构建两个架构并执行签名、公证和最终校验：
+
+```bash
+VERSION="2.3.0"
+mkdir -p release
+for arch in amd64 arm64; do
+  CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" \
+    go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
+    -o "release/ohpi-gateway-$VERSION-darwin-$arch" ./cmd/ohpi-gateway
+done
+
+./scripts/ci/sign-notarize-macos.sh release "$VERSION"
+case "$(uname -m)" in
+  arm64) ARCH=arm64 ;;
+  x86_64) ARCH=amd64 ;;
+esac
+OHPI_BINARY="$PWD/release/ohpi-gateway-$VERSION-darwin-$ARCH" \
+  OHPI_VERSION="$VERSION" ./scripts/deploy-launchd.sh
+```
+
+完成后可执行 `unset MACOS_CERTIFICATE_PASSWORD`。本地签名产物仍必须通过固定 identifier、Team ID、Hardened Runtime、可信时间戳及 Apple notarization 校验；仅在本机导入证书不会降低部署校验。
 
 ## GitHub Actions Secrets
 
@@ -36,7 +74,9 @@ Release 同时包含：
 | `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | 导出 iOS `.p12` 时设置的强密码 |
 | `IOS_APP_STORE_PROFILE_BASE64` | 绑定 OhPiApp Bundle ID 与专用证书的 App Store provisioning profile，单行 Base64 |
 
-macOS certificate Secret 必须包含 `Developer ID Application` identity，不能使用 Apple Development、Mac Distribution 或 ad-hoc identity；iOS certificate Secret 必须包含与 profile 匹配的 `Apple Distribution` identity。公证与上传 Key 建议使用独立的 Team API Key，并限制为完成发布所需的最低角色。
+macOS certificate Secret 必须包含 Team `2XX5KZ6X3G` 的 `Developer ID Application` identity，不能使用其他 Team、Apple Development、Mac Distribution 或 ad-hoc identity；iOS certificate Secret 必须包含与 profile 匹配的 `Apple Distribution` identity。公证与上传 Key 建议使用独立的 Team API Key，并限制为完成发布所需的最低角色。
+
+本地运行签名脚本时，可以分别用 `MACOS_CERTIFICATE_P12_PATH` 和 `APPLE_NOTARY_KEY_P8_PATH` 代替两个 Base64 变量；如果路径与 Base64 变量同时存在，脚本优先读取路径。
 
 ## iOS 与 TestFlight
 
@@ -65,7 +105,7 @@ gh secret set IOS_DISTRIBUTION_CERTIFICATE_PASSWORD
 base64 < OhPiApp.mobileprovision | tr -d '\n' | gh secret set IOS_APP_STORE_PROFILE_BASE64
 ```
 
-`.p12`、`.p8`、`.mobileprovision`、密码和临时 keychain 不得提交到 Git。CI 脚本只在单个 step 内解码这些文件，结束或失败时都会删除临时证书、profile、API Key 和 keychain。
+`.p12`、`.p8`、`.mobileprovision`、密码和临时 keychain 不得提交到 Git。签名脚本只在运行期间复制或解码凭据，结束或失败时都会删除临时证书、API Key 和 keychain；TestFlight 流程也会清理临时 profile。
 
 ## 轮换与恢复
 

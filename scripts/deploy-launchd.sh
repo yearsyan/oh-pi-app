@@ -7,6 +7,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd -P)
 template_path=$script_dir/launchd/$label.plist
 launcher_source=$script_dir/launchd/ohpi-gateway-launch.sh
+signature_verifier=$script_dir/ci/verify-macos-gateway-signature.sh
 
 binary_dir=$HOME/.local/bin
 binary_path=$binary_dir/ohpi-gateway
@@ -73,12 +74,47 @@ if [ "$(/usr/bin/uname -s)" != Darwin ]; then
 	die "launchd deployment is supported only on macOS"
 fi
 
-require_command go
 require_command launchctl
 require_command plutil
 require_command curl
 require_command install
 require_command mktemp
+require_command lipo
+[ -f "$signature_verifier" ] || die "signature verifier not found: $signature_verifier"
+
+case $(/usr/bin/uname -m) in
+	arm64)
+		release_arch=arm64
+		macho_arch=arm64
+		;;
+	x86_64)
+		release_arch=amd64
+		macho_arch=x86_64
+		;;
+	*) die "unsupported macOS architecture: $(/usr/bin/uname -m)" ;;
+esac
+
+deploy_binary_source=${OHPI_BINARY-}
+if [ -z "$deploy_binary_source" ]; then
+	candidate_count=0
+	for candidate in "$repo_root"/release/ohpi-gateway-*-darwin-"$release_arch"; do
+		[ -f "$candidate" ] || continue
+		deploy_binary_source=$candidate
+		candidate_count=$((candidate_count + 1))
+	done
+	case $candidate_count in
+		0) die "OHPI_BINARY must point to a signed and notarized macOS gateway binary" ;;
+		1) ;;
+		*) die "multiple signed release candidates found; set OHPI_BINARY explicitly" ;;
+	esac
+fi
+[ -f "$deploy_binary_source" ] || die "OHPI_BINARY is not a file: $deploy_binary_source"
+if ! /usr/bin/lipo "$deploy_binary_source" -verify_arch "$macho_arch" >/dev/null 2>&1; then
+	die "OHPI_BINARY does not contain the required $macho_arch architecture: $deploy_binary_source"
+fi
+
+note "Verifying fixed-identity signed gateway"
+/bin/bash "$signature_verifier" "$deploy_binary_source"
 
 deploy_token=${OHPI_TOKEN-}
 unset OHPI_TOKEN
@@ -189,13 +225,9 @@ case $listen_port in
 esac
 health_url=${OHPI_HEALTH_URL-http://127.0.0.1:$listen_port/healthz}
 
-deploy_version=${OHPI_VERSION-}
-if [ -z "$deploy_version" ]; then
-	deploy_version=$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')
-	deploy_version=${deploy_version#v}
-fi
-case $deploy_version in
-	''|*[!0-9A-Za-z._+-]*) die "OHPI_VERSION contains unsupported characters: $deploy_version" ;;
+requested_version=${OHPI_VERSION-}
+case $requested_version in
+	*[!0-9A-Za-z._+-]*) die "OHPI_VERSION contains unsupported characters: $requested_version" ;;
 esac
 
 deploy_tmp=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/oh-pi-app-deploy.XXXXXX")
@@ -210,11 +242,20 @@ rendered_config=$deploy_tmp/config.json
 rendered_config_plist=$deploy_tmp/config.plist
 token_source=$deploy_tmp/token
 
-note "Building production binary"
-(
-	cd "$repo_root"
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$deploy_version" -o "$built_binary" ./cmd/ohpi-gateway
-)
+note "Staging verified signed binary"
+/usr/bin/install -m 0755 "$deploy_binary_source" "$built_binary"
+/bin/bash "$signature_verifier" --signature-only "$built_binary"
+version_output=$("$built_binary" --version) || die "signed gateway could not report its version"
+case $version_output in
+	"ohpi-gateway "*) deploy_version=${version_output#ohpi-gateway } ;;
+	*) die "unexpected signed gateway version output: $version_output" ;;
+esac
+case $deploy_version in
+	''|*[!0-9A-Za-z._+-]*) die "signed gateway reported an invalid version: $deploy_version" ;;
+esac
+if [ -n "$requested_version" ] && [ "$requested_version" != "$deploy_version" ]; then
+	die "signed gateway version is $deploy_version, expected OHPI_VERSION=$requested_version"
+fi
 
 /usr/bin/install -m 0600 "$template_path" "$rendered_plist"
 /usr/bin/plutil -remove ProgramArguments.0 "$rendered_plist"
@@ -262,6 +303,7 @@ fi
 
 note "Installing binary and LaunchAgent"
 /usr/bin/install -m 0755 "$built_binary" "$binary_path"
+/bin/bash "$signature_verifier" --signature-only "$binary_path"
 /usr/bin/install -m 0755 "$launcher_source" "$launcher_path"
 /usr/bin/install -m 0644 "$rendered_plist" "$plist_path"
 

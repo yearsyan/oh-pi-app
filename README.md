@@ -17,7 +17,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 
 - 服务端维护工作空间及其元信息，自动探测技术栈，并按工作空间分页发现 session；删除工作空间时保留全部会话，同目录重新注册后自动恢复。
 - 创建、恢复、重命名、停止运行进程和永久删除持久化 session；工作空间可为每次 Pi 启动追加系统提示词，并配置多组 Skills/Extensions 路径及是否关闭其他资源的自动发现。
-- 持久化定时任务支持标准五段式 Cron、固定间隔和指定时间单次执行；每次执行创建独立 session，并可指定工作空间、模型、思考强度、任务专属 Skills（含 `--no-skills`）和初始化 Prompt。每个任务可分页查看全部关联 session；普通会话列表可按来源隐藏任务 session，服务端默认在闲置 7 天后自动清理。
+- 持久化任务支持标准五段式 Cron、固定间隔、指定时间单次执行和免 Token 的密钥 HTTP 触发器；每次执行创建独立 session，并可指定工作空间、模型、思考强度、任务专属 Skills（含 `--no-skills`）和初始化 Prompt。每个任务可分页查看全部关联 session；普通会话列表可按来源隐藏任务 session，服务端默认在闲置 7 天后自动清理。
 - 同一 session 支持多个 WebSocket 客户端共同输入并接收实时输出。
 - 严格保持 WebSocket 文本帧与 pi RPC JSONL 记录之间的一对一映射。
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。

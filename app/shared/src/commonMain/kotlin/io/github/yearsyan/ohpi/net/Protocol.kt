@@ -71,8 +71,6 @@ fun argsToString(element: JsonElement?): String = when (element) {
 fun parseMessage(text: String): JsonObject? =
     runCatching { PiJson.parseToJsonElement(text).jsonObject }.getOrNull()
 
-private val httpErrorPrefix = Regex("^(\\d{3})\\s+(\\{.*)$", RegexOption.DOT_MATCHES_ALL)
-
 /**
  * Converts a provider HTTP error string such as
  * `429 {"error":{"type":"rate_limit_error","message":"..."}}` into a short
@@ -81,12 +79,21 @@ private val httpErrorPrefix = Regex("^(\\d{3})\\s+(\\{.*)$", RegexOption.DOT_MAT
  */
 fun friendlyHttpError(raw: String): String {
     val text = raw.trim()
-    val match = httpErrorPrefix.find(text) ?: return text
-    val status = match.groupValues[1]
-    val body = runCatching { PiJson.parseToJsonElement(match.groupValues[2]).jsonObject }.getOrNull()
+    val (status, rawBody) = splitHttpError(text) ?: return text
+    val body = runCatching { PiJson.parseToJsonElement(rawBody).jsonObject }.getOrNull()
         ?: return text
     val detail = body.obj("error")?.str("message") ?: body.str("message") ?: return text
     return "$status: $detail"
+}
+
+/** Cross-platform equivalent of a DOT_MATCHES_ALL regex for `NNN {json}` errors. */
+private fun splitHttpError(text: String): Pair<String, String>? {
+    if (text.length < 5 || !text.take(3).all(Char::isDigit)) return null
+    var bodyStart = 3
+    if (!text[bodyStart].isWhitespace()) return null
+    while (bodyStart < text.length && text[bodyStart].isWhitespace()) bodyStart += 1
+    if (bodyStart >= text.length || text[bodyStart] != '{') return null
+    return text.substring(0, 3) to text.substring(bodyStart)
 }
 
 fun nowMillis(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()

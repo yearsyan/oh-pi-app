@@ -1,4 +1,5 @@
 /bin/
+/release/
 /.agents/
 /.pi/
 /.oh-pi-app/
@@ -11,3 +12,6 @@ web-demo/.vite-temp/
 .playwright-cli/
 *.keystore
 keystore.properties
+*.p12
+*.p8
+*.mobileprovision

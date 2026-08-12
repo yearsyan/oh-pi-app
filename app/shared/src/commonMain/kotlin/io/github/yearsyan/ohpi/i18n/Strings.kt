@@ -118,6 +118,23 @@ interface Strings {
     val sshKeyRequired: String
     val sshKeyStorageFailed: String
     val serverCredentialsStorageFailed: String
+    val sshLocalKeysTitle: String
+    val sshLocalKeysDescription: String
+    val sshLocalKeysScanning: String
+    val sshLocalKeysNone: String
+    val sshLocalKeysFound: (Int) -> String
+    val sshLocalKeysRefresh: String
+    val sshLocalKeysReadFailed: (String) -> String
+    val sshLocalKeyImport: String
+    val sshLocalKeyImported: String
+    val sshLocalKeyChooseTitle: String
+    val sshLocalKeyChoose: String
+    val sshLocalKeyUseSaved: String
+    val sshLocalKeyImportTitle: String
+    val sshLocalKeyImportDescription: String
+    val sshLocalKeyEncrypted: String
+    val sshLocalKeyEncryptedPassphraseHint: String
+    val sshLocalKeyPassphraseRequired: String
 
     // SSH host verification
     val sshHostKeyTitle: String
@@ -490,6 +507,7 @@ interface Strings {
     val scheduledTaskCron: String
     val scheduledTaskInterval: String
     val scheduledTaskOnce: String
+    val scheduledTaskHTTP: String
     val scheduledTaskWeekdays: String
     val scheduledTaskWeekdayLabels: List<String>
     val scheduledTaskEveryDay: String
@@ -508,6 +526,10 @@ interface Strings {
     val scheduledTaskCronDesc: String
     val scheduledTaskIntervalDesc: String
     val scheduledTaskOnceDesc: String
+    val scheduledTaskHTTPDesc: String
+    val scheduledTaskHTTPEndpoint: String
+    val scheduledTaskHTTPCreateHint: String
+    val scheduledTaskHTTPHint: String
     val scheduledTaskDefaultModel: String
     val scheduledTaskDefaultThinking: String
     val scheduledTaskSkillsTitle: String
@@ -699,6 +721,28 @@ object EnStrings : Strings {
     override val sshKeyStorageFailed = "Could not save the key to secure storage"
     override val serverCredentialsStorageFailed =
         "Could not save the server credentials to secure storage"
+    override val sshLocalKeysTitle = "Keys on this computer"
+    override val sshLocalKeysDescription =
+        "Private keys are found automatically in ~/.ssh. Choose one to copy into Oh Pi; the original files are never changed."
+    override val sshLocalKeysScanning = "Scanning ~/.ssh…"
+    override val sshLocalKeysNone = "No recognizable private keys found in ~/.ssh"
+    override val sshLocalKeysFound = { count: Int ->
+        if (count == 1) "1 private key found" else "$count private keys found"
+    }
+    override val sshLocalKeysRefresh = "Scan again"
+    override val sshLocalKeysReadFailed = { error: String -> "Could not read ~/.ssh: $error" }
+    override val sshLocalKeyImport = "Import"
+    override val sshLocalKeyImported = "Imported"
+    override val sshLocalKeyChooseTitle = "Choose a key from ~/.ssh"
+    override val sshLocalKeyChoose = "Choose"
+    override val sshLocalKeyUseSaved = "Use saved"
+    override val sshLocalKeyImportTitle = "Import local SSH key"
+    override val sshLocalKeyImportDescription =
+        "The private key and its matching .pub file, when present, will be copied into Oh Pi."
+    override val sshLocalKeyEncrypted = "Encrypted"
+    override val sshLocalKeyEncryptedPassphraseHint =
+        "This key is encrypted; enter its passphrase to use it for connections."
+    override val sshLocalKeyPassphraseRequired = "Enter the passphrase for this encrypted key"
 
     override val sshHostKeyTitle = "Trust this SSH server?"
     override val sshHostKeyChangedTitle = "SSH host key changed"
@@ -1086,17 +1130,18 @@ object EnStrings : Strings {
     override val scheduledTasksTitle = "Scheduled tasks"
     override val scheduledTasksUnsupported = "Update the gateway to manage scheduled tasks."
     override val scheduledTasksEmpty = "No scheduled tasks"
-    override val scheduledTasksEmptyHint = "Create a recurring or one-time Pi task for this server."
+    override val scheduledTasksEmptyHint = "Create a recurring, one-time, or externally triggered Pi task for this server."
     override val scheduledTaskAdd = "New task"
     override val scheduledTaskCreateTitle = "Create scheduled task"
     override val scheduledTaskEditTitle = "Edit scheduled task"
     override val scheduledTaskName = "Task name"
     override val scheduledTaskNameHint = "Weekday project check"
     override val scheduledTaskWorkspace = "Workspace"
-    override val scheduledTaskScheduleType = "Schedule"
+    override val scheduledTaskScheduleType = "Trigger"
     override val scheduledTaskCron = "Weekly"
     override val scheduledTaskInterval = "Interval"
     override val scheduledTaskOnce = "One time"
+    override val scheduledTaskHTTP = "HTTP webhook"
     override val scheduledTaskWeekdays = "Weekdays"
     override val scheduledTaskWeekdayLabels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     override val scheduledTaskEveryDay = "Every day"
@@ -1115,6 +1160,12 @@ object EnStrings : Strings {
     override val scheduledTaskCronDesc = "Repeats every week on the selected days"
     override val scheduledTaskIntervalDesc = "Repeats at a fixed interval"
     override val scheduledTaskOnceDesc = "Runs a single time"
+    override val scheduledTaskHTTPDesc = "Runs when its secret HTTP endpoint receives JSON"
+    override val scheduledTaskHTTPEndpoint = "Trigger endpoint"
+    override val scheduledTaskHTTPCreateHint =
+        "A secret 32-character event key will be generated when this task is created."
+    override val scheduledTaskHTTPHint =
+        "Send POST with Content-Type application/json. No gateway token is required, so keep this endpoint secret."
     override val scheduledTaskDefaultModel = "Workspace default"
     override val scheduledTaskDefaultThinking = "Model default"
     override val scheduledTaskSkillsTitle = "Task Skills"
@@ -1298,6 +1349,26 @@ object ZhStrings : Strings {
     override val sshKeyRequired = "请选择或新建一个密钥"
     override val sshKeyStorageFailed = "无法将密钥写入安全存储"
     override val serverCredentialsStorageFailed = "无法将服务器凭据写入安全存储"
+    override val sshLocalKeysTitle = "这台电脑上的密钥"
+    override val sshLocalKeysDescription =
+        "自动发现 ~/.ssh 中的私钥。选择后会复制到 Oh Pi，原始文件不会被修改。"
+    override val sshLocalKeysScanning = "正在扫描 ~/.ssh…"
+    override val sshLocalKeysNone = "~/.ssh 中未发现可识别的私钥"
+    override val sshLocalKeysFound = { count: Int -> "发现 $count 个私钥" }
+    override val sshLocalKeysRefresh = "重新扫描"
+    override val sshLocalKeysReadFailed = { error: String -> "无法读取 ~/.ssh：$error" }
+    override val sshLocalKeyImport = "导入"
+    override val sshLocalKeyImported = "已导入"
+    override val sshLocalKeyChooseTitle = "从 ~/.ssh 选择密钥"
+    override val sshLocalKeyChoose = "选择"
+    override val sshLocalKeyUseSaved = "使用已保存项"
+    override val sshLocalKeyImportTitle = "导入本机 SSH 密钥"
+    override val sshLocalKeyImportDescription =
+        "私钥以及存在时的同名 .pub 公钥会被复制到 Oh Pi。"
+    override val sshLocalKeyEncrypted = "已加密"
+    override val sshLocalKeyEncryptedPassphraseHint =
+        "该密钥已加密；请输入口令后才能用于连接。"
+    override val sshLocalKeyPassphraseRequired = "请输入这个加密密钥的口令"
 
     override val sshHostKeyTitle = "信任这台 SSH 服务器？"
     override val sshHostKeyChangedTitle = "SSH 主机密钥已变化"
@@ -1670,17 +1741,18 @@ object ZhStrings : Strings {
     override val scheduledTasksTitle = "定时任务"
     override val scheduledTasksUnsupported = "请更新网关后再管理定时任务。"
     override val scheduledTasksEmpty = "暂无定时任务"
-    override val scheduledTasksEmptyHint = "为当前服务器创建周期或一次性 Pi 任务。"
+    override val scheduledTasksEmptyHint = "为当前服务器创建周期、一次性或外部触发的 Pi 任务。"
     override val scheduledTaskAdd = "新建任务"
     override val scheduledTaskCreateTitle = "创建定时任务"
     override val scheduledTaskEditTitle = "编辑定时任务"
     override val scheduledTaskName = "任务名称"
     override val scheduledTaskNameHint = "工作日项目检查"
     override val scheduledTaskWorkspace = "工作空间"
-    override val scheduledTaskScheduleType = "执行时间"
+    override val scheduledTaskScheduleType = "触发方式"
     override val scheduledTaskCron = "按星期"
     override val scheduledTaskInterval = "固定间隔"
     override val scheduledTaskOnce = "单次执行"
+    override val scheduledTaskHTTP = "HTTP 触发器"
     override val scheduledTaskWeekdays = "选择星期"
     override val scheduledTaskWeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
     override val scheduledTaskEveryDay = "每天"
@@ -1699,6 +1771,11 @@ object ZhStrings : Strings {
     override val scheduledTaskCronDesc = "按选定星期每周重复执行"
     override val scheduledTaskIntervalDesc = "按固定间隔重复执行"
     override val scheduledTaskOnceDesc = "仅在指定时间执行一次"
+    override val scheduledTaskHTTPDesc = "收到带密钥的 HTTP JSON 请求时执行"
+    override val scheduledTaskHTTPEndpoint = "触发接口"
+    override val scheduledTaskHTTPCreateHint = "保存任务时会自动生成一个 32 位的私密 event key。"
+    override val scheduledTaskHTTPHint =
+        "使用 POST 和 Content-Type: application/json 调用；无需网关 Token，请妥善保管该接口地址。"
     override val scheduledTaskDefaultModel = "工作空间默认模型"
     override val scheduledTaskDefaultThinking = "模型默认强度"
     override val scheduledTaskSkillsTitle = "任务专属 Skills"

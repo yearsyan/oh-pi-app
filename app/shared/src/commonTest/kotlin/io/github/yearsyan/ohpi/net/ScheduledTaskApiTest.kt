@@ -100,6 +100,30 @@ class ScheduledTaskApiTest {
     }
 
     @Test
+    fun decodesHTTPTriggerEventKey() {
+        val task = PiJson.decodeFromString(
+            GatewayScheduledTask.serializer(),
+            """
+            {
+              "id":"task-1",
+              "name":"deploy webhook",
+              "workspace_id":"workspace-1",
+              "prompt":"Deploy the requested release",
+              "schedule":{"kind":"http"},
+              "event_key":"0123456789abcdef0123456789abcdef",
+              "enabled":true,
+              "created_at":"2026-08-12T00:00:00Z",
+              "updated_at":"2026-08-12T00:00:00Z"
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(ScheduledTaskKinds.HTTP, task.schedule.kind)
+        assertEquals("0123456789abcdef0123456789abcdef", task.eventKey)
+        assertEquals(null, task.nextRunAt)
+    }
+
+    @Test
     fun decodesAssociatedSessionPageWithWorkspaceContext() {
         val page = decodeScheduledTaskSessionPage(
             """

@@ -43,6 +43,7 @@ const gatewayFeatureScheduledTasks = "scheduled_tasks_v1"
 const gatewayFeatureScheduledTaskSkills = "scheduled_task_skills_v1"
 const gatewayFeatureScheduledSessionManagement = "scheduled_session_management_v1"
 const gatewayFeatureScheduledTaskSessions = "scheduled_task_sessions_v1"
+const gatewayFeatureScheduledHTTPTriggers = "scheduled_http_triggers_v1"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
@@ -123,6 +124,7 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/api/workspaces/", gateway.handleWorkspace)
 	mux.HandleFunc("/api/tasks", gateway.handleScheduledTasks)
 	mux.HandleFunc("/api/tasks/", gateway.handleScheduledTask)
+	mux.HandleFunc("/api/task-events/", gateway.handleScheduledTaskEvent)
 	if gateway.runtimeConfig != nil {
 		mux.HandleFunc("/api/runtime-config", gateway.handleRuntimeConfig)
 		mux.HandleFunc("/api/runtime-restart", gateway.handleRuntimeRestart)
@@ -181,6 +183,7 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		gatewayFeatureScheduledTaskSkills,
 		gatewayFeatureScheduledSessionManagement,
 		gatewayFeatureScheduledTaskSessions,
+		gatewayFeatureScheduledHTTPTriggers,
 	}
 	if g.runtimeConfig != nil {
 		features = append(features, gatewayFeatureRuntimeConfig)

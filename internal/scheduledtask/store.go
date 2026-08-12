@@ -2,6 +2,7 @@ package scheduledtask
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,11 @@ import (
 	"time"
 )
 
-const taskFileName = "task.json"
+const (
+	taskFileName  = "task.json"
+	eventKeyBytes = 16
+	eventKeySize  = eventKeyBytes * 2
+)
 
 // Store persists each task as an independently replaceable JSON document.
 // One gateway process owns a data directory at a time, so an in-process mutex
@@ -46,15 +51,21 @@ func (store *Store) Create(definition Definition) (Task, error) {
 	now := store.now().UTC()
 	var next *time.Time
 	if normalized.Enabled {
-		value, err := firstOccurrence(normalized.Schedule, now)
+		next, err = firstOccurrence(normalized.Schedule, now)
 		if err != nil {
 			return Task{}, err
 		}
-		next = &value
 	}
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	var eventKey string
+	if normalized.Schedule.Kind == ScheduleHTTP {
+		eventKey, err = store.allocateEventKeyLocked()
+		if err != nil {
+			return Task{}, err
+		}
+	}
 	for range 8 {
 		id, err := newID()
 		if err != nil {
@@ -67,7 +78,9 @@ func (store *Store) Create(definition Definition) (Task, error) {
 			}
 			return Task{}, fmt.Errorf("create scheduled task directory: %w", err)
 		}
-		task := Task{ID: id, CreatedAt: now, UpdatedAt: now, NextRunAt: next}
+		task := Task{
+			ID: id, CreatedAt: now, UpdatedAt: now, NextRunAt: next, EventKey: eventKey,
+		}
 		applyDefinition(&task, normalized)
 		if err := writeNewTask(dir, task); err != nil {
 			_ = os.Remove(dir)
@@ -129,11 +142,10 @@ func (store *Store) Update(id string, definition Definition) (Task, error) {
 	now := store.now().UTC()
 	var next *time.Time
 	if normalized.Enabled {
-		value, err := firstOccurrence(normalized.Schedule, now)
+		next, err = firstOccurrence(normalized.Schedule, now)
 		if err != nil {
 			return Task{}, err
 		}
-		next = &value
 	}
 
 	store.mu.Lock()
@@ -145,7 +157,17 @@ func (store *Store) Update(id string, definition Definition) (Task, error) {
 	if task.CurrentRun != nil {
 		return Task{}, ErrRunning
 	}
+	wasHTTP := task.Schedule.Kind == ScheduleHTTP
 	applyDefinition(&task, normalized)
+	switch {
+	case task.Schedule.Kind == ScheduleHTTP && !wasHTTP:
+		task.EventKey, err = store.allocateEventKeyLocked()
+		if err != nil {
+			return Task{}, err
+		}
+	case task.Schedule.Kind != ScheduleHTTP:
+		task.EventKey = ""
+	}
 	task.NextRunAt = next
 	task.UpdatedAt = now
 	if err := replaceTask(store.taskDir(id), task); err != nil {
@@ -168,11 +190,10 @@ func (store *Store) SetEnabled(id string, enabled bool) (Task, error) {
 	now := store.now().UTC()
 	var next *time.Time
 	if enabled {
-		value, err := firstOccurrence(task.Schedule, now)
+		next, err = firstOccurrence(task.Schedule, now)
 		if err != nil {
 			return Task{}, err
 		}
-		next = &value
 	}
 	task.Enabled = enabled
 	task.NextRunAt = next
@@ -322,6 +343,42 @@ func (store *Store) claimManual(id string) (Task, Run, error) {
 	return cloneTask(task), run, nil
 }
 
+func (store *Store) claimEvent(eventKey, eventData string) (Task, Run, error) {
+	if eventData == "" {
+		return Task{}, Run{}, errors.New("HTTP trigger event data is required")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	task, err := store.findEventTaskLocked(eventKey)
+	if err != nil {
+		return Task{}, Run{}, err
+	}
+	if !task.Enabled {
+		return Task{}, Run{}, ErrDisabled
+	}
+	if task.CurrentRun != nil {
+		return Task{}, Run{}, ErrRunning
+	}
+	now := store.now().UTC()
+	runID, err := newID()
+	if err != nil {
+		return Task{}, Run{}, err
+	}
+	run := Run{
+		ID:           runID,
+		ScheduledFor: now,
+		StartedAt:    now,
+		Status:       RunRunning,
+		EventData:    eventData,
+	}
+	task.CurrentRun = &run
+	task.UpdatedAt = now
+	if err := replaceTask(store.taskDir(task.ID), task); err != nil {
+		return Task{}, Run{}, err
+	}
+	return cloneTask(task), run, nil
+}
+
 func (store *Store) markSession(id, runID, sessionID string) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -393,19 +450,22 @@ func (store *Store) Recover() error {
 	return nil
 }
 
-func firstOccurrence(schedule Schedule, now time.Time) (time.Time, error) {
+func firstOccurrence(schedule Schedule, now time.Time) (*time.Time, error) {
+	if schedule.Kind == ScheduleHTTP {
+		return nil, nil
+	}
 	next, err := schedule.Next(now)
 	if err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
 	if next.IsZero() {
-		return time.Time{}, ErrNoFutureOccurrence
+		return nil, ErrNoFutureOccurrence
 	}
-	return next, nil
+	return &next, nil
 }
 
 func nextAfterClaim(schedule Schedule, now time.Time) (*time.Time, error) {
-	if schedule.Kind == ScheduleOnce {
+	if schedule.Kind == ScheduleOnce || schedule.Kind == ScheduleHTTP {
 		return nil, nil
 	}
 	next, err := schedule.Next(now)
@@ -462,7 +522,82 @@ func (store *Store) loadLocked(id string) (Task, error) {
 	if _, err := normalizeDefinition(definitionFromTask(task)); err != nil {
 		return Task{}, fmt.Errorf("invalid scheduled task definition: %w", err)
 	}
+	if task.Schedule.Kind == ScheduleHTTP {
+		if !validEventKey(task.EventKey) {
+			return Task{}, errors.New("invalid scheduled task event key")
+		}
+	} else if task.EventKey != "" {
+		return Task{}, errors.New("unexpected scheduled task event key")
+	}
 	return cloneTask(task), nil
+}
+
+func (store *Store) allocateEventKeyLocked() (string, error) {
+	for range 8 {
+		key, err := newEventKey()
+		if err != nil {
+			return "", err
+		}
+		exists, err := store.eventKeyExistsLocked(key)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return key, nil
+		}
+	}
+	return "", errors.New("could not allocate a unique scheduled task event key")
+}
+
+func (store *Store) eventKeyExistsLocked(eventKey string) (bool, error) {
+	entries, err := os.ReadDir(store.root)
+	if err != nil {
+		return false, fmt.Errorf("read scheduled task store: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !validID(entry.Name()) {
+			continue
+		}
+		task, err := store.loadLocked(entry.Name())
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if task.EventKey == eventKey {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (store *Store) findEventTaskLocked(eventKey string) (Task, error) {
+	if !validEventKey(eventKey) {
+		return Task{}, ErrNotFound
+	}
+	entries, err := os.ReadDir(store.root)
+	if err != nil {
+		return Task{}, fmt.Errorf("read scheduled task store: %w", err)
+	}
+	var found *Task
+	for _, entry := range entries {
+		if !entry.IsDir() || !validID(entry.Name()) {
+			continue
+		}
+		task, err := store.loadLocked(entry.Name())
+		if err != nil {
+			return Task{}, err
+		}
+		if subtle.ConstantTimeCompare([]byte(task.EventKey), []byte(eventKey)) == 1 {
+			value := task
+			found = &value
+		}
+	}
+	if found == nil || found.Schedule.Kind != ScheduleHTTP {
+		return Task{}, ErrNotFound
+	}
+	return cloneTask(*found), nil
 }
 
 func writeNewTask(dir string, task Task) error {
@@ -585,6 +720,28 @@ func newID() (string, error) {
 	text[23] = '-'
 	hex.Encode(text[24:36], id[10:16])
 	return string(text[:]), nil
+}
+
+func newEventKey() (string, error) {
+	var random [eventKeyBytes]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", fmt.Errorf("generate scheduled task event key: %w", err)
+	}
+	var text [eventKeySize]byte
+	hex.Encode(text[:], random[:])
+	return string(text[:]), nil
+}
+
+func validEventKey(eventKey string) bool {
+	if len(eventKey) != eventKeySize {
+		return false
+	}
+	for _, value := range []byte(eventKey) {
+		if !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func validID(id string) bool {

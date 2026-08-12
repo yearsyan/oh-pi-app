@@ -58,3 +58,10 @@ func TestOnceScheduleHasNoOccurrenceAfterTarget(t *testing.T) {
 		t.Fatalf("at target: next=%s err=%v", next, err)
 	}
 }
+
+func TestHTTPScheduleHasNoAutomaticOccurrence(t *testing.T) {
+	next, err := (Schedule{Kind: ScheduleHTTP}).Next(time.Now())
+	if err != nil || !next.IsZero() {
+		t.Fatalf("HTTP schedule: next=%s err=%v", next, err)
+	}
+}

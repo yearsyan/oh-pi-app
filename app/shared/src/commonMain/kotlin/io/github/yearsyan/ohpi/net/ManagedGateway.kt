@@ -35,6 +35,7 @@ internal const val GATEWAY_FEATURE_SCHEDULED_TASKS = "scheduled_tasks_v1"
 internal const val GATEWAY_FEATURE_SCHEDULED_TASK_SKILLS = "scheduled_task_skills_v1"
 internal const val GATEWAY_FEATURE_SCHEDULED_SESSION_MANAGEMENT = "scheduled_session_management_v1"
 internal const val GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS = "scheduled_task_sessions_v1"
+internal const val GATEWAY_FEATURE_SCHEDULED_HTTP_TRIGGERS = "scheduled_http_triggers_v1"
 internal const val ManagedGatewayHealthTimeoutMillis = 2_000L
 
 internal enum class ManagedHostOs(val releaseName: String) {

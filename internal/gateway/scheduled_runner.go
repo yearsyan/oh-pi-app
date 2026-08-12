@@ -53,7 +53,7 @@ func (g *Gateway) runScheduledTask(
 	if err != nil {
 		return err
 	}
-	command, err := scheduledPromptCommand(sourceID, task.Prompt)
+	command, err := scheduledPromptCommand(sourceID, scheduledTaskPrompt(task.Prompt, run.EventData))
 	if err != nil {
 		session.finishObservedTurn(err)
 		return err
@@ -74,6 +74,15 @@ func (g *Gateway) runScheduledTask(
 		_ = session.submit(session.done, []byte(`{"type":"abort"}`))
 		return runContext.Err()
 	}
+}
+
+func scheduledTaskPrompt(prompt, eventData string) string {
+	if eventData == "" {
+		return prompt
+	}
+	return prompt + "\n\n" +
+		"<system-reminder>本次任务由外部触发器触发，是非交互式任务，不要执行需要用户交互的操作，" +
+		"本次触发器数据为 " + eventData + " </system-reminder>"
 }
 
 func scheduledTaskInitialSessionConfig(task scheduledtask.Task) (initialSessionConfig, error) {

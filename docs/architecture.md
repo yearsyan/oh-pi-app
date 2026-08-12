@@ -80,7 +80,9 @@ Skills 和 Extensions 路径可以配置多个；相对路径由 Pi 以工作空
 <data-dir>/scheduled-tasks/<task-id>/task.json
 ```
 
-JSON 以 `0600` 权限原子替换，保存用户定义、`next_run_at`、当前领取和最近一次结果。调度器使用单一计时循环，空闲时不轮询；每次唤醒扫描任务元数据，最多并发运行两个任务，每次模型 turn 最长一小时。同一任务禁止重叠。
+JSON 以 `0600` 权限原子替换，保存用户定义、`next_run_at`、当前领取和最近一次结果。HTTP 类型还保存由加密安全随机源生成的 32 位 `event_key`，但外部请求正文不会写入任务元数据。调度器使用单一计时循环，空闲时不轮询；每次唤醒扫描任务元数据，最多并发运行两个任务，每次模型 turn 最长一小时。同一任务禁止重叠。
+
+HTTP 任务没有 `next_run_at`。公开的固定 `POST /api/task-events/<event-key>` 路由以 key 作为唯一凭据，要求合法 JSON 正文，并直接通过 Store 的原子领取进入相同的有界执行队列。事件 JSON 仅在内存中随该次领取传给 Runner，再作为非交互式 system reminder 追加到初始化 Prompt；因此请求数据不会进入 `task.json`，但会随首次用户消息持久化到对应 session 历史。公开响应只暴露 run ID，网关日志不会记录 event key。
 
 领取 occurrence 时会先原子写入 `current_run` 并把 `next_run_at` 推进到未来，之后才启动 pi。这提供 at-most-once 的崩溃语义：重启发现未完成领取时将其标记为 `interrupted`，不会冒险重复可能已经产生副作用的 Prompt。Cron 和固定间隔在长时间停机后只补一次，不会瞬间回放全部历史触发点；单次任务在恢复后仍执行一次。任务自身仅产生少量定时器、JSON 元数据和进程管理成本，主要费用来自实际触发的模型调用；全局并发限制和禁止任务重叠共同限制突发成本。
 

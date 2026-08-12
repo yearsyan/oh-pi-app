@@ -481,6 +481,10 @@ internal fun scheduledTaskScheduleSummary(task: GatewayScheduledTask, strings: S
         }
         ScheduledTaskKinds.Interval -> "${task.schedule.everySeconds}s · ${task.schedule.anchorAt.orEmpty()}"
         ScheduledTaskKinds.Once -> task.schedule.at.orEmpty()
+        ScheduledTaskKinds.HTTP ->
+            task.eventKey.takeIf(String::isNotBlank)
+                ?.let { "POST /api/task-events/$it" }
+                ?: strings.scheduledTaskHTTP
         else -> task.schedule.kind
     }
 

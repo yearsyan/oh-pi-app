@@ -27,7 +27,6 @@ import platform.UIKit.UIViewAutoresizingFlexibleWidth
 import platform.UIKit.UIViewController
 import platform.UIKit.addChildViewController
 import platform.UIKit.didMoveToParentViewController
-import platform.UIKit.setFrame
 import platform.UIKit.sheetPresentationController
 
 @Composable
@@ -109,7 +108,7 @@ private class IosLicenseTextSheetController(
             prefersGrabberVisible = true
         }
         addChildViewController(contentController)
-        contentController.view.setFrame(view.bounds)
+        sizeViewToParent(contentController.view, view)
         contentController.view.autoresizingMask =
             UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
         view.addSubview(contentController.view)
