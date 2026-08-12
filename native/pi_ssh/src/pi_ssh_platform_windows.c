@@ -198,7 +198,7 @@ int pi_ssh_socket_configure(pi_ssh_socket socket_value)
 int pi_ssh_socket_enable_keepalive(pi_ssh_socket socket_value,
                                    uint32_t interval_seconds)
 {
-    tcp_keepalive settings;
+    struct tcp_keepalive settings;
     DWORD returned = 0;
     uint64_t idle_ms = (uint64_t)interval_seconds * 1000u;
     uint64_t probe_ms;
