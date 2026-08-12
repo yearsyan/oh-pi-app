@@ -810,6 +810,7 @@ class AppViewModel(
         if (sessionsLoading) {
             interruptedSessionRefreshGeneration = sessionRefreshGeneration
         }
+        controllers.values.forEach { it.onAppInactive() }
     }
 
     /**
@@ -827,7 +828,7 @@ class AppViewModel(
         ) {
             loadSessionsForActive(clearExisting = false)
         }
-        controllers.values.forEach { it.reconnectIfDisconnected() }
+        controllers.values.forEach { it.recoverAfterAppResume() }
     }
 
     private fun loadSessionsForActive(

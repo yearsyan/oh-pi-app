@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,6 +29,7 @@ private const val PowerShellStdin =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
 internal const val GATEWAY_FEATURE_SESSION_PROCESS_STOP = "session_process_stop"
 internal const val GATEWAY_FEATURE_RUNTIME_CONFIG = "runtime_config_v1"
+internal const val ManagedGatewayHealthTimeoutMillis = 2_000L
 
 internal enum class ManagedHostOs(val releaseName: String) {
     Macos("darwin"),
@@ -91,7 +93,7 @@ internal suspend fun awaitManagedGatewayHealth(gateway: String): ManagedGatewayH
     repeat(12) { attempt ->
         if (attempt > 0) delay(250)
         try {
-            fetchGatewayHealth(gateway)?.let { return it }
+            fetchGatewayHealthBounded(gateway)?.let { return it }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
@@ -104,6 +106,9 @@ internal suspend fun awaitManagedGatewayHealth(gateway: String): ManagedGatewayH
         cause = lastFailure,
     )
 }
+
+private suspend fun fetchGatewayHealthBounded(gateway: String): ManagedGatewayHealth? =
+    withTimeoutOrNull(ManagedGatewayHealthTimeoutMillis) { fetchGatewayHealth(gateway) }
 
 /** Fetches one health snapshot; null when the gateway is unreachable or unhealthy. */
 internal suspend fun fetchGatewayHealth(gateway: String): ManagedGatewayHealth? {
@@ -123,7 +128,7 @@ internal suspend fun checkGatewayHealth(gateway: String, attempts: Int = 4): Boo
     repeat(attempts.coerceAtLeast(1)) { attempt ->
         if (attempt > 0) delay(250)
         try {
-            if (fetchGatewayHealth(gateway) != null) return true
+            if (fetchGatewayHealthBounded(gateway) != null) return true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {

@@ -21,8 +21,13 @@ libssh's socket-based Windows poller can wake the worker without polling.
 
 The tunnel binds only `127.0.0.1` on an OS-selected port. Each local TCP
 connection becomes one SSH `direct-tcpip` channel to `remote_host:remote_port`.
-The WebSocket and HTTP clients can therefore use the same rewritten loopback
-gateway URL.
+Channel opening is bounded by the configured connect timeout, so a half-open
+SSH session transitions to failed instead of retaining loopback clients forever.
+The SSH socket requests ACK-based operating-system TCP keepalive with
+best-effort platform tuning; channel and application watchdogs remain the
+fallback when tuning is unavailable. The WebSocket and HTTP clients can
+therefore use the same rewritten loopback gateway URL while stale sessions
+remain detectable.
 
 Host verification is deliberately fail-closed. The first attempt returns
 `PI_SSH_ERROR_HOST_KEY_UNKNOWN` and the observed SHA-256 fingerprint. A caller

@@ -42,6 +42,9 @@ import kotlin.random.Random
 
 internal const val InitialReconnectDelayMillis = 1_000L
 internal const val MaxReconnectDelayMillis = 30_000L
+internal const val WebSocketOpenTimeoutMillis = 20_000L
+internal const val PreReadyIdleTimeoutMillis = 30_000L
+internal const val ResumeProbeTimeoutMillis = 5_000L
 /** Failed silent retries tolerated before one toast reports a stubborn link. */
 internal const val TransientReconnectAttemptsBeforeToast = 3
 private const val RateWindowMillis = 500L
@@ -184,6 +187,10 @@ class ChatController(
     private val resolveGateway: suspend () -> String = { gateway },
     private val cacheNamespace: String = gateway,
     private val composerDraftCache: ComposerDraftCache = ComposerDraftCache(),
+    private val client: PiClient = PiClient(scope),
+    private val webSocketOpenTimeoutMillis: Long = WebSocketOpenTimeoutMillis,
+    private val preReadyIdleTimeoutMillis: Long = PreReadyIdleTimeoutMillis,
+    private val resumeProbeTimeoutMillis: Long = ResumeProbeTimeoutMillis,
 ) {
     private data class PendingPrompt(
         val sourceId: String,
@@ -324,7 +331,6 @@ class ChatController(
         get() = !isDraft ||
             (pendingCreatePrompt != null && (conn == ConnState.Disconnected || conn == ConnState.Error))
 
-    private val client = PiClient(scope)
     private val entryCache = EntryCacheStore()
     private var keySeq = 1L
     private var lastAction = "attach"
@@ -333,6 +339,12 @@ class ChatController(
     private var lastWorkDir = ""
     private var reconnectJob: Job? = null
     private var connectionSetupJob: Job? = null
+    private var connectionWatchdogJob: Job? = null
+    private var webSocketGeneration: Long? = null
+    private var resumeProbeJob: Job? = null
+    private var resumeProbeId: String? = null
+    private var resumeProbeSequence = 0L
+    private var appActive = true
     private var capabilitiesJob: Job? = null
     private var capabilitiesGeneration = 0L
     private var reconnectAttempt = 0
@@ -533,11 +545,91 @@ class ChatController(
         beginConnection("create", null, workspaceId, workDir, clearTimeline = false)
     }
 
+    private fun cancelConnectionWatchdog() {
+        connectionWatchdogJob?.cancel()
+        connectionWatchdogJob = null
+    }
+
+    private fun armConnectionWatchdog(
+        generation: Long,
+        timeoutMillis: Long,
+        stage: String,
+    ) {
+        cancelConnectionWatchdog()
+        if (!appActive || timeoutMillis <= 0) return
+        connectionWatchdogJob = scope.launch {
+            delay(timeoutMillis)
+            if (generation != connectionGeneration || conn != ConnState.Connecting) return@launch
+            connectionWatchdogJob = null
+            webSocketGeneration = null
+            println("[PiChat] connection timed out stage=$stage")
+            connectionSetupJob?.cancel()
+            connectionSetupJob = null
+            client.disconnect()
+            handleConnectionFailure("Connection timed out while $stage")
+        }
+    }
+
+    private fun notePreReadyProgress(generation: Long) {
+        if (generation == connectionGeneration && conn == ConnState.Connecting) {
+            armConnectionWatchdog(generation, preReadyIdleTimeoutMillis, "waiting for gateway readiness")
+        }
+    }
+
+    private fun cancelResumeProbe() {
+        resumeProbeJob?.cancel()
+        resumeProbeJob = null
+        resumeProbeId = null
+    }
+
+    private fun completeResumeProbe(responseId: String) {
+        if (responseId.isNotBlank() && responseId == resumeProbeId) {
+            cancelResumeProbe()
+        }
+    }
+
+    private fun startResumeProbe() {
+        cancelResumeProbe()
+        if (conn != ConnState.Ready || !hasSafeReconnectTarget()) return
+        if (!client.connected) {
+            reconnect()
+            return
+        }
+        val generation = connectionGeneration
+        val probeId = "ohpi-resume-${generation}-${++resumeProbeSequence}"
+        resumeProbeId = probeId
+        val sent = sendCommand {
+            put("id", probeId)
+            put("type", "get_state")
+        }
+        if (!sent) {
+            cancelResumeProbe()
+            reconnect()
+            return
+        }
+        resumeProbeJob = scope.launch {
+            delay(resumeProbeTimeoutMillis)
+            if (
+                generation == connectionGeneration &&
+                conn == ConnState.Ready &&
+                resumeProbeId == probeId
+            ) {
+                resumeProbeJob = null
+                resumeProbeId = null
+                println("[PiChat] resume liveness probe timed out; reconnecting")
+                reconnect()
+            }
+        }
+    }
+
     private fun startConnection(clearTimeline: Boolean) {
         val resetTimeline = clearTimeline || reconnectNeedsFullSync
         val generation = ++connectionGeneration
         println("[PiChat] connect action=$lastAction sid=$lastSessionId workspace=$lastWorkspaceId")
         connectionSetupJob?.cancel()
+        cancelConnectionWatchdog()
+        webSocketGeneration = null
+        cancelResumeProbe()
         runCatching { entryCache.closeReplay() }
         client.disconnect()
         conn = ConnState.Connecting
@@ -622,6 +714,8 @@ class ChatController(
                     return@launch
                 }
             if (generation != connectionGeneration) return@launch
+            webSocketGeneration = generation
+            armConnectionWatchdog(generation, webSocketOpenTimeoutMillis, "opening WebSocket")
             client.connect(
                 buildWsUrl(
                     base = resolvedGateway,
@@ -637,12 +731,20 @@ class ChatController(
                     replaySince = replayCacheThroughSeq.takeIf { replayCacheReady },
                 ),
                 object : PiClient.Listener {
-                    override fun onOpen() {}
+                    override fun onOpen() {
+                        notePreReadyProgress(generation)
+                    }
                     override fun onMessage(text: String) {
-                        if (generation == connectionGeneration) onGatewayMessage(text)
+                        if (generation == connectionGeneration) {
+                            notePreReadyProgress(generation)
+                            onGatewayMessage(text)
+                        }
                     }
                     override fun onBinary(bytes: ByteArray) {
-                        if (generation == connectionGeneration) onGatewayBinary(bytes)
+                        if (generation == connectionGeneration) {
+                            notePreReadyProgress(generation)
+                            onGatewayBinary(bytes)
+                        }
                     }
                     override fun onClose(code: Short, reason: String) {
                         if (generation == connectionGeneration) handleConnectionClosed(code, reason)
@@ -681,12 +783,54 @@ class ChatController(
         reconnect()
     }
 
+    /** Pauses foreground-only watchdogs while the process is inactive. */
+    fun onAppInactive() {
+        appActive = false
+        cancelConnectionWatchdog()
+        cancelResumeProbe()
+    }
+
+    /** Revalidates or restarts a safe attach after the app returns to the foreground. */
+    fun recoverAfterAppResume() {
+        appActive = true
+        if (!reconnectEnabled) return
+        if (!hasSafeReconnectTarget()) {
+            if (
+                conn == ConnState.Connecting &&
+                webSocketGeneration == connectionGeneration
+            ) {
+                if (client.connected) {
+                    armConnectionWatchdog(
+                        connectionGeneration,
+                        preReadyIdleTimeoutMillis,
+                        "waiting for gateway readiness",
+                    )
+                } else {
+                    armConnectionWatchdog(
+                        connectionGeneration,
+                        webSocketOpenTimeoutMillis,
+                        "opening WebSocket",
+                    )
+                }
+            }
+            return
+        }
+        when (conn) {
+            ConnState.Ready -> startResumeProbe()
+            ConnState.Connecting -> reconnect()
+            ConnState.Disconnected, ConnState.Error -> reconnect()
+        }
+    }
+
     fun disconnect() {
         reconnectEnabled = false
         reconnectJob?.cancel()
         reconnectJob = null
         connectionSetupJob?.cancel()
         connectionSetupJob = null
+        cancelConnectionWatchdog()
+        webSocketGeneration = null
+        cancelResumeProbe()
         capabilitiesJob?.cancel()
         capabilitiesJob = null
         capabilitiesGeneration++
@@ -723,6 +867,9 @@ class ChatController(
     }
 
     private fun handleConnectionClosed(code: Short, reason: String) {
+        cancelConnectionWatchdog()
+        webSocketGeneration = null
+        cancelResumeProbe()
         entryCache.abort()
         abortReplayBinary()
         runCatching { entryCache.closeReplay() }
@@ -751,6 +898,9 @@ class ChatController(
     }
 
     private fun handleConnectionFailure(message: String, retryable: Boolean = true) {
+        cancelConnectionWatchdog()
+        webSocketGeneration = null
+        cancelResumeProbe()
         entryCache.abort()
         abortReplayBinary()
         runCatching { entryCache.closeReplay() }
@@ -1191,6 +1341,8 @@ class ChatController(
             "replay_end" -> finishReplaySync(msg)
             "live" -> handleLiveEvent(msg)
             "ready" -> {
+                cancelConnectionWatchdog()
+                webSocketGeneration = null
                 swapStagedTimeline()
                 reconnectNeedsFullSync = false
                 val created = msg.str("action") == "create"
@@ -1533,6 +1685,7 @@ class ChatController(
         val success = msg.bool("success") == true
         val data = msg.obj("data")
         val responseID = msg.strOrEmpty("id")
+        if (command == "get_state") completeResumeProbe(responseID)
         if (!success) {
             if (command == "get_session_stats") finishSessionStatsRefresh(runQueuedRefresh = false)
             val pending = pendingPrompt

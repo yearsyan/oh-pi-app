@@ -286,6 +286,17 @@ endif()
 
 if(PI_SSH_BUILD_TESTS)
     enable_testing()
+
+    add_executable(pi_ssh_deadline_test tests/pi_ssh_deadline_test.c)
+    target_include_directories(pi_ssh_deadline_test PRIVATE src)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(
+            pi_ssh_deadline_test
+            PRIVATE -Wall -Wextra -Wpedantic -Werror
+        )
+    endif()
+    add_test(NAME pi_ssh_deadline_test COMMAND pi_ssh_deadline_test)
+
     add_executable(pi_ssh_config_test tests/pi_ssh_config_test.c)
     target_link_libraries(pi_ssh_config_test PRIVATE pi_ssh)
     add_test(NAME pi_ssh_config_test COMMAND pi_ssh_config_test)

@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <mstcpip.h>
 #include <process.h>
 #include <stdlib.h>
 #include <string.h>
@@ -192,6 +193,40 @@ int pi_ssh_socket_configure(pi_ssh_socket socket_value)
         return -1;
     }
     return 0;
+}
+
+int pi_ssh_socket_enable_keepalive(pi_ssh_socket socket_value,
+                                   uint32_t interval_seconds)
+{
+    tcp_keepalive settings;
+    DWORD returned = 0;
+    uint64_t idle_ms = (uint64_t)interval_seconds * 1000u;
+    uint64_t probe_ms;
+
+    if (idle_ms < 1000u) {
+        idle_ms = 1000u;
+    }
+    if (idle_ms > ULONG_MAX) {
+        idle_ms = ULONG_MAX;
+    }
+    probe_ms = idle_ms / 3u;
+    if (probe_ms < 1000u) {
+        probe_ms = 1000u;
+    }
+    settings.onoff = 1;
+    settings.keepalivetime = (ULONG)idle_ms;
+    settings.keepaliveinterval = (ULONG)probe_ms;
+    return WSAIoctl(socket_value,
+                    SIO_KEEPALIVE_VALS,
+                    &settings,
+                    (DWORD)sizeof(settings),
+                    NULL,
+                    0,
+                    &returned,
+                    NULL,
+                    NULL) == 0
+               ? 0
+               : -1;
 }
 
 pi_ssh_socket pi_ssh_socket_create_listener(uint16_t *local_port)

@@ -55,6 +55,9 @@ bool pi_ssh_socket_is_valid(pi_ssh_socket socket_value);
 pi_ssh_socket pi_ssh_socket_create_listener(uint16_t *local_port);
 pi_ssh_socket pi_ssh_socket_accept(pi_ssh_socket listener);
 int pi_ssh_socket_configure(pi_ssh_socket socket_value);
+/* Enables ACK-based TCP keepalive; returns -1 when platform tuning fails. */
+int pi_ssh_socket_enable_keepalive(pi_ssh_socket socket_value,
+                                   uint32_t interval_seconds);
 int pi_ssh_socket_receive(pi_ssh_socket socket_value,
                           void *buffer,
                           size_t length);

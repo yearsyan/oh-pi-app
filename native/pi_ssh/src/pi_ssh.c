@@ -1,4 +1,5 @@
 #include "pi_ssh.h"
+#include "pi_ssh_deadline.h"
 #include "pi_ssh_platform.h"
 
 #include <libssh/libssh.h>
@@ -34,6 +35,7 @@ typedef struct pi_ssh_connection {
     short revents;
     ssh_channel channel;
     pi_ssh_connection_state state;
+    uint64_t open_started_at_ms;
     bool local_read_eof;
     bool channel_eof_sent;
     bool channel_read_eof;
@@ -57,7 +59,7 @@ struct pi_ssh_tunnel {
     uint16_t local_port;
     char *remote_host;
     uint16_t remote_port;
-    uint32_t keepalive_interval_seconds;
+    uint32_t forward_open_timeout_ms;
 
     short listener_revents;
     short wake_revents;
@@ -345,6 +347,15 @@ static void pi_ssh_set_tunnel_error(pi_ssh_tunnel *tunnel,
     pi_ssh_mutex_unlock(&tunnel->mutex);
 }
 
+static void pi_ssh_mark_tunnel_failed(pi_ssh_tunnel *tunnel)
+{
+    pi_ssh_mutex_lock(&tunnel->mutex);
+    if (tunnel->state != PI_SSH_STATE_STOPPING) {
+        tunnel->state = PI_SSH_STATE_FAILED;
+    }
+    pi_ssh_mutex_unlock(&tunnel->mutex);
+}
+
 static size_t pi_ssh_ring_free(const pi_ssh_ring_buffer *buffer)
 {
     return PI_SSH_BUFFER_CAPACITY - buffer->length;
@@ -505,6 +516,8 @@ static int pi_ssh_accept_connections(pi_ssh_tunnel *tunnel,
         }
         connection->socket_value = socket_value;
         connection->state = PI_SSH_CONNECTION_OPENING;
+        connection->open_started_at_ms =
+            pi_ssh_platform_monotonic_millis();
         connection->channel = ssh_channel_new(tunnel->session);
         if (connection->channel == NULL) {
             pi_ssh_connection_destroy(event, connection);
@@ -522,7 +535,8 @@ static int pi_ssh_accept_connections(pi_ssh_tunnel *tunnel,
 }
 
 static bool pi_ssh_connection_open_forward(pi_ssh_tunnel *tunnel,
-                                           pi_ssh_connection *connection)
+                                           pi_ssh_connection *connection,
+                                           bool *tunnel_failed)
 {
     int result = ssh_channel_open_forward(connection->channel,
                                           tunnel->remote_host,
@@ -534,7 +548,22 @@ static bool pi_ssh_connection_open_forward(pi_ssh_tunnel *tunnel,
         return true;
     }
     if (result == SSH_AGAIN) {
-        return true;
+        uint64_t now = pi_ssh_platform_monotonic_millis();
+        if (!pi_ssh_deadline_expired(connection->open_started_at_ms,
+                                     now,
+                                     tunnel->forward_open_timeout_ms)) {
+            return true;
+        }
+        pi_ssh_set_tunnel_error(
+            tunnel,
+            PI_SSH_ERROR_SSH_DISCONNECTED,
+            0,
+            "SSH forwarding channel to %s:%u timed out",
+            tunnel->remote_host,
+            (unsigned int)tunnel->remote_port);
+        pi_ssh_mark_tunnel_failed(tunnel);
+        *tunnel_failed = true;
+        return false;
     }
     pi_ssh_set_tunnel_error(tunnel,
                             PI_SSH_ERROR_REMOTE_FORWARD,
@@ -703,12 +732,15 @@ static bool pi_ssh_connection_should_close(
 
 static bool pi_ssh_process_connection(pi_ssh_tunnel *tunnel,
                                       ssh_event event,
-                                      pi_ssh_connection *connection)
+                                      pi_ssh_connection *connection,
+                                      bool *tunnel_failed)
 {
     bool healthy = true;
 
     if (connection->state == PI_SSH_CONNECTION_OPENING) {
-        healthy = pi_ssh_connection_open_forward(tunnel, connection);
+        healthy = pi_ssh_connection_open_forward(tunnel,
+                                                 connection,
+                                                 tunnel_failed);
     }
     if (healthy) {
         healthy = pi_ssh_connection_read_local(connection);
@@ -751,7 +783,6 @@ static void pi_ssh_worker_main(void *userdata)
     pi_ssh_connection *connections = NULL;
     size_t connection_count = 0;
     bool failed = false;
-    uint64_t last_keepalive = pi_ssh_platform_monotonic_seconds();
 
     event = ssh_event_new();
     if (event == NULL ||
@@ -777,7 +808,6 @@ static void pi_ssh_worker_main(void *userdata)
     while (!pi_ssh_tunnel_stop_requested(tunnel)) {
         int poll_result = ssh_event_dopoll(event, PI_SSH_EVENT_TIMEOUT_MS);
         pi_ssh_connection **cursor;
-        uint64_t now;
 
         if (poll_result == SSH_ERROR) {
             int error_code = pi_ssh_platform_last_error();
@@ -823,11 +853,22 @@ static void pi_ssh_worker_main(void *userdata)
 
         cursor = &connections;
         while (*cursor != NULL) {
-            if (!pi_ssh_process_connection(tunnel, event, *cursor)) {
+            bool tunnel_failed = false;
+            if (!pi_ssh_process_connection(tunnel,
+                                           event,
+                                           *cursor,
+                                           &tunnel_failed)) {
                 pi_ssh_remove_connection(event, cursor, &connection_count);
             } else {
                 cursor = &(*cursor)->next;
             }
+            if (tunnel_failed) {
+                failed = true;
+                break;
+            }
+        }
+        if (failed) {
+            break;
         }
 
         if ((ssh_get_status(tunnel->session) &
@@ -840,24 +881,6 @@ static void pi_ssh_worker_main(void *userdata)
                                     ssh_get_error(tunnel->session));
             failed = true;
             break;
-        }
-
-        now = pi_ssh_platform_monotonic_seconds();
-        if (tunnel->keepalive_interval_seconds > 0 && now > 0 &&
-            now - last_keepalive >= tunnel->keepalive_interval_seconds) {
-            int keepalive_result = ssh_send_ignore(tunnel->session, "ohpi");
-            if (keepalive_result == SSH_ERROR) {
-                pi_ssh_set_tunnel_error(tunnel,
-                                        PI_SSH_ERROR_SSH_DISCONNECTED,
-                                        0,
-                                        "SSH keepalive failed: %s",
-                                        ssh_get_error(tunnel->session));
-                failed = true;
-                break;
-            }
-            if (keepalive_result == SSH_OK) {
-                last_keepalive = now;
-            }
         }
     }
 
@@ -1570,7 +1593,10 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
     tunnel->session = ssh_new();
     tunnel->remote_host = pi_ssh_platform_duplicate_string(config->remote_host);
     tunnel->remote_port = config->remote_port;
-    tunnel->keepalive_interval_seconds = config->keepalive_interval_seconds;
+    tunnel->forward_open_timeout_ms =
+        config->connect_timeout_ms == 0
+            ? PI_SSH_DEFAULT_CONNECT_TIMEOUT_MS
+            : config->connect_timeout_ms;
     if (tunnel->session == NULL || tunnel->remote_host == NULL) {
         pi_ssh_set_error_value(error,
                                PI_SSH_ERROR_OUT_OF_MEMORY,
@@ -1590,6 +1616,11 @@ pi_ssh_tunnel *pi_ssh_tunnel_start(const pi_ssh_tunnel_config *config,
                                ssh_get_error(tunnel->session));
         pi_ssh_tunnel_cleanup_unstarted(tunnel);
         return NULL;
+    }
+    if (config->keepalive_interval_seconds > 0) {
+        (void)pi_ssh_socket_enable_keepalive(
+            (pi_ssh_socket)ssh_get_fd(tunnel->session),
+            config->keepalive_interval_seconds);
     }
 
     fingerprint = pi_ssh_server_fingerprint(tunnel->session);

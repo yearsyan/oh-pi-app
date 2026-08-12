@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -174,6 +175,69 @@ int pi_ssh_socket_configure(pi_ssh_socket socket_value)
     }
 #endif
     return 0;
+}
+
+int pi_ssh_socket_enable_keepalive(pi_ssh_socket socket_value,
+                                   uint32_t interval_seconds)
+{
+    int enabled = 1;
+    int idle = interval_seconds > (uint32_t)INT_MAX
+                   ? INT_MAX
+                   : (int)interval_seconds;
+    int probe_interval;
+    int probe_count = 3;
+    int result = 0;
+
+    if (idle < 1) {
+        idle = 1;
+    }
+    probe_interval = idle / probe_count;
+    if (probe_interval < 1) {
+        probe_interval = 1;
+    }
+    if (setsockopt(socket_value,
+                   SOL_SOCKET,
+                   SO_KEEPALIVE,
+                   &enabled,
+                   sizeof(enabled)) < 0) {
+        return -1;
+    }
+#if defined(TCP_KEEPIDLE)
+    if (setsockopt(socket_value,
+                   IPPROTO_TCP,
+                   TCP_KEEPIDLE,
+                   &idle,
+                   sizeof(idle)) < 0) {
+        result = -1;
+    }
+#elif defined(TCP_KEEPALIVE)
+    if (setsockopt(socket_value,
+                   IPPROTO_TCP,
+                   TCP_KEEPALIVE,
+                   &idle,
+                   sizeof(idle)) < 0) {
+        result = -1;
+    }
+#endif
+#if defined(TCP_KEEPINTVL)
+    if (setsockopt(socket_value,
+                   IPPROTO_TCP,
+                   TCP_KEEPINTVL,
+                   &probe_interval,
+                   sizeof(probe_interval)) < 0) {
+        result = -1;
+    }
+#endif
+#if defined(TCP_KEEPCNT)
+    if (setsockopt(socket_value,
+                   IPPROTO_TCP,
+                   TCP_KEEPCNT,
+                   &probe_count,
+                   sizeof(probe_count)) < 0) {
+        result = -1;
+    }
+#endif
+    return result;
 }
 
 pi_ssh_socket pi_ssh_socket_create_listener(uint16_t *local_port)

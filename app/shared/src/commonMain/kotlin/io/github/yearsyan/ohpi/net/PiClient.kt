@@ -6,7 +6,6 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,7 +20,7 @@ import kotlinx.coroutines.withContext
  * posted back onto the given [scope] (typically a main-thread viewModelScope)
  * so observers never mutate UI state from socket threads.
  */
-class PiClient(private val scope: CoroutineScope) {
+open class PiClient(private val scope: CoroutineScope) {
 
     interface Listener {
         fun onOpen()
@@ -40,37 +39,45 @@ class PiClient(private val scope: CoroutineScope) {
     private var job: Job? = null
     private val outbox = Channel<String>(capacity = 64)
 
-    @Volatile
-    private var connectionGeneration = 0L
+    private val connectionState = PiConnectionState()
 
-    @Volatile
-    var connected: Boolean = false
-        private set
+    open val connected: Boolean
+        get() = connectionState.connected
 
     private fun dispatch(generation: Long, block: () -> Unit) {
         scope.launch {
-            if (connectionGeneration == generation) block()
+            if (connectionState.isCurrent(generation)) block()
         }
     }
 
     /** Delivers replay/history frames with backpressure instead of retaining an
      * unbounded queue of frame strings and main-thread coroutines. */
-    private suspend fun dispatchAndAwait(generation: Long, block: () -> Unit) {
-        withContext(scope.coroutineContext.minusKey(Job)) {
-            if (connectionGeneration == generation) block()
+    private suspend fun dispatchAndAwait(
+        generation: Long,
+        requireConnected: Boolean = false,
+        block: () -> Unit,
+    ): Boolean = withContext(scope.coroutineContext.minusKey(Job)) {
+        val deliver = if (requireConnected) {
+            connectionState.isConnected(generation)
+        } else {
+            connectionState.isCurrent(generation)
         }
+        if (deliver) block()
+        deliver
     }
 
-    fun connect(url: String, listener: Listener) {
+    open fun connect(url: String, listener: Listener) {
         disconnect()
-        val generation = ++connectionGeneration
+        val generation = connectionState.begin()
         job = scope.launch(Dispatchers.Default) {
             try {
                 var terminalReason: CloseReason? = null
                 http.webSocket(url) {
-                    if (connectionGeneration != generation) return@webSocket
-                    connected = true
-                    dispatch(generation) { listener.onOpen() }
+                    if (!connectionState.tryOpen(generation)) return@webSocket
+                    val opened = dispatchAndAwait(generation, requireConnected = true) {
+                        listener.onOpen()
+                    }
+                    if (!opened) return@webSocket
                     val writer = launch {
                         while (true) {
                             send(Frame.Text(outbox.receive()))
@@ -95,26 +102,29 @@ class PiClient(private val scope: CoroutineScope) {
                     }
                     terminalReason = closeReason.await()
                 }
-                if (connectionGeneration == generation) connected = false
-                dispatch(generation) {
-                    listener.onClose(
-                        terminalReason?.code ?: CloseReason.Codes.NORMAL.code,
-                        terminalReason?.message ?: "",
-                    )
+                if (connectionState.tryTerminate(generation)) {
+                    dispatch(generation) {
+                        listener.onClose(
+                            terminalReason?.code ?: CloseReason.Codes.NORMAL.code,
+                            terminalReason?.message ?: "",
+                        )
+                    }
                 }
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
-                if (connectionGeneration == generation) connected = false
-                dispatch(generation) { listener.onFailure(t.message ?: t::class.simpleName ?: "error") }
+                if (connectionState.tryTerminate(generation)) {
+                    dispatch(generation) {
+                        listener.onFailure(t.message ?: t::class.simpleName ?: "error")
+                    }
+                }
             }
         }
     }
 
-    fun send(text: String): Boolean = connected && outbox.trySend(text).isSuccess
+    open fun send(text: String): Boolean = connected && outbox.trySend(text).isSuccess
 
-    fun disconnect() {
-        connectionGeneration++
-        connected = false
+    open fun disconnect() {
+        connectionState.invalidate()
         job?.cancel()
         job = null
         while (outbox.tryReceive().isSuccess) Unit

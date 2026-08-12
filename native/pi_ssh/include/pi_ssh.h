@@ -87,7 +87,9 @@ typedef struct pi_ssh_tunnel_config {
     uint16_t remote_port;
     uint16_t reserved_remote_port;
 
+    /* Also bounds opening each direct-tcpip forwarding channel. */
     uint32_t connect_timeout_ms;
+    /* Requests best-effort ACK-based TCP keepalive tuning; zero disables it. */
     uint32_t keepalive_interval_seconds;
 } pi_ssh_tunnel_config;
 
