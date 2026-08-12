@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import io.github.yearsyan.ohpi.chat.UiDialogRequest
 import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.i18n.S
@@ -540,7 +541,12 @@ fun ExtensionDialog(
 ) {
     var text by remember(request.id) { mutableStateOf(request.prefill) }
 
-    Dialog(onDismissRequest = { onRespond { put("cancelled", true) } }) {
+    Dialog(
+        onDismissRequest = { onRespond { put("cancelled", true) } },
+        // A tap outside or back press would answer the pi extension request with
+        // `cancelled`, and the first response wins — make cancellation explicit.
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+    ) {
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -562,22 +568,34 @@ fun ExtensionDialog(
                 Spacer(Modifier.height(14.dp))
 
                 when (request.method) {
-                    "select" -> Column(
-                        Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
-                    ) {
-                        request.options.forEach { option ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onRespond { put("value", option); this }
-                                    }
-                                    .padding(vertical = 6.dp),
-                            ) {
-                                RadioButton(selected = false, onClick = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.size(10.dp))
-                                Text(option, style = MaterialTheme.typography.bodyMedium)
+                    "select" -> Column {
+                        Column(
+                            Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                        ) {
+                            request.options.forEach { option ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onRespond { put("value", option); this }
+                                        }
+                                        .padding(vertical = 6.dp),
+                                ) {
+                                    RadioButton(selected = false, onClick = null, modifier = Modifier.size(20.dp))
+                                    Spacer(Modifier.size(10.dp))
+                                    Text(option, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                        // Dismissal requires an explicit choice: taps outside and the back
+                        // button are disabled, so select needs its own cancel affordance.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { onRespond { put("cancelled", true) } }) {
+                                Text(S.dialogCancel)
                             }
                         }
                     }
