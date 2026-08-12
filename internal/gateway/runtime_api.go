@@ -11,34 +11,39 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
-	runtimeConfigTitleModelKey = "OHPI_TITLE_MODEL"
-	runtimeConfigEnvFileKey    = "OHPI_PI_ENV_FILE"
-	runtimeConfigEnvShellKey   = "OHPI_PI_ENV_SHELL"
-	runtimeConfigMaxBody       = 16 << 10
-	runtimeConfigMaxFile       = 64 << 10
+	runtimeConfigTitleModelKey         = "OHPI_TITLE_MODEL"
+	runtimeConfigEnvFileKey            = "OHPI_PI_ENV_FILE"
+	runtimeConfigEnvShellKey           = "OHPI_PI_ENV_SHELL"
+	runtimeConfigScheduledRetentionKey = "OHPI_SCHEDULED_SESSION_RETENTION"
+	runtimeConfigMaxBody               = 16 << 10
+	runtimeConfigMaxFile               = 64 << 10
 )
 
 type runtimeSettings struct {
-	TitleModel         string
-	PiEnvironmentFile  string
-	PiEnvironmentShell string
+	TitleModel                string
+	PiEnvironmentFile         string
+	PiEnvironmentShell        string
+	ScheduledSessionRetention time.Duration
 }
 
 type runtimeConfigResponse struct {
-	TitleModel         string `json:"title_model"`
-	PiEnvironmentFile  string `json:"pi_env_file"`
-	PiEnvironmentShell string `json:"pi_env_shell"`
-	RestartRequired    bool   `json:"restart_required"`
-	RestartSupported   bool   `json:"restart_supported"`
+	TitleModel                       string `json:"title_model"`
+	PiEnvironmentFile                string `json:"pi_env_file"`
+	PiEnvironmentShell               string `json:"pi_env_shell"`
+	ScheduledSessionRetentionSeconds int64  `json:"scheduled_session_retention_seconds"`
+	RestartRequired                  bool   `json:"restart_required"`
+	RestartSupported                 bool   `json:"restart_supported"`
 }
 
 type runtimeConfigUpdate struct {
-	TitleModel         *string `json:"title_model"`
-	PiEnvironmentFile  *string `json:"pi_env_file"`
-	PiEnvironmentShell *string `json:"pi_env_shell"`
+	TitleModel                       *string `json:"title_model"`
+	PiEnvironmentFile                *string `json:"pi_env_file"`
+	PiEnvironmentShell               *string `json:"pi_env_shell"`
+	ScheduledSessionRetentionSeconds *int64  `json:"scheduled_session_retention_seconds"`
 }
 
 type runtimeConfigService struct {
@@ -57,9 +62,10 @@ func newRuntimeConfigService(cfg Config) *runtimeConfigService {
 	return &runtimeConfigService{
 		path: cfg.RuntimeConfigPath,
 		active: runtimeSettings{
-			TitleModel:         cfg.TitleModel,
-			PiEnvironmentFile:  cfg.PiEnvironmentFile,
-			PiEnvironmentShell: cfg.PiEnvironmentShell,
+			TitleModel:                cfg.TitleModel,
+			PiEnvironmentFile:         cfg.PiEnvironmentFile,
+			PiEnvironmentShell:        cfg.PiEnvironmentShell,
+			ScheduledSessionRetention: cfg.ScheduledSessionRetention,
 		},
 		requestRestart: cfg.RequestRestart,
 	}
@@ -67,11 +73,12 @@ func newRuntimeConfigService(cfg Config) *runtimeConfigService {
 
 func (service *runtimeConfigService) responseLocked(settings runtimeSettings) runtimeConfigResponse {
 	return runtimeConfigResponse{
-		TitleModel:         settings.TitleModel,
-		PiEnvironmentFile:  settings.PiEnvironmentFile,
-		PiEnvironmentShell: settings.PiEnvironmentShell,
-		RestartRequired:    settings != service.active,
-		RestartSupported:   service.requestRestart != nil,
+		TitleModel:                       settings.TitleModel,
+		PiEnvironmentFile:                settings.PiEnvironmentFile,
+		PiEnvironmentShell:               settings.PiEnvironmentShell,
+		ScheduledSessionRetentionSeconds: int64(settings.ScheduledSessionRetention / time.Second),
+		RestartRequired:                  settings != service.active,
+		RestartSupported:                 service.requestRestart != nil,
 	}
 }
 
@@ -109,6 +116,16 @@ func (service *runtimeConfigService) update(update runtimeConfigUpdate) (runtime
 	if update.PiEnvironmentShell != nil {
 		settings.PiEnvironmentShell = strings.TrimSpace(*update.PiEnvironmentShell)
 	}
+	if update.ScheduledSessionRetentionSeconds != nil {
+		seconds := *update.ScheduledSessionRetentionSeconds
+		const maximumSeconds = int64((10 * 365 * 24 * time.Hour) / time.Second)
+		if seconds < int64(time.Hour/time.Second) || seconds > maximumSeconds {
+			return runtimeConfigResponse{}, &runtimeConfigValidationError{
+				err: errors.New("scheduled session retention must be between one hour and ten years"),
+			}
+		}
+		settings.ScheduledSessionRetention = time.Duration(seconds) * time.Second
+	}
 	if settings.PiEnvironmentFile == "" && settings.PiEnvironmentShell != "" {
 		return runtimeConfigResponse{}, &runtimeConfigValidationError{err: errors.New("pi_env_shell requires pi_env_file")}
 	}
@@ -132,6 +149,7 @@ func (service *runtimeConfigService) update(update runtimeConfigUpdate) (runtime
 		return runtimeConfigResponse{}, err
 	}
 	values[runtimeConfigTitleModelKey] = settings.TitleModel
+	values[runtimeConfigScheduledRetentionKey] = settings.ScheduledSessionRetention.String()
 	if settings.PiEnvironmentFile == "" {
 		delete(values, runtimeConfigEnvFileKey)
 		delete(values, runtimeConfigEnvShellKey)
@@ -189,7 +207,8 @@ func (g *Gateway) handleRuntimeConfig(writer http.ResponseWriter, request *http.
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must contain runtime configuration fields")
 		return
 	}
-	if update.TitleModel == nil && update.PiEnvironmentFile == nil && update.PiEnvironmentShell == nil {
+	if update.TitleModel == nil && update.PiEnvironmentFile == nil && update.PiEnvironmentShell == nil &&
+		update.ScheduledSessionRetentionSeconds == nil {
 		writeHTTPError(writer, http.StatusBadRequest, "empty_update", "at least one runtime configuration field is required")
 		return
 	}
@@ -320,7 +339,8 @@ func writeRuntimeConfigValues(path string, values map[string]string) error {
 func supportedRuntimeConfigKey(key string) bool {
 	switch key {
 	case "OHPI_LISTEN", "OHPI_DATA_DIR", "OHPI_WORK_DIR", runtimeConfigTitleModelKey,
-		"OHPI_PI_COMMAND", "OHPI_PI_ENV_PATH", runtimeConfigEnvFileKey, runtimeConfigEnvShellKey:
+		"OHPI_PI_COMMAND", "OHPI_PI_ENV_PATH", runtimeConfigEnvFileKey, runtimeConfigEnvShellKey,
+		runtimeConfigScheduledRetentionKey:
 		return true
 	default:
 		return false

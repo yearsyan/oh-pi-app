@@ -54,6 +54,11 @@ func run() int {
 	piEnvironmentShell := flag.String("pi-env-shell", os.Getenv("OHPI_PI_ENV_SHELL"), "shell used to source --pi-env-file")
 	maxMessage := flag.Int64("max-message-bytes", 128<<20, "maximum WebSocket command and pi event size")
 	sessionIdle := flag.Duration("session-idle-timeout", 5*time.Minute, "stop a settled pi session after this idle period")
+	scheduledSessionRetention := flag.Duration(
+		"scheduled-session-retention",
+		7*24*time.Hour,
+		"delete inactive scheduled-task sessions after this period",
+	)
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Var(&piArgs, "pi-arg", "extra pi argument; repeat for multiple arguments")
 	flag.Var(&allowedOrigins, "allow-origin", `allowed WebSocket Origin; repeat or use "*"`)
@@ -82,6 +87,17 @@ func run() int {
 	*piEnvironmentPath = resolveRuntimeConfigValue(*piEnvironmentPath, explicitFlags["pi-env-path"], "OHPI_PI_ENV_PATH", fileConfig)
 	*piEnvironmentFile = resolveRuntimeConfigValue(*piEnvironmentFile, explicitFlags["pi-env-file"], "OHPI_PI_ENV_FILE", fileConfig)
 	*piEnvironmentShell = resolveRuntimeConfigValue(*piEnvironmentShell, explicitFlags["pi-env-shell"], "OHPI_PI_ENV_SHELL", fileConfig)
+	scheduledRetentionValue := resolveRuntimeConfigValue(
+		scheduledSessionRetention.String(),
+		explicitFlags["scheduled-session-retention"],
+		"OHPI_SCHEDULED_SESSION_RETENTION",
+		fileConfig,
+	)
+	*scheduledSessionRetention, err = time.ParseDuration(scheduledRetentionValue)
+	if err != nil || *scheduledSessionRetention < time.Hour {
+		logger.Error("scheduled session retention must be a duration of at least one hour", "value", scheduledRetentionValue)
+		return 2
+	}
 	*titleModel, err = normalizeTitleModel(*titleModel)
 	if err != nil {
 		logger.Error("configure title model", "error", err)
@@ -132,10 +148,11 @@ func run() int {
 			default:
 			}
 		},
-		AllowedOrigins:  allowedOrigins,
-		MaxMessageBytes: *maxMessage,
-		SessionIdle:     *sessionIdle,
-		Logger:          logger,
+		AllowedOrigins:            allowedOrigins,
+		MaxMessageBytes:           *maxMessage,
+		SessionIdle:               *sessionIdle,
+		ScheduledSessionRetention: *scheduledSessionRetention,
+		Logger:                    logger,
 	})
 	if err != nil {
 		logger.Error("configure ohpi-gateway", "error", err)

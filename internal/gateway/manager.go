@@ -43,16 +43,59 @@ func newSessionManager(cfg Config, store *sessionStore, workspaces *workspaceSto
 }
 
 func (m *sessionManager) create(workspaceID string, initial initialSessionConfig) (*piSession, error) {
+	return m.createWithSource(workspaceID, initial, "")
+}
+
+func (m *sessionManager) createScheduled(
+	workspaceID string,
+	taskID string,
+	initial initialSessionConfig,
+) (*piSession, error) {
 	workspace, err := m.workspaces.load(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	meta, dir, err := m.store.create(workspace.ID)
+	meta, dir, err := m.store.createForScheduledTask(
+		workspace.ID,
+		taskID,
+		initial.skillPaths,
+		initial.noSkills,
+	)
 	if err != nil {
 		return nil, err
 	}
+	return m.startCreatedSession(workspace, meta, dir, initial)
+}
+
+func (m *sessionManager) createWithSource(
+	workspaceID string,
+	initial initialSessionConfig,
+	source string,
+) (*piSession, error) {
+	workspace, err := m.workspaces.load(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	meta, dir, err := m.store.createWithResources(
+		workspace.ID,
+		source,
+		initial.skillPaths,
+		initial.noSkills,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return m.startCreatedSession(workspace, meta, dir, initial)
+}
+
+func (m *sessionManager) startCreatedSession(
+	workspace workspaceMetadata,
+	meta sessionMetadata,
+	dir string,
+	initial initialSessionConfig,
+) (*piSession, error) {
 	args := m.argsForWorkspace(workspace)
-	args = append(args, initial.args()...)
+	args = append(args, initial.args(workspace.SkillPaths, workspace.NoSkills)...)
 	session, _, err := m.getOrStart(meta.ID, dir, workspace.ID, workspace.Directory, args, true)
 	if err != nil {
 		if discardErr := m.store.discard(meta.ID); discardErr != nil {
@@ -68,6 +111,64 @@ func (m *sessionManager) create(workspaceID string, initial initialSessionConfig
 	return session, nil
 }
 
+func (m *sessionManager) listScheduledTask(taskID string) ([]managedSession, error) {
+	all, err := m.list()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]managedSession, 0)
+	for _, session := range all {
+		if session.Metadata.ScheduledTaskID == taskID {
+			result = append(result, session)
+		}
+	}
+	return result, nil
+}
+
+func (m *sessionManager) pruneScheduledSessions(ctx context.Context, cutoff time.Time) (int, error) {
+	metas, err := m.store.list()
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	for _, meta := range metas {
+		if err := ctx.Err(); err != nil {
+			return deleted, err
+		}
+		if meta.Source != sessionSourceScheduledTask || !meta.UpdatedAt.Before(cutoff) {
+			continue
+		}
+
+		m.mu.Lock()
+		if _, deleting := m.deleting[meta.ID]; deleting {
+			m.mu.Unlock()
+			continue
+		}
+		current := m.sessions[meta.ID]
+		if current != nil && !current.isDone() {
+			m.mu.Unlock()
+			continue
+		}
+		m.deleting[meta.ID] = struct{}{}
+		m.mu.Unlock()
+
+		removed, removeErr := m.store.deleteScheduledBefore(meta.ID, cutoff)
+		m.mu.Lock()
+		delete(m.deleting, meta.ID)
+		if removed {
+			delete(m.sessions, meta.ID)
+		}
+		m.mu.Unlock()
+		if removeErr != nil {
+			return deleted, removeErr
+		}
+		if removed {
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 func (m *sessionManager) attach(id string) (*piSession, error) {
 	meta, dir, err := m.store.load(id)
 	if err != nil {
@@ -77,12 +178,15 @@ func (m *sessionManager) attach(id string) (*piSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load session workspace: %w", err)
 	}
+	args := m.argsForWorkspace(workspace)
+	resources := initialSessionConfig{skillPaths: meta.SkillPaths, noSkills: meta.NoSkills}
+	args = append(args, resources.args(workspace.SkillPaths, workspace.NoSkills)...)
 	session, started, err := m.getOrStart(
 		meta.ID,
 		dir,
 		workspace.ID,
 		workspace.Directory,
-		m.argsForWorkspace(workspace),
+		args,
 		false,
 	)
 	if err != nil {
@@ -115,8 +219,14 @@ func (m *sessionManager) exists(id string) (bool, error) {
 	if deleting {
 		return false, nil
 	}
-	_, _, err := m.store.load(id)
+	meta, _, err := m.store.load(id)
 	if err == nil {
+		if _, workspaceErr := m.workspaces.load(meta.WorkspaceID); workspaceErr != nil {
+			if errors.Is(workspaceErr, errWorkspaceNotFound) {
+				return false, nil
+			}
+			return false, workspaceErr
+		}
 		return true, nil
 	}
 	if errors.Is(err, errSessionNotFound) {
@@ -184,6 +294,9 @@ func sortManagedSessions(sessions []managedSession) {
 }
 
 func (m *sessionManager) getInWorkspace(workspaceID, id string) (managedSession, error) {
+	if _, err := m.workspaces.load(workspaceID); err != nil {
+		return managedSession{}, err
+	}
 	session, err := m.get(id)
 	if err != nil {
 		return managedSession{}, err
@@ -417,7 +530,25 @@ func (m *sessionManager) getOrStart(
 }
 
 func (m *sessionManager) argsForWorkspace(workspace workspaceMetadata) []string {
-	args := append([]string(nil), m.cfg.PiArgs...)
+	return piArgsForWorkspace(m.cfg.PiArgs, workspace)
+}
+
+func piArgsForWorkspace(base []string, workspace workspaceMetadata) []string {
+	additional := len(workspace.SkillPaths)*2 + len(workspace.ExtensionPaths)*2 + 4
+	args := make([]string, 0, len(base)+additional)
+	args = append(args, base...)
+	if workspace.NoSkills {
+		args = append(args, "--no-skills")
+	}
+	for _, path := range workspace.SkillPaths {
+		args = append(args, "--skill", path)
+	}
+	if workspace.NoExtensions {
+		args = append(args, "--no-extensions")
+	}
+	for _, path := range workspace.ExtensionPaths {
+		args = append(args, "--extension", path)
+	}
 	if workspace.AdditionalSystemPrompt != "" {
 		args = append(args, "--append-system-prompt", workspace.AdditionalSystemPrompt)
 	}

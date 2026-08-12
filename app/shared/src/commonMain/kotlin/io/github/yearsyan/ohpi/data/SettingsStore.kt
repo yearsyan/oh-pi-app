@@ -134,6 +134,11 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         get() = settings.getBoolean(KEY_SIDEBAR_COLLAPSED, false)
         set(value) = settings.putBoolean(KEY_SIDEBAR_COLLAPSED, value)
 
+    /** Whether scheduled-task runs are omitted from the normal session list. */
+    var hideScheduledTaskSessions: Boolean
+        get() = settings.getBoolean(KEY_HIDE_SCHEDULED_TASK_SESSIONS, false)
+        set(value) = settings.putBoolean(KEY_HIDE_SCHEDULED_TASK_SESSIONS, value)
+
     var lastSessionId: String
         get() = settings.getString(KEY_LAST_SESSION, "")
         set(value) = settings.putString(KEY_LAST_SESSION, value)
@@ -162,10 +167,7 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         saveWorkspaceIds("$KEY_ARCHIVED_WORKSPACES$serverId", workspaceIds)
     }
 
-    /**
-     * Locally suppressed empty workspaces whose remote sessions were deleted.
-     * A later session revives the workspace automatically.
-     */
+    /** Legacy local workspace suppression retained only for migration cleanup. */
     fun deletedWorkspaceIds(serverId: String): Set<String> =
         decodeList<String>(settings.getString("$KEY_DELETED_WORKSPACES$serverId", ""))
             .filterTo(linkedSetOf()) { it.isNotBlank() }
@@ -201,6 +203,7 @@ class SettingsStore(private val settings: Settings = createSettings()) {
         private const val KEY_THEME = "theme_mode"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_SIDEBAR_COLLAPSED = "sidebar_collapsed"
+        private const val KEY_HIDE_SCHEDULED_TASK_SESSIONS = "hide_scheduled_task_sessions"
         private const val KEY_LAST_SESSION = "last_session"
         private const val KEY_SESSIONS = "sessions_" // pre-server-list releases
         private const val KEY_LAST_WORKSPACE_ID = "last_workspace_id_"

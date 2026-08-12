@@ -25,6 +25,7 @@ type piOutputEnvelope struct {
 	Method  string  `json:"method,omitempty"`
 	Command string  `json:"command,omitempty"`
 	Success bool    `json:"success,omitempty"`
+	Error   string  `json:"error,omitempty"`
 	Name    *string `json:"name,omitempty"`
 }
 
@@ -272,6 +273,9 @@ func (s *piSession) handleOutput(message []byte) {
 	}
 	if broadcastOutput && !broadcastWhileLocked {
 		s.broadcast(message, replayMessage, outputSeq, replayable)
+	}
+	if validJSON {
+		s.observeTurnOutput(message, envelope)
 	}
 }
 

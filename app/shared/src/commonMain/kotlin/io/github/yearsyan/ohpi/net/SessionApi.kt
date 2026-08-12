@@ -1,6 +1,7 @@
 package io.github.yearsyan.ohpi.net
 
 import io.github.yearsyan.ohpi.data.SavedSession
+import io.github.yearsyan.ohpi.data.WorkspaceResourceConfiguration
 import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -40,6 +41,10 @@ private data class GatewayWorkspace(
     val directory: String,
     val name: String = "",
     @SerialName("additional_system_prompt") val additionalSystemPrompt: String = "",
+    @SerialName("skill_paths") val skillPaths: List<String> = emptyList(),
+    @SerialName("no_skills") val noSkills: Boolean = false,
+    @SerialName("extension_paths") val extensionPaths: List<String> = emptyList(),
+    @SerialName("no_extensions") val noExtensions: Boolean = false,
     val technology: String = "generic",
     val technologies: List<String> = emptyList(),
     @SerialName("session_count") val sessionCount: Int = 0,
@@ -54,6 +59,10 @@ private data class GatewayWorkspace(
             directory = directory,
             name = name,
             additionalSystemPrompt = additionalSystemPrompt,
+            skillPaths = skillPaths,
+            noSkills = noSkills,
+            extensionPaths = extensionPaths,
+            noExtensions = noExtensions,
             technology = technology,
             technologies = technologies,
             sessionCount = sessionCount,
@@ -72,6 +81,8 @@ private data class GatewaySession(
     @SerialName("last_active") val lastActive: Long = 0L,
     val running: Boolean = false,
     val outputting: Boolean = false,
+    val source: String = "",
+    @SerialName("scheduled_task_id") val scheduledTaskId: String = "",
 ) {
     fun summary(workspaceId: String, directory: String): SavedSession =
         SavedSession(
@@ -83,6 +94,8 @@ private data class GatewaySession(
             workspaceDirectory = directory,
             running = running,
             outputting = outputting,
+            source = source,
+            scheduledTaskId = scheduledTaskId,
         )
 }
 
@@ -93,6 +106,16 @@ private data class WorkspaceCreate(val directory: String)
 private data class WorkspaceUpdate(
     val name: String,
     @SerialName("additional_system_prompt") val additionalSystemPrompt: String,
+)
+
+@Serializable
+private data class WorkspaceResourceUpdate(
+    val name: String,
+    @SerialName("additional_system_prompt") val additionalSystemPrompt: String,
+    @SerialName("skill_paths") val skillPaths: List<String>,
+    @SerialName("no_skills") val noSkills: Boolean,
+    @SerialName("extension_paths") val extensionPaths: List<String>,
+    @SerialName("no_extensions") val noExtensions: Boolean,
 )
 
 @Serializable
@@ -147,10 +170,12 @@ suspend fun listGatewayWorkspaces(
     gateway: String,
     token: String,
     sessionLimit: Int = DEFAULT_GATEWAY_WORKSPACE_SESSION_PREVIEW,
+    includeScheduled: Boolean = true,
 ): List<WorkspaceSummary> {
     val boundedLimit = sessionLimit.coerceIn(1, MAX_GATEWAY_WORKSPACE_SESSION_PAGE_SIZE)
     val response = gatewayHttp.get(
-        "${gatewayHttpBase(gateway)}/api/workspaces?session_limit=$boundedLimit",
+        "${gatewayHttpBase(gateway)}/api/workspaces?session_limit=$boundedLimit" +
+            "&include_scheduled=$includeScheduled",
     ) { authenticate(token) }
     val body = response.requireSuccess()
     return decodeWorkspaceList(body)
@@ -160,8 +185,11 @@ suspend fun createGatewayWorkspace(
     gateway: String,
     token: String,
     directory: String,
+    includeScheduled: Boolean = true,
 ): WorkspaceSummary {
-    val response = gatewayHttp.post("${gatewayHttpBase(gateway)}/api/workspaces") {
+    val response = gatewayHttp.post(
+        "${gatewayHttpBase(gateway)}/api/workspaces?include_scheduled=$includeScheduled",
+    ) {
         authenticate(token)
         contentType(ContentType.Application.Json)
         setBody(PiJson.encodeToString(WorkspaceCreate.serializer(), WorkspaceCreate(directory)))
@@ -176,20 +204,50 @@ suspend fun updateGatewayWorkspace(
     workspaceId: String,
     name: String,
     additionalSystemPrompt: String,
+    includeScheduled: Boolean = true,
+    resources: WorkspaceResourceConfiguration? = null,
 ): WorkspaceSummary {
     val response = gatewayHttp.patch(
-        "${gatewayHttpBase(gateway)}/api/workspaces/${urlEncode(workspaceId)}",
+        "${gatewayHttpBase(gateway)}/api/workspaces/${urlEncode(workspaceId)}" +
+            "?include_scheduled=$includeScheduled",
     ) {
         authenticate(token)
         contentType(ContentType.Application.Json)
-        setBody(
-            PiJson.encodeToString(
-                WorkspaceUpdate.serializer(),
-                WorkspaceUpdate(name, additionalSystemPrompt),
+        setBody(encodeWorkspaceUpdate(name, additionalSystemPrompt, resources))
+    }
+    return decodeWorkspace(response.requireSuccess())
+}
+
+internal fun encodeWorkspaceUpdate(
+    name: String,
+    additionalSystemPrompt: String,
+    resources: WorkspaceResourceConfiguration?,
+): String =
+    if (resources == null) {
+        PiJson.encodeToString(
+            WorkspaceUpdate.serializer(),
+            WorkspaceUpdate(name, additionalSystemPrompt),
+        )
+    } else {
+        PiJson.encodeToString(
+            WorkspaceResourceUpdate.serializer(),
+            WorkspaceResourceUpdate(
+                name = name,
+                additionalSystemPrompt = additionalSystemPrompt,
+                skillPaths = resources.skillPaths,
+                noSkills = resources.noSkills,
+                extensionPaths = resources.extensionPaths,
+                noExtensions = resources.noExtensions,
             ),
         )
     }
-    return decodeWorkspace(response.requireSuccess())
+
+suspend fun deleteGatewayWorkspace(gateway: String, token: String, workspaceId: String) {
+    gatewayHttp.delete(
+        "${gatewayHttpBase(gateway)}/api/workspaces/${urlEncode(workspaceId)}",
+    ) {
+        authenticate(token)
+    }.requireSuccess()
 }
 
 suspend fun listGatewayWorkspaceSessions(
@@ -198,9 +256,11 @@ suspend fun listGatewayWorkspaceSessions(
     workspace: WorkspaceSummary,
     cursor: String,
     limit: Int = 20,
+    includeScheduled: Boolean = true,
 ): WorkspaceSessionPage {
     val suffix = buildString {
         append("?limit=").append(limit.coerceIn(1, MAX_GATEWAY_WORKSPACE_SESSION_PAGE_SIZE))
+        append("&include_scheduled=").append(includeScheduled)
         if (cursor.isNotBlank()) append("&cursor=").append(urlEncode(cursor))
     }
     val response = gatewayHttp.get(

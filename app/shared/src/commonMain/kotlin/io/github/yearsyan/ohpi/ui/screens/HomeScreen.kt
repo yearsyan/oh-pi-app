@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -102,6 +103,15 @@ internal data object PortForwardsRoute
 @Serializable
 internal data class FilesRoute(val path: String)
 
+@Serializable
+internal data object ScheduledTasksRoute
+
+@Serializable
+internal data class ScheduledTaskEditorRoute(val taskId: String = "")
+
+@Serializable
+internal data class ScheduledTaskSessionsRoute(val taskId: String, val taskName: String)
+
 /** Adaptive home: single-pane navigation on phones, list+detail on tablets/desktop. */
 @Composable
 fun HomeScreen(vm: AppViewModel) {
@@ -131,6 +141,10 @@ fun HomeScreen(vm: AppViewModel) {
         if (vm.archiveWorkspace(workspace.id)) returnToSessionList()
     }
 
+    fun deleteWorkspace(workspace: WorkspaceSummary) {
+        if (vm.deleteWorkspace(workspace.id)) returnToSessionList()
+    }
+
     fun openCompactChat(sessionId: String) {
         vm.openChat(sessionId)
         navController.navigate(ChatRoute(sessionId))
@@ -144,7 +158,7 @@ fun HomeScreen(vm: AppViewModel) {
         navController.navigate(SettingsSectionRoute(SettingsSection.Providers.name))
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= WideBreakpoint
 
         NavHost(
@@ -180,23 +194,27 @@ fun HomeScreen(vm: AppViewModel) {
             },
         ) {
             composable<SessionListRoute> {
-                MainDestination(
-                    vm = vm,
-                    wide = wide,
-                    compactChatId = null,
-                    onNavigateBack = { navController.popBackStack() },
-                    onOpenSettings = { navController.navigate(SettingsRoute) },
-                    onSelectServer = ::selectServer,
-                    onOpenCompactChat = ::openCompactChat,
-                    onDeleteSession = ::deleteSession,
-                    onRenameSession = { renaming = it },
-                    onEditWorkspace = { editingWorkspace = it },
-                    onArchiveWorkspace = ::archiveWorkspace,
-                    onRequestNewChat = { newChatWide = it },
-                    onBrowseFiles = ::openFileBrowser,
-                    onOpenProviders = ::openProviders,
-                    onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
-                )
+                SafeDrawingHost {
+                    MainDestination(
+                        vm = vm,
+                        wide = wide,
+                        compactChatId = null,
+                        onNavigateBack = { navController.popBackStack() },
+                        onOpenSettings = { navController.navigate(SettingsRoute) },
+                        onSelectServer = ::selectServer,
+                        onOpenCompactChat = ::openCompactChat,
+                        onDeleteSession = ::deleteSession,
+                        onRenameSession = { renaming = it },
+                        onEditWorkspace = { editingWorkspace = it },
+                        onArchiveWorkspace = ::archiveWorkspace,
+                        onDeleteWorkspace = ::deleteWorkspace,
+                        onRequestNewChat = { newChatWide = it },
+                        onBrowseFiles = ::openFileBrowser,
+                        onOpenProviders = ::openProviders,
+                        onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
+                        onOpenScheduledTasks = { navController.navigate(ScheduledTasksRoute) },
+                    )
+                }
             }
 
             composable<ChatRoute> { backStackEntry ->
@@ -204,23 +222,27 @@ fun HomeScreen(vm: AppViewModel) {
                 LaunchedEffect(route.sessionId) {
                     if (vm.activeChatId == null) vm.openChat(route.sessionId)
                 }
-                MainDestination(
-                    vm = vm,
-                    wide = wide,
-                    compactChatId = vm.activeChatId ?: route.sessionId,
-                    onNavigateBack = { navController.popBackStack() },
-                    onOpenSettings = { navController.navigate(SettingsRoute) },
-                    onSelectServer = ::selectServer,
-                    onOpenCompactChat = ::openCompactChat,
-                    onDeleteSession = ::deleteSession,
-                    onRenameSession = { renaming = it },
-                    onEditWorkspace = { editingWorkspace = it },
-                    onArchiveWorkspace = ::archiveWorkspace,
-                    onRequestNewChat = { newChatWide = it },
-                    onBrowseFiles = ::openFileBrowser,
-                    onOpenProviders = ::openProviders,
-                    onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
-                )
+                SafeDrawingHost {
+                    MainDestination(
+                        vm = vm,
+                        wide = wide,
+                        compactChatId = vm.activeChatId ?: route.sessionId,
+                        onNavigateBack = { navController.popBackStack() },
+                        onOpenSettings = { navController.navigate(SettingsRoute) },
+                        onSelectServer = ::selectServer,
+                        onOpenCompactChat = ::openCompactChat,
+                        onDeleteSession = ::deleteSession,
+                        onRenameSession = { renaming = it },
+                        onEditWorkspace = { editingWorkspace = it },
+                        onArchiveWorkspace = ::archiveWorkspace,
+                        onDeleteWorkspace = ::deleteWorkspace,
+                        onRequestNewChat = { newChatWide = it },
+                        onBrowseFiles = ::openFileBrowser,
+                        onOpenProviders = ::openProviders,
+                        onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
+                        onOpenScheduledTasks = { navController.navigate(ScheduledTasksRoute) },
+                    )
+                }
             }
 
             composable<FilesRoute> { backStackEntry ->
@@ -235,84 +257,139 @@ fun HomeScreen(vm: AppViewModel) {
                         downloadFile = vm::downloadFile,
                     )
                 }
-                FileBrowserScreen(
-                    controller = browserController,
-                    onBack = { navController.popBackStack() },
-                    onOpenApk = rememberApkOpener(
-                        downloadFile = vm::downloadFile,
-                        onToast = { vm.toast(it) },
-                    ),
-                )
+                SafeDrawingHost {
+                    FileBrowserScreen(
+                        controller = browserController,
+                        onBack = { navController.popBackStack() },
+                        onOpenApk = rememberApkOpener(
+                            downloadFile = vm::downloadFile,
+                            onToast = { vm.toast(it) },
+                        ),
+                    )
+                }
             }
 
             composable<SettingsRoute> {
-                SettingsScreen(
-                    vm = vm,
-                    servers = vm.servers,
-                    sshKeys = vm.sshKeys,
-                    activeServerId = vm.activeServerId,
-                    themeMode = vm.themeMode,
-                    language = vm.language,
-                    wide = wide,
-                    section = null,
-                    onBack = { navController.popBackStack() },
-                    onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
-                    onSelectServer = vm::selectServer,
-                    onSaveServer = vm::saveServer,
-                    onDeleteServer = vm::deleteServer,
-                    onSaveSshKey = vm::saveSshKey,
-                    onDeleteSshKey = { vm.deleteSshKey(it.id) },
-                    onStopManagedGateway = vm::stopManagedGateway,
-                    onThemeMode = vm::updateThemeMode,
-                    onLanguage = vm::updateLanguage,
-                    onAddServer = { navController.navigate(AddServerRoute) },
-                    onAddProvider = { navController.navigate(AddProviderRoute) },
-                )
+                SafeDrawingHost {
+                    SettingsScreen(
+                        vm = vm,
+                        servers = vm.servers,
+                        sshKeys = vm.sshKeys,
+                        activeServerId = vm.activeServerId,
+                        themeMode = vm.themeMode,
+                        language = vm.language,
+                        wide = wide,
+                        section = null,
+                        onBack = { navController.popBackStack() },
+                        onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
+                        onSelectServer = vm::selectServer,
+                        onSaveServer = vm::saveServer,
+                        onDeleteServer = vm::deleteServer,
+                        onSaveSshKey = vm::saveSshKey,
+                        onDeleteSshKey = { vm.deleteSshKey(it.id) },
+                        onStopManagedGateway = vm::stopManagedGateway,
+                        onThemeMode = vm::updateThemeMode,
+                        onLanguage = vm::updateLanguage,
+                        onAddServer = { navController.navigate(AddServerRoute) },
+                        onAddProvider = { navController.navigate(AddProviderRoute) },
+                    )
+                }
             }
 
             composable<SettingsSectionRoute> { backStackEntry ->
                 val route = backStackEntry.toRoute<SettingsSectionRoute>()
-                SettingsScreen(
-                    vm = vm,
-                    servers = vm.servers,
-                    sshKeys = vm.sshKeys,
-                    activeServerId = vm.activeServerId,
-                    themeMode = vm.themeMode,
-                    language = vm.language,
-                    wide = wide,
-                    section = settingsSectionFor(route.section),
-                    onBack = { navController.popBackStack() },
-                    onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
-                    onSelectServer = vm::selectServer,
-                    onSaveServer = vm::saveServer,
-                    onDeleteServer = vm::deleteServer,
-                    onSaveSshKey = vm::saveSshKey,
-                    onDeleteSshKey = { vm.deleteSshKey(it.id) },
-                    onStopManagedGateway = vm::stopManagedGateway,
-                    onThemeMode = vm::updateThemeMode,
-                    onLanguage = vm::updateLanguage,
-                    onAddServer = { navController.navigate(AddServerRoute) },
-                    onAddProvider = { navController.navigate(AddProviderRoute) },
-                )
+                SafeDrawingHost {
+                    SettingsScreen(
+                        vm = vm,
+                        servers = vm.servers,
+                        sshKeys = vm.sshKeys,
+                        activeServerId = vm.activeServerId,
+                        themeMode = vm.themeMode,
+                        language = vm.language,
+                        wide = wide,
+                        section = settingsSectionFor(route.section),
+                        onBack = { navController.popBackStack() },
+                        onOpenSection = { navController.navigate(SettingsSectionRoute(it.name)) },
+                        onSelectServer = vm::selectServer,
+                        onSaveServer = vm::saveServer,
+                        onDeleteServer = vm::deleteServer,
+                        onSaveSshKey = vm::saveSshKey,
+                        onDeleteSshKey = { vm.deleteSshKey(it.id) },
+                        onStopManagedGateway = vm::stopManagedGateway,
+                        onThemeMode = vm::updateThemeMode,
+                        onLanguage = vm::updateLanguage,
+                        onAddServer = { navController.navigate(AddServerRoute) },
+                        onAddProvider = { navController.navigate(AddProviderRoute) },
+                    )
+                }
             }
 
             composable<AddServerRoute> {
-                AddServerScreen(
-                    keys = vm.sshKeys,
-                    onSave = { profile, newKey ->
-                        vm.saveServer(profile, newKey)
-                        navController.popBackStack()
-                    },
-                    onBack = { navController.popBackStack() },
-                )
+                SafeDrawingHost {
+                    AddServerScreen(
+                        keys = vm.sshKeys,
+                        onSave = { profile, newKey ->
+                            vm.saveServer(profile, newKey)
+                            navController.popBackStack()
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
 
             composable<AddProviderRoute> {
-                AddProviderScreen(vm = vm, onBack = { navController.popBackStack() })
+                SafeDrawingHost {
+                    AddProviderScreen(vm = vm, onBack = { navController.popBackStack() })
+                }
             }
 
             composable<PortForwardsRoute> {
-                PortForwardsScreen(vm = vm, onBack = { navController.popBackStack() })
+                SafeDrawingHost {
+                    PortForwardsScreen(vm = vm, onBack = { navController.popBackStack() })
+                }
+            }
+
+            composable<ScheduledTasksRoute> {
+                SafeDrawingHost {
+                    ScheduledTasksScreen(
+                        vm = vm,
+                        onBack = { navController.popBackStack() },
+                        onAdd = { navController.navigate(ScheduledTaskEditorRoute()) },
+                        onEdit = { taskId -> navController.navigate(ScheduledTaskEditorRoute(taskId)) },
+                        onSessions = { task ->
+                            navController.navigate(ScheduledTaskSessionsRoute(task.id, task.name))
+                        },
+                    )
+                }
+            }
+
+            composable<ScheduledTaskSessionsRoute> { backStackEntry ->
+                val route = backStackEntry.toRoute<ScheduledTaskSessionsRoute>()
+                SafeDrawingHost {
+                    ScheduledTaskSessionsScreen(
+                        vm = vm,
+                        taskId = route.taskId,
+                        taskName = route.taskName,
+                        onBack = { navController.popBackStack() },
+                        onOpenSession = { session ->
+                            vm.openSavedSession(session)
+                            navController.navigate(ChatRoute(session.id))
+                        },
+                    )
+                }
+            }
+
+            composable<ScheduledTaskEditorRoute> { backStackEntry ->
+                val route = backStackEntry.toRoute<ScheduledTaskEditorRoute>()
+                ScheduledTaskEditorScreen(
+                    vm = vm,
+                    taskId = route.taskId.ifBlank { null },
+                    onBack = { navController.popBackStack() },
+                    onSaved = {
+                        navController.popBackStack(route = ScheduledTasksRoute, inclusive = true)
+                        navController.navigate(ScheduledTasksRoute)
+                    },
+                )
             }
         }
     }
@@ -328,9 +405,10 @@ fun HomeScreen(vm: AppViewModel) {
     editingWorkspace?.let { workspace ->
         WorkspaceMetadataDialog(
             workspace = workspace,
+            supportsResourceConfiguration = vm.activeGatewayInfo?.supportsWorkspaceResources == true,
             onDismiss = { editingWorkspace = null },
-            onConfirm = { name, prompt ->
-                vm.saveWorkspaceMetadata(workspace.id, name, prompt)
+            onConfirm = { name, prompt, resources ->
+                vm.saveWorkspaceMetadata(workspace.id, name, prompt, resources)
             },
         )
     }
@@ -351,6 +429,16 @@ fun HomeScreen(vm: AppViewModel) {
     }
 }
 
+/**
+ * Hosts destinations that keep the legacy safe-drawing insets. Full-bleed
+ * screens (the scheduled task editor) skip this wrapper and pad their own
+ * content so their background extends behind the system bars.
+ */
+@Composable
+private fun SafeDrawingHost(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize().safeDrawingPadding()) { content() }
+}
+
 @Composable
 private fun MainDestination(
     vm: AppViewModel,
@@ -364,10 +452,12 @@ private fun MainDestination(
     onRenameSession: (SavedSession) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
     onArchiveWorkspace: (WorkspaceSummary) -> Unit,
+    onDeleteWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: (Boolean) -> Unit,
     onBrowseFiles: (String) -> Unit,
     onOpenProviders: () -> Unit,
     onOpenPortForwards: () -> Unit,
+    onOpenScheduledTasks: () -> Unit,
 ) {
     when {
         wide -> WideHome(
@@ -375,6 +465,7 @@ private fun MainDestination(
             onRenameSession = onRenameSession,
             onEditWorkspace = onEditWorkspace,
             onArchiveWorkspace = onArchiveWorkspace,
+            onDeleteWorkspace = onDeleteWorkspace,
             onRequestNewChat = { onRequestNewChat(true) },
             onSelectServer = onSelectServer,
             onOpenSettings = onOpenSettings,
@@ -382,6 +473,7 @@ private fun MainDestination(
             onBrowseFiles = onBrowseFiles,
             onOpenProviders = onOpenProviders,
             onOpenPortForwards = onOpenPortForwards,
+            onOpenScheduledTasks = onOpenScheduledTasks,
         )
 
         compactChatId != null -> ChatScreen(
@@ -421,11 +513,14 @@ private fun MainDestination(
             onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
             onEditWorkspace = onEditWorkspace,
             onArchiveWorkspace = onArchiveWorkspace,
+            onDeleteWorkspace = onDeleteWorkspace,
             sessionProcessStopSupported =
                 vm.activeGatewayInfo?.supportsSessionProcessStop == true,
             hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
             onBrowseFiles = { onBrowseFiles("") },
             onOpenPortForwards = onOpenPortForwards,
+            scheduledTasksSupported = vm.activeGatewayInfo?.supportsScheduledTasks == true,
+            onOpenScheduledTasks = onOpenScheduledTasks,
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -437,6 +532,7 @@ private fun WideHome(
     onRenameSession: (SavedSession) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
     onArchiveWorkspace: (WorkspaceSummary) -> Unit,
+    onDeleteWorkspace: (WorkspaceSummary) -> Unit,
     onRequestNewChat: () -> Unit,
     onSelectServer: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -444,6 +540,7 @@ private fun WideHome(
     onBrowseFiles: (String) -> Unit,
     onOpenProviders: () -> Unit,
     onOpenPortForwards: () -> Unit,
+    onOpenScheduledTasks: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
         // Sidebar animates between the full list pane and a slim rail.
@@ -459,6 +556,8 @@ private fun WideHome(
                     onExpand = { vm.updateSidebarCollapsed(false) },
                     onNewChat = onRequestNewChat,
                     onOpenSettings = onOpenSettings,
+                    scheduledTasksSupported = vm.activeGatewayInfo?.supportsScheduledTasks == true,
+                    onOpenScheduledTasks = onOpenScheduledTasks,
                     modifier = Modifier.width(ListRailWidth),
                 )
             } else {
@@ -481,11 +580,14 @@ private fun WideHome(
                     onLoadMoreSessions = { vm.loadMoreWorkspaceSessions(it.id) },
                     onEditWorkspace = onEditWorkspace,
                     onArchiveWorkspace = onArchiveWorkspace,
+                    onDeleteWorkspace = onDeleteWorkspace,
                     sessionProcessStopSupported =
                         vm.activeGatewayInfo?.supportsSessionProcessStop == true,
                     hostOs = vm.activeGatewayInfo?.hostOs ?: GatewayHostOs.Unknown,
                     onBrowseFiles = { onBrowseFiles("") },
                     onOpenPortForwards = onOpenPortForwards,
+                    scheduledTasksSupported = vm.activeGatewayInfo?.supportsScheduledTasks == true,
+                    onOpenScheduledTasks = onOpenScheduledTasks,
                     modifier = Modifier.width(ListPaneWidth),
                     onCollapse = { vm.updateSidebarCollapsed(true) },
                 )
@@ -525,6 +627,8 @@ private fun SessionListRail(
     onExpand: () -> Unit,
     onNewChat: () -> Unit,
     onOpenSettings: () -> Unit,
+    scheduledTasksSupported: Boolean,
+    onOpenScheduledTasks: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -556,6 +660,11 @@ private fun SessionListRail(
             )
         }
         Spacer(Modifier.weight(1f))
+        if (scheduledTasksSupported) {
+            IconButton(onClick = onOpenScheduledTasks) {
+                Icon(Icons.Filled.Schedule, contentDescription = S.scheduledTasksTitle)
+            }
+        }
         IconButton(onClick = onOpenSettings) {
             Icon(Icons.Filled.Settings, contentDescription = S.settingsTitle)
         }

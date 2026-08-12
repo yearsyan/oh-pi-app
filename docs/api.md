@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","runtime_config_v1"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","workspace_delete_v1","workspace_resources_v1","scheduled_tasks_v1","scheduled_task_skills_v1","scheduled_session_management_v1","scheduled_task_sessions_v1","runtime_config_v1"]}
 ```
 
 ```http
@@ -32,22 +32,23 @@ Authorization: Bearer <TOKEN>
   "title_model": "auto",
   "pi_env_file": "~/.zshrc",
   "pi_env_shell": "/bin/zsh",
+  "scheduled_session_retention_seconds": 604800,
   "restart_required": false,
   "restart_supported": true
 }
 ```
 
-`PATCH` 可以提交其中任意配置字段；空的 `pi_env_file` 会同时移除 shell 配置并禁用环境加载。网关会验证 title model、环境文件和 shell，原配置文件中的监听地址、数据目录等其他字段保持不变：
+`PATCH` 可以提交其中任意配置字段；空的 `pi_env_file` 会同时移除 shell 配置并禁用环境加载。`scheduled_session_retention_seconds` 是定时任务会话的闲置保留期，默认 604800 秒（7 天），允许 3600 秒到 10 年。网关会验证 title model、环境文件、shell 和保留期，原配置文件中的监听地址、数据目录等其他字段保持不变：
 
 ```http
 PATCH /api/runtime-config
 Authorization: Bearer <TOKEN>
 Content-Type: application/json
 
-{"title_model":"active","pi_env_file":"~/.bashrc","pi_env_shell":"/bin/bash"}
+{"title_model":"active","pi_env_file":"~/.bashrc","pi_env_shell":"/bin/bash","scheduled_session_retention_seconds":604800}
 ```
 
-保存不会打断当前会话。响应中的 `restart_required` 为 `true` 时可请求优雅重启：
+保存不会打断当前会话。保留期与其他运行配置一样在下次启动生效；响应中的 `restart_required` 为 `true` 时可请求优雅重启：
 
 ```http
 POST /api/runtime-restart
@@ -72,14 +73,14 @@ Content-Type: application/json
 {"directory":"/path/to/project"}
 ```
 
-首次注册返回 HTTP 201；目录已经注册时返回 HTTP 200 和原工作空间。目录会经过清理和 symlink 解析。
+首次注册返回 HTTP 201；目录已经注册时返回 HTTP 200 和原工作空间。目录会经过清理和 symlink 解析。重新注册已删除的目录也返回 HTTP 201，并恢复原工作空间 ID、元信息和全部会话。
 
 ```http
-GET /api/workspaces?session_limit=5
+GET /api/workspaces?session_limit=5&include_scheduled=false
 Authorization: Bearer <TOKEN>
 ```
 
-每个工作空间只内嵌最前面的 `session_limit` 条会话。含运行中会话的工作空间位于最前；工作空间内会话按 `running`、`outputting`、`last_active` 排序。时间戳单位为 Unix 毫秒：
+`include_scheduled` 可选，默认为 `true` 以保持兼容；设为 `false` 时不返回由定时任务创建的会话。过滤会先于 `session_limit`、`session_count`、工作空间活跃度和分页计算。每个工作空间只内嵌最前面的 `session_limit` 条会话。含运行中会话的工作空间位于最前；工作空间内会话按 `running`、`outputting`、`last_active` 排序。时间戳单位为 Unix 毫秒：
 
 ```json
 {
@@ -89,6 +90,10 @@ Authorization: Bearer <TOKEN>
       "directory": "/path/to/project",
       "name": "网关项目",
       "additional_system_prompt": "提交前运行测试。",
+      "skill_paths": ["skills/team", "/srv/shared-skills"],
+      "no_skills": true,
+      "extension_paths": ["extensions/team.ts"],
+      "no_extensions": true,
       "technology": "go",
       "technologies": ["go", "typescript", "javascript"],
       "session_count": 27,
@@ -99,7 +104,9 @@ Authorization: Bearer <TOKEN>
           "created_at": 1785736800000,
           "last_active": 1785738600000,
           "running": true,
-          "outputting": false
+          "outputting": false,
+          "source": "scheduled_task",
+          "scheduled_task_id": "a73ec34b-691d-4a76-ac6f-b5b191082757"
         }
       ],
       "next_cursor": "NQ",
@@ -112,6 +119,8 @@ Authorization: Bearer <TOKEN>
 
 `technology` 是用于展示的最高优先级技术栈；`technologies` 保留全部探测结果。框架和构建工具优先于通用语言，例如 Next.js、Nuxt、Svelte、Angular、Vite、Vue、React、Flutter；之后再判断 Rust、Go、Kotlin、Swift、.NET、Python、TypeScript、JavaScript、PHP、Ruby、Elixir、Dart、C++ 和 Java。探测目前只检查工作空间根目录。
 
+只有定时任务会话返回 `source: "scheduled_task"`；新版本同时返回稳定的 `scheduled_task_id`，普通交互会话省略这两个字段。带有 `scheduled_session_management_v1` feature 的网关支持来源字段和 `include_scheduled` 过滤；`scheduled_task_sessions_v1` 表示支持任务关联 ID 与下述关联会话接口。
+
 ### 工作空间元信息
 
 ```http
@@ -122,20 +131,43 @@ Content-Type: application/json
 
 {
   "name": "网关项目",
-  "additional_system_prompt": "提交前运行测试。"
+  "additional_system_prompt": "提交前运行测试。",
+  "skill_paths": ["skills/team", "/srv/shared-skills"],
+  "no_skills": true,
+  "extension_paths": ["extensions/team.ts", "/srv/extensions"],
+  "no_extensions": true
 }
 ```
 
-两个 PATCH 字段均可单独提交。`name` 最长 200 个 Unicode 字符；`additional_system_prompt` 最长 64 KiB。提示词保存在服务端，并在该工作空间新启动或恢复 pi 进程时通过 `--append-system-prompt` 传入；已在运行的进程不会被中途修改。
+所有 PATCH 字段均可单独提交。`name` 最长 200 个 Unicode 字符；`additional_system_prompt` 最长 64 KiB。`skill_paths` 和 `extension_paths` 各自最多包含 32 个非空条目，每项最长 4 KiB；重复项会按首次出现的位置去重。相对路径以工作空间目录为起点，绝对路径保持不变。
+
+带有 `workspace_resources_v1` feature 的网关支持工作空间级 Pi 资源配置：
+
+- `skill_paths` 按顺序转换为可重复的 `--skill <path>`；`no_skills=true` 同时传入 `--no-skills`，关闭自动发现，但以上显式路径仍会加载。
+- `extension_paths` 按顺序转换为可重复的 `--extension <path>`；`no_extensions=true` 同时传入 `--no-extensions`，关闭自动发现，但以上显式路径以及网关自身显式 Extension 仍会加载。
+- Extension 以网关用户的完整权限运行，只应配置可信文件或目录。
+
+这些元信息保存在服务端，并在该工作空间新启动或恢复 Pi 进程时传入；工作空间的 `capabilities` 探测和定时任务创建的 Session 使用同一组参数。已在运行的进程不会被中途修改。
+
+### 删除工作空间
+
+带有 `workspace_delete_v1` feature 的网关支持删除工作空间注册：
+
+```http
+DELETE /api/workspaces/<WORKSPACE_ID>
+Authorization: Bearer <TOKEN>
+```
+
+成功返回 HTTP 204。删除后工作空间不会出现在列表中，其 HTTP API 和新 WebSocket attach 返回 404；已经建立的会话连接不会被强行中断。该操作不会删除任何 session、聊天历史或工作空间目录文件。再次 `POST /api/workspaces` 注册同一规范化目录时，网关会恢复原工作空间 ID、元信息及全部会话。网关启动时对默认 `--work-dir` 的自动注册不会意外恢复一个已删除的工作空间。
 
 ### 分页加载工作空间会话
 
 ```http
-GET /api/workspaces/<WORKSPACE_ID>/sessions?limit=20&cursor=<NEXT_CURSOR>
+GET /api/workspaces/<WORKSPACE_ID>/sessions?limit=20&cursor=<NEXT_CURSOR>&include_scheduled=false
 Authorization: Bearer <TOKEN>
 ```
 
-`cursor` 是服务端提供的不透明字符串，不应自行解析。响应如下；没有下一页时省略或返回空 `next_cursor`：
+`include_scheduled` 的含义和默认值与工作空间列表相同。`cursor` 是服务端提供的不透明字符串，不应自行解析；切换过滤值后必须丢弃旧 cursor 并从第一页重新加载。响应如下；没有下一页时省略或返回空 `next_cursor`：
 
 ```json
 {
@@ -204,6 +236,144 @@ Authorization: Bearer <TOKEN>
 ```
 
 思考强度是模型级能力，客户端切换模型时应使用该模型自己的 `thinking_levels`。`commands` 来自 pi 的 `get_commands`，包含当前工作空间可用的 extension、prompt template 和 skill 指令。
+
+## 定时任务 HTTP API
+
+带有 `scheduled_tasks_v1` feature 的网关提供服务端持久化调度。任务是网关级资源，不从属于某一个 API 路径中的工作空间，因为编辑时可以更换工作空间。所有接口均需 Bearer token。
+
+支持三种 `schedule`：
+
+- `cron`：标准五段式 `分钟 小时 日期 月份 星期`，精确到分钟；必须同时提供 IANA 时区，如 `Asia/Shanghai`。不接受秒或年份字段。
+- `interval`：从 `anchor_at` 锚点按 `every_seconds` 固定节拍运行，最小间隔 60 秒。
+- `once`：在未来的 RFC 3339 `at` 时间执行一次，领取执行后自动停用。
+
+### 创建和列出任务
+
+```http
+POST /api/tasks
+Authorization: Bearer <TOKEN>
+Content-Type: application/json
+
+{
+  "name": "工作日项目检查",
+  "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+  "model": "openai-codex/gpt-5.5",
+  "thinking": "medium",
+  "skill_paths": [".pi/task-skills", "/srv/shared-skills/release"],
+  "no_skills": true,
+  "prompt": "运行测试，修复明确的失败并总结结果。",
+  "schedule": {
+    "kind": "cron",
+    "expression": "0 9 * * 1-5",
+    "timezone": "Asia/Shanghai"
+  },
+  "enabled": true
+}
+```
+
+`model` 和 `thinking` 可留空以使用工作空间默认值。带有 `scheduled_task_skills_v1` feature 的网关还接受多个 `skill_paths`；相对路径以任务的工作空间目录为起点，并与工作空间显式 Skills 路径合并。`no_skills` 对应 Pi 的 `--no-skills`，只关闭自动发现，工作空间和任务中显式配置的路径仍会加载。模型格式与 WebSocket create 的 `model` 参数一致；工作空间、模型和 Skills 配置会在保存时验证。创建成功返回 HTTP 201。
+
+```http
+GET /api/tasks
+Authorization: Bearer <TOKEN>
+```
+
+响应按下次执行时间、名称和 ID 排序：
+
+```json
+{
+  "tasks": [
+    {
+      "id": "a73ec34b-691d-4a76-ac6f-b5b191082757",
+      "name": "工作日项目检查",
+      "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "medium",
+      "skill_paths": [".pi/task-skills", "/srv/shared-skills/release"],
+      "no_skills": true,
+      "prompt": "运行测试，修复明确的失败并总结结果。",
+      "schedule": {
+        "kind": "cron",
+        "expression": "0 9 * * 1-5",
+        "timezone": "Asia/Shanghai"
+      },
+      "enabled": true,
+      "next_run_at": "2026-08-13T01:00:00Z",
+      "last_run": {
+        "id": "e177689f-3fa0-432c-aac1-7c6150dac163",
+        "scheduled_for": "2026-08-12T01:00:00Z",
+        "started_at": "2026-08-12T01:00:01Z",
+        "finished_at": "2026-08-12T01:03:20Z",
+        "status": "succeeded",
+        "session_id": "6d2f8177-d1b5-43ce-927f-250666646e07"
+      },
+      "created_at": "2026-08-11T08:00:00Z",
+      "updated_at": "2026-08-12T01:03:20Z"
+    }
+  ]
+}
+```
+
+执行期间返回 `current_run`，结束后转为 `last_run`。状态可为 `running`、`succeeded`、`failed`、`interrupted` 或 `skipped`；失败原因在 `error` 中。任务 session 与普通 session 一样持久化，可以在 App 会话列表中打开；其会话元数据包含 `source: "scheduled_task"`，因此列表可以单独过滤。
+
+### 查询、编辑、删除和立即执行
+
+```http
+GET /api/tasks/<TASK_ID>
+
+PATCH /api/tasks/<TASK_ID>
+Content-Type: application/json
+
+{"enabled":false}
+
+DELETE /api/tasks/<TASK_ID>
+
+POST /api/tasks/<TASK_ID>/run
+```
+
+PATCH 可提交任意任务字段；App 编辑页提交完整定义。修改启用中的空闲任务会从当前时间重新计算下次执行。任务运行期间 PATCH 和 DELETE 均返回 HTTP 409；删除任务不会删除它已经创建的 session。
+
+立即执行返回 HTTP 202，允许在任务暂停时使用，且不改变原计划的 `next_run_at`。同一任务不会并发执行；上一次仍在运行时，立即执行返回 HTTP 409，计划 occurrence 则跳过并推进到下一次。
+
+### 分页查询任务关联会话
+
+带有 `scheduled_task_sessions_v1` feature 的网关支持查询一个任务历次运行产生且仍在保留期内的全部会话：
+
+```http
+GET /api/tasks/<TASK_ID>/sessions?limit=20&cursor=<NEXT_CURSOR>
+Authorization: Bearer <TOKEN>
+```
+
+会话按运行状态和最近活跃时间排序。任务后来更换工作空间不会改变已有会话的关联；响应为每条会话补充其历史工作空间信息。已删除的工作空间仍会列出并标记 `workspace_deleted`，但恢复该工作空间前不能 attach：
+
+```json
+{
+  "task_id": "a73ec34b-691d-4a76-ac6f-b5b191082757",
+  "session_count": 2,
+  "sessions": [
+    {
+      "id": "6d2f8177-d1b5-43ce-927f-250666646e07",
+      "name": "[定时] 工作日项目检查",
+      "created_at": 1785736800000,
+      "last_active": 1785738600000,
+      "running": false,
+      "outputting": false,
+      "source": "scheduled_task",
+      "scheduled_task_id": "a73ec34b-691d-4a76-ac6f-b5b191082757",
+      "workspace_id": "e28a1f96-41c4-41df-b659-678d7dbc1e8c",
+      "workspace_directory": "/path/to/project",
+      "workspace_name": "网关项目"
+    }
+  ],
+  "next_cursor": "MQ"
+}
+```
+
+删除任务后该任务资源及此查询入口消失，但不会删除已经产生的会话。升级时网关会为任务元数据中仍可追溯的 `current_run` 和 `last_run` 会话补写关联；更早由旧版网关产生且没有持久关联 ID 的会话无法可靠反向归属。
+
+网关停机期间积压多个 Cron/间隔 occurrence 时，恢复后至多补执行一次并直接推进到未来的下一次；单次任务仍会补执行一次。任务在执行前先持久化领取并推进计划，因此网关崩溃后的不确定执行不会自动重复，恢复时记为 `interrupted`。删除工作空间会自动暂停关联任务。
+
+带有 `scheduled_session_management_v1` feature 的网关会在启动后立即、此后每小时清理一次超过保留期的定时任务会话。保留期按会话 `last_active` 计算，默认 7 天；正在运行的会话不会被清理，打开会话或继续对话会刷新活跃时间。普通交互会话不受此自动清理影响。最近版本升级时，网关会根据任务的 `current_run` / `last_run` 标记能够识别的旧任务会话。
 
 ## pi 内置 Provider 管理
 

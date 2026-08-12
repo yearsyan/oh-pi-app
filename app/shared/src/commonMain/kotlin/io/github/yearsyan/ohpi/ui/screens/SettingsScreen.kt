@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -37,6 +38,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -82,6 +84,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.random.Random
@@ -95,6 +98,7 @@ import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.gatewayAddressLabel
 import io.github.yearsyan.ohpi.net.GatewayRuntimeConfig
+import io.github.yearsyan.ohpi.net.DEFAULT_SCHEDULED_SESSION_RETENTION_SECONDS
 import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.GatewayServerInfo
@@ -454,7 +458,7 @@ private fun SettingsDetail(
             deletingWorkspaceId = vm.workspaceDeletingId,
             onBack = onBack,
             onRestore = vm::restoreWorkspace,
-            onDelete = vm::deleteWorkspace,
+            onDelete = { workspaceId -> vm.deleteWorkspace(workspaceId) },
         )
 
         SettingsSection.Gateway -> GatewayRuntimeSettingsDetail(
@@ -747,6 +751,7 @@ private fun GatewayRuntimeSettingsDetail(
     val serverId = vm.activeServer?.id
     val gatewayInfo = vm.activeGatewayInfo
     val supported = gatewayInfo?.supportsRuntimeConfig == true
+    val supportsScheduledSessions = gatewayInfo?.supportsScheduledSessionManagement == true
     var config by remember(serverId) { mutableStateOf<GatewayRuntimeConfig?>(null) }
     var loading by remember(serverId) { mutableStateOf(false) }
     var busy by remember(serverId) { mutableStateOf(false) }
@@ -757,6 +762,9 @@ private fun GatewayRuntimeSettingsDetail(
     var environmentPreset by remember(serverId) { mutableStateOf(GatewayEnvironmentPreset.None) }
     var customEnvironmentFile by remember(serverId) { mutableStateOf("") }
     var customEnvironmentShell by remember(serverId) { mutableStateOf("") }
+    var scheduledSessionRetentionDays by remember(serverId) {
+        mutableStateOf((DEFAULT_SCHEDULED_SESSION_RETENTION_SECONDS / 86_400).toString())
+    }
     var confirmRestart by remember(serverId) { mutableStateOf(false) }
 
     fun applyConfig(value: GatewayRuntimeConfig) {
@@ -764,6 +772,10 @@ private fun GatewayRuntimeSettingsDetail(
         titleModel = value.titleModel
         customEnvironmentFile = value.piEnvironmentFile
         customEnvironmentShell = value.piEnvironmentShell
+        scheduledSessionRetentionDays =
+            ((value.scheduledSessionRetentionSeconds + 86_399) / 86_400)
+                .coerceIn(1, 3_650)
+                .toString()
         environmentPreset = gatewayEnvironmentPreset(value.piEnvironmentFile, value.piEnvironmentShell)
     }
 
@@ -795,10 +807,17 @@ private fun GatewayRuntimeSettingsDetail(
             error = null
             status = null
             try {
+                val retentionDays = scheduledSessionRetentionDays.toLongOrNull()
                 var updated = vm.saveGatewayRuntimeConfig(
                     titleModel = titleModel.trim(),
                     piEnvironmentFile = environmentFile,
                     piEnvironmentShell = environmentShell,
+                    scheduledSessionRetentionSeconds =
+                        if (supportsScheduledSessions && retentionDays != null) {
+                            retentionDays * 86_400
+                        } else {
+                            null
+                        },
                 )
                 if (restart) {
                     updated = vm.restartGatewayRuntime()
@@ -816,6 +835,40 @@ private fun GatewayRuntimeSettingsDetail(
     }
 
     SettingsDetailScaffold(title = S.gatewayRuntimeSection, onBack = onBack) {
+        if (serverId != null) {
+            Text(
+                S.gatewayScheduledSessions,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(S.gatewayHideScheduledSessions)
+                    Text(
+                        if (supportsScheduledSessions) {
+                            S.gatewayHideScheduledSessionsHint
+                        } else {
+                            S.gatewayScheduledSessionsUnsupported
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = vm.hideScheduledTaskSessions,
+                    onCheckedChange = vm::updateHideScheduledTaskSessions,
+                    enabled = supportsScheduledSessions,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(16.dp))
+        }
         when {
             serverId == null -> Text(
                 S.gatewayRuntimeUnavailable,
@@ -909,6 +962,25 @@ private fun GatewayRuntimeSettingsDetail(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
+                if (supportsScheduledSessions) {
+                    Spacer(Modifier.height(16.dp))
+                    val retentionDays = scheduledSessionRetentionDays.toLongOrNull()
+                    val retentionValid = retentionDays != null && retentionDays in 1..3_650
+                    OutlinedTextField(
+                        value = scheduledSessionRetentionDays,
+                        onValueChange = {
+                            scheduledSessionRetentionDays = it.filter(Char::isDigit).take(4)
+                        },
+                        label = { Text(S.gatewayScheduledSessionRetention) },
+                        supportingText = { Text(S.gatewayScheduledSessionRetentionHint) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = !retentionValid,
+                        enabled = !busy,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 config?.takeIf { it.restartRequired }?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -928,7 +1000,10 @@ private fun GatewayRuntimeSettingsDetail(
 
                 val customSourceValid =
                     environmentPreset != GatewayEnvironmentPreset.Custom || customEnvironmentFile.isNotBlank()
-                val canSave = !busy && titleModel.isNotBlank() && customSourceValid
+                val retentionDays = scheduledSessionRetentionDays.toLongOrNull()
+                val retentionValid =
+                    !supportsScheduledSessions || (retentionDays != null && retentionDays in 1..3_650)
+                val canSave = !busy && titleModel.isNotBlank() && customSourceValid && retentionValid
                 Spacer(Modifier.height(16.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Button(

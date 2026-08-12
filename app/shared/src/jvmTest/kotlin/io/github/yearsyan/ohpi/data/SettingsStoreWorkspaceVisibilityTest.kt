@@ -6,6 +6,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class SettingsStoreWorkspaceVisibilityTest {
     private val node =
@@ -40,5 +41,14 @@ class SettingsStoreWorkspaceVisibilityTest {
         assertTrue(store.archivedWorkspaceIds("server").isEmpty())
         assertTrue(store.deletedWorkspaceIds("server").isEmpty())
         assertEquals("", store.lastWorkspaceId("server"))
+    }
+
+    @Test
+    fun scheduledSessionFilterDefaultsVisibleAndPersists() {
+        assertFalse(store.hideScheduledTaskSessions)
+
+        store.hideScheduledTaskSessions = true
+
+        assertTrue(store.hideScheduledTaskSessions)
     }
 }

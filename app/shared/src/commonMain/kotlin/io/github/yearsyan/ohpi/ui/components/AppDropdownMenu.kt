@@ -13,6 +13,8 @@ internal enum class AppMenuIcon {
     Info,
     Stop,
     Delete,
+    Schedule,
+    Swap,
 }
 
 /**

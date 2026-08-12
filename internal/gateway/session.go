@@ -69,6 +69,8 @@ type piSession struct {
 	pendingUI        map[string]pendingUIRequest
 	pendingUIOrder   []string
 	resolvedUI       map[string]struct{}
+	observedTurnMu   sync.Mutex
+	observedTurn     *observedTurn
 
 	idleMu          sync.Mutex
 	idleTimer       *time.Timer
@@ -372,6 +374,7 @@ func (s *piSession) wait() {
 	}
 
 	close(s.done)
+	s.finishObservedTurn(errors.New("pi process exited before the scheduled turn settled"))
 	if s.stopping.Load() {
 		s.logger.Info("pi process stopped")
 	} else {

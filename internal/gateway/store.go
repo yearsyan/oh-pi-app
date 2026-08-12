@@ -16,15 +16,21 @@ import (
 
 const metadataFileName = "ohpi-session.json"
 
+const sessionSourceScheduledTask = "scheduled_task"
+
 var errSessionNotFound = errors.New("session not found")
 
 type sessionMetadata struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	NameSet     bool      `json:"name_set,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	WorkspaceID string    `json:"workspace_id"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	NameSet         bool      `json:"name_set,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	WorkspaceID     string    `json:"workspace_id"`
+	Source          string    `json:"source,omitempty"`
+	ScheduledTaskID string    `json:"scheduled_task_id,omitempty"`
+	SkillPaths      []string  `json:"skill_paths,omitempty"`
+	NoSkills        bool      `json:"no_skills,omitempty"`
 }
 
 type sessionStore struct {
@@ -41,8 +47,56 @@ func newSessionStore(dataDir string) (*sessionStore, error) {
 }
 
 func (s *sessionStore) create(workspaceID string) (sessionMetadata, string, error) {
+	return s.createWithSource(workspaceID, "")
+}
+
+func (s *sessionStore) createWithSource(workspaceID, source string) (sessionMetadata, string, error) {
+	return s.createWithResources(workspaceID, source, nil, false)
+}
+
+func (s *sessionStore) createWithResources(
+	workspaceID string,
+	source string,
+	skillPaths []string,
+	noSkills bool,
+) (sessionMetadata, string, error) {
+	return s.createWithAssociation(workspaceID, source, "", skillPaths, noSkills)
+}
+
+func (s *sessionStore) createForScheduledTask(
+	workspaceID string,
+	taskID string,
+	skillPaths []string,
+	noSkills bool,
+) (sessionMetadata, string, error) {
+	return s.createWithAssociation(
+		workspaceID,
+		sessionSourceScheduledTask,
+		taskID,
+		skillPaths,
+		noSkills,
+	)
+}
+
+func (s *sessionStore) createWithAssociation(
+	workspaceID string,
+	source string,
+	scheduledTaskID string,
+	skillPaths []string,
+	noSkills bool,
+) (sessionMetadata, string, error) {
 	if !validSessionID(workspaceID) {
 		return sessionMetadata{}, "", fmt.Errorf("invalid workspace id %q", workspaceID)
+	}
+	if source != "" && source != sessionSourceScheduledTask {
+		return sessionMetadata{}, "", fmt.Errorf("invalid session source %q", source)
+	}
+	if scheduledTaskID != "" && (source != sessionSourceScheduledTask || !validSessionID(scheduledTaskID)) {
+		return sessionMetadata{}, "", fmt.Errorf("invalid scheduled task id %q", scheduledTaskID)
+	}
+	normalizedSkillPaths, err := normalizeWorkspaceResourceEntries("skill_paths", skillPaths)
+	if err != nil {
+		return sessionMetadata{}, "", fmt.Errorf("invalid session skill paths: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,10 +116,14 @@ func (s *sessionStore) create(workspaceID string) (sessionMetadata, string, erro
 
 		now := time.Now().UTC()
 		meta := sessionMetadata{
-			ID:          id,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			WorkspaceID: workspaceID,
+			ID:              id,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			WorkspaceID:     workspaceID,
+			Source:          source,
+			ScheduledTaskID: scheduledTaskID,
+			SkillPaths:      normalizedSkillPaths,
+			NoSkills:        noSkills,
 		}
 		if err := writeMetadata(dir, meta); err != nil {
 			_ = os.Remove(dir)
@@ -120,6 +178,18 @@ func (s *sessionStore) loadLocked(id string) (sessionMetadata, string, error) {
 	if !validSessionID(meta.WorkspaceID) {
 		return sessionMetadata{}, "", fmt.Errorf("invalid session workspace for %q", id)
 	}
+	if meta.Source != "" && meta.Source != sessionSourceScheduledTask {
+		return sessionMetadata{}, "", fmt.Errorf("invalid session source for %q", id)
+	}
+	if meta.ScheduledTaskID != "" &&
+		(meta.Source != sessionSourceScheduledTask || !validSessionID(meta.ScheduledTaskID)) {
+		return sessionMetadata{}, "", fmt.Errorf("invalid scheduled task association for %q", id)
+	}
+	normalizedSkillPaths, err := normalizeWorkspaceResourceEntries("skill_paths", meta.SkillPaths)
+	if err != nil {
+		return sessionMetadata{}, "", fmt.Errorf("invalid session skill paths for %q: %w", id, err)
+	}
+	meta.SkillPaths = normalizedSkillPaths
 	if meta.UpdatedAt.IsZero() {
 		// Metadata created by older gateways did not record activity time.
 		meta.UpdatedAt = meta.CreatedAt
@@ -210,6 +280,46 @@ func (s *sessionStore) touch(id string) error {
 	return replaceMetadata(dir, meta)
 }
 
+func (s *sessionStore) markScheduled(id, taskID string) (bool, error) {
+	if taskID != "" && !validSessionID(taskID) {
+		return false, fmt.Errorf("invalid scheduled task id %q", taskID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	if meta.Source == "" {
+		meta.Source = sessionSourceScheduledTask
+		changed = true
+	} else if meta.Source != sessionSourceScheduledTask {
+		return false, fmt.Errorf("session %q already has source %q", id, meta.Source)
+	}
+	if taskID != "" {
+		switch {
+		case meta.ScheduledTaskID == "":
+			meta.ScheduledTaskID = taskID
+			changed = true
+		case meta.ScheduledTaskID != taskID:
+			return false, fmt.Errorf(
+				"session %q already belongs to scheduled task %q",
+				id,
+				meta.ScheduledTaskID,
+			)
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := replaceMetadata(dir, meta); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *sessionStore) sessionDir(id string) string {
 	return filepath.Join(s.root, id)
 }
@@ -254,6 +364,26 @@ func (s *sessionStore) delete(id string) error {
 		return fmt.Errorf("remove session directory: %w", err)
 	}
 	return nil
+}
+
+func (s *sessionStore) deleteScheduledBefore(id string, cutoff time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, dir, err := s.loadLocked(id)
+	if err != nil {
+		if errors.Is(err, errSessionNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if meta.Source != sessionSourceScheduledTask || !meta.UpdatedAt.Before(cutoff) {
+		return false, nil
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return false, fmt.Errorf("remove expired scheduled session: %w", err)
+	}
+	return true, nil
 }
 
 func writeMetadata(dir string, meta sessionMetadata) error {

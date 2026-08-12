@@ -28,7 +28,13 @@ private const val PiNpmPackage = "@earendil-works/pi-coding-agent"
 private const val PowerShellStdin =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
 internal const val GATEWAY_FEATURE_SESSION_PROCESS_STOP = "session_process_stop"
+internal const val GATEWAY_FEATURE_WORKSPACE_DELETE = "workspace_delete_v1"
+internal const val GATEWAY_FEATURE_WORKSPACE_RESOURCES = "workspace_resources_v1"
 internal const val GATEWAY_FEATURE_RUNTIME_CONFIG = "runtime_config_v1"
+internal const val GATEWAY_FEATURE_SCHEDULED_TASKS = "scheduled_tasks_v1"
+internal const val GATEWAY_FEATURE_SCHEDULED_TASK_SKILLS = "scheduled_task_skills_v1"
+internal const val GATEWAY_FEATURE_SCHEDULED_SESSION_MANAGEMENT = "scheduled_session_management_v1"
+internal const val GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS = "scheduled_task_sessions_v1"
 internal const val ManagedGatewayHealthTimeoutMillis = 2_000L
 
 internal enum class ManagedHostOs(val releaseName: String) {
@@ -434,6 +440,7 @@ internal class ManagedGatewayProvisioner(
             put("OHPI_PI_COMMAND", JsonPrimitive(environment.piPath))
             put("OHPI_PI_ENV_PATH", JsonPrimitive(environment.piEnvironmentPath))
             put("OHPI_TITLE_MODEL", JsonPrimitive("auto"))
+            put("OHPI_SCHEDULED_SESSION_RETENTION", JsonPrimitive("168h"))
         }.toString().encodeToByteArray()
     }
 

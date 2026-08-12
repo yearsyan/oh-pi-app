@@ -87,6 +87,75 @@ func TestWorkspaceAPIReplacesFlatSessionAPI(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSessionListsCanExcludeScheduledTaskSessions(t *testing.T) {
+	app, server := startTestGateway(t, t.TempDir())
+	workspace := createTestWorkspace(t, server, t.TempDir())
+	regular, _, err := app.manager.store.create(workspace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled, _, err := app.manager.store.createWithSource(workspace.ID, sessionSourceScheduledTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all := findWorkspace(t, getWorkspaceList(t, server, 10).Workspaces, workspace.ID)
+	if all.SessionCount != 2 || len(all.Sessions) != 2 {
+		t.Fatalf("unfiltered workspace sessions = %#v", all)
+	}
+	var sawScheduled bool
+	for _, session := range all.Sessions {
+		if session.ID == scheduled.ID && session.Source == sessionSourceScheduledTask {
+			sawScheduled = true
+		}
+	}
+	if !sawScheduled {
+		t.Fatalf("scheduled session source not returned: %#v", all.Sessions)
+	}
+
+	filteredResponse := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodGet,
+		"/api/workspaces?session_limit=10&include_scheduled=false",
+		nil,
+		testToken,
+	)
+	var filtered workspaceListResponse
+	decodeHTTPJSON(t, filteredResponse, &filtered)
+	visible := findWorkspace(t, filtered.Workspaces, workspace.ID)
+	if visible.SessionCount != 1 || len(visible.Sessions) != 1 || visible.Sessions[0].ID != regular.ID {
+		t.Fatalf("filtered workspace sessions = %#v", visible)
+	}
+
+	pageResponse := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodGet,
+		"/api/workspaces/"+workspace.ID+"/sessions?limit=10&include_scheduled=false",
+		nil,
+		testToken,
+	)
+	var page workspaceSessionPageResponse
+	decodeHTTPJSON(t, pageResponse, &page)
+	if len(page.Sessions) != 1 || page.Sessions[0].ID != regular.ID || page.NextCursor != "" {
+		t.Fatalf("filtered session page = %#v", page)
+	}
+
+	invalid := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodGet,
+		"/api/workspaces?include_scheduled=1",
+		nil,
+		testToken,
+	)
+	invalid.Body.Close()
+	if invalid.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid include_scheduled status = %d, want 400", invalid.StatusCode)
+	}
+}
+
 func TestWorkspaceMetadataAndSystemPrompt(t *testing.T) {
 	app, server := startTestGateway(t, t.TempDir())
 	workspace := createTestWorkspace(t, server, t.TempDir())
@@ -95,7 +164,14 @@ func TestWorkspaceMetadataAndSystemPrompt(t *testing.T) {
 		server,
 		http.MethodPatch,
 		"/api/workspaces/"+workspace.ID,
-		[]byte(`{"name":"Gateway work","additional_system_prompt":"Always run tests before answering."}`),
+		[]byte(`{
+			"name":"Gateway work",
+			"additional_system_prompt":"Always run tests before answering.",
+			"skill_paths":[" .pi/team-skills ","/srv/shared-skills",".pi/team-skills"],
+			"no_skills":true,
+			"extension_paths":[".pi/extensions/team.ts","/srv/extensions"],
+			"no_extensions":true
+		}`),
 		testToken,
 	)
 	if updatedResponse.StatusCode != http.StatusOK {
@@ -105,7 +181,11 @@ func TestWorkspaceMetadataAndSystemPrompt(t *testing.T) {
 	}
 	var updated workspaceResponse
 	decodeHTTPJSON(t, updatedResponse, &updated)
-	if updated.Name != "Gateway work" || updated.AdditionalSystemPrompt != "Always run tests before answering." {
+	if updated.Name != "Gateway work" || updated.AdditionalSystemPrompt != "Always run tests before answering." ||
+		fmt.Sprint(updated.SkillPaths) != fmt.Sprint([]string{".pi/team-skills", "/srv/shared-skills"}) ||
+		!updated.NoSkills ||
+		fmt.Sprint(updated.ExtensionPaths) != fmt.Sprint([]string{".pi/extensions/team.ts", "/srv/extensions"}) ||
+		!updated.NoExtensions {
 		t.Fatalf("updated workspace = %#v", updated)
 	}
 
@@ -120,6 +200,14 @@ func TestWorkspaceMetadataAndSystemPrompt(t *testing.T) {
 	if !containsArgumentPair(active.args, "--append-system-prompt", updated.AdditionalSystemPrompt) {
 		t.Fatalf("pi args = %q, missing workspace system prompt", active.args)
 	}
+	if !hasArgument(active.args, "--no-skills") ||
+		!containsArgumentPair(active.args, "--skill", ".pi/team-skills") ||
+		!containsArgumentPair(active.args, "--skill", "/srv/shared-skills") ||
+		!hasArgument(active.args, "--no-extensions") ||
+		!containsArgumentPair(active.args, "--extension", ".pi/extensions/team.ts") ||
+		!containsArgumentPair(active.args, "--extension", "/srv/extensions") {
+		t.Fatalf("pi args = %q, missing workspace resource configuration", active.args)
+	}
 
 	invalid := workspaceAPIRequest(
 		t,
@@ -132,6 +220,171 @@ func TestWorkspaceMetadataAndSystemPrompt(t *testing.T) {
 	invalid.Body.Close()
 	if invalid.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unknown metadata field status = %d, want 400", invalid.StatusCode)
+	}
+
+	invalidResource := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodPatch,
+		"/api/workspaces/"+workspace.ID,
+		[]byte(`{"skill_paths":["  "]}`),
+		testToken,
+	)
+	invalidResource.Body.Close()
+	if invalidResource.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty skill path status = %d, want 400", invalidResource.StatusCode)
+	}
+}
+
+func TestDeleteWorkspacePreservesSessionsAndRecreatingDirectoryRestoresThem(t *testing.T) {
+	dataDir := t.TempDir()
+	app, server := startTestGateway(t, dataDir)
+	directory := t.TempDir()
+	workspace := createTestWorkspace(t, server, directory)
+	updated := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodPatch,
+		"/api/workspaces/"+workspace.ID,
+		[]byte(`{"name":"Restorable","additional_system_prompt":"Keep this."}`),
+		testToken,
+	)
+	updated.Body.Close()
+
+	client := dialWebSocket(t, server, url.Values{
+		"action":       {"create"},
+		"token":        {testToken},
+		"workspace_id": {workspace.ID},
+	})
+	sessionID := readEvent(t, client).string("session_id")
+
+	deleted := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodDelete,
+		"/api/workspaces/"+workspace.ID,
+		nil,
+		testToken,
+	)
+	deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete workspace status = %d, want 204", deleted.StatusCode)
+	}
+	for _, listed := range getWorkspaceList(t, server, 5).Workspaces {
+		if listed.ID == workspace.ID {
+			t.Fatalf("deleted workspace remained in list: %#v", listed)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "sessions", sessionID)); err != nil {
+		t.Fatalf("preserved session stat: %v", err)
+	}
+	if _, _, err := app.manager.store.load(sessionID); err != nil {
+		t.Fatalf("load preserved session: %v", err)
+	}
+	missing := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodGet,
+		workspaceSessionPath(workspace.ID, sessionID),
+		nil,
+		testToken,
+	)
+	missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("session under deleted workspace status = %d, want 404", missing.StatusCode)
+	}
+	attachURL := server.URL + "/ws?action=attach&token=" + testToken + "&session_id=" + sessionID
+	attachResponse, err := server.Client().Get(attachURL)
+	if err != nil {
+		t.Fatalf("request attach under deleted workspace: %v", err)
+	}
+	attachResponse.Body.Close()
+	if attachResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("attach under deleted workspace status = %d, want 404", attachResponse.StatusCode)
+	}
+	writeJSON(t, client, map[string]any{"id": "after-delete", "type": "get_state"})
+	if response := readEvent(t, client); response.string("id") != "after-delete" {
+		t.Fatalf("established client response after workspace deletion = %#v", response)
+	}
+	client.Close()
+	shutdownGateway(t, app)
+	server.Close()
+
+	_, restartedServer := startTestGateway(t, dataDir)
+	for _, listed := range getWorkspaceList(t, restartedServer, 5).Workspaces {
+		if listed.ID == workspace.ID {
+			t.Fatalf("deleted workspace revived after restart: %#v", listed)
+		}
+	}
+	restored := createTestWorkspace(t, restartedServer, directory)
+	if restored.ID != workspace.ID {
+		t.Fatalf("restored workspace id = %q, want %q", restored.ID, workspace.ID)
+	}
+	if restored.Name != "Restorable" || restored.AdditionalSystemPrompt != "Keep this." {
+		t.Fatalf("restored workspace metadata = %#v", restored)
+	}
+	if restored.SessionCount != 1 || len(restored.Sessions) != 1 || restored.Sessions[0].ID != sessionID {
+		t.Fatalf("restored workspace sessions = %#v", restored)
+	}
+
+	attached := dialWebSocket(t, restartedServer, url.Values{
+		"action":     {"attach"},
+		"session_id": {sessionID},
+		"token":      {testToken},
+	})
+	defer attached.Close()
+	ready, _, _ := readAttachHistory(t, attached)
+	if ready.string("workspace_id") != workspace.ID {
+		t.Fatalf("restored attach ready = %#v", ready)
+	}
+}
+
+func TestDeletedDefaultWorkspaceStaysDeletedAcrossRestart(t *testing.T) {
+	dataDir := t.TempDir()
+	directory := t.TempDir()
+	firstGateway, firstServer := startTestGatewayWithConfig(t, dataDir, func(cfg *Config) {
+		cfg.WorkDir = directory
+	})
+	resolvedDirectory, err := resolveWorkspaceDirectory(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workspace workspaceResponse
+	for _, candidate := range getWorkspaceList(t, firstServer, 5).Workspaces {
+		if candidate.Directory == resolvedDirectory {
+			workspace = candidate
+			break
+		}
+	}
+	if workspace.ID == "" {
+		t.Fatalf("default workspace for %q not found", directory)
+	}
+	deleted := workspaceAPIRequest(
+		t,
+		firstServer,
+		http.MethodDelete,
+		"/api/workspaces/"+workspace.ID,
+		nil,
+		testToken,
+	)
+	deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete default workspace status = %d, want 204", deleted.StatusCode)
+	}
+	shutdownGateway(t, firstGateway)
+	firstServer.Close()
+
+	_, secondServer := startTestGatewayWithConfig(t, dataDir, func(cfg *Config) {
+		cfg.WorkDir = directory
+	})
+	for _, listed := range getWorkspaceList(t, secondServer, 5).Workspaces {
+		if listed.ID == workspace.ID {
+			t.Fatalf("deleted default workspace revived after restart: %#v", listed)
+		}
+	}
+	restored := createTestWorkspace(t, secondServer, directory)
+	if restored.ID != workspace.ID {
+		t.Fatalf("restored default workspace id = %q, want %q", restored.ID, workspace.ID)
 	}
 }
 
@@ -365,7 +618,14 @@ func TestWorkspaceAndSessionMetadataSurviveRestart(t *testing.T) {
 		firstServer,
 		http.MethodPatch,
 		"/api/workspaces/"+workspace.ID,
-		[]byte(`{"name":"Persistent workspace","additional_system_prompt":"Persistent prompt"}`),
+		[]byte(`{
+			"name":"Persistent workspace",
+			"additional_system_prompt":"Persistent prompt",
+			"skill_paths":["/srv/skills/a","/srv/skills/b"],
+			"no_skills":true,
+			"extension_paths":["/srv/extensions/a.ts"],
+			"no_extensions":true
+		}`),
 		testToken,
 	)
 	updated.Body.Close()
@@ -384,6 +644,10 @@ func TestWorkspaceAndSessionMetadataSurviveRestart(t *testing.T) {
 	_, secondServer := startTestGateway(t, dataDir)
 	restarted := findWorkspace(t, getWorkspaceList(t, secondServer, 5).Workspaces, workspace.ID)
 	if restarted.Name != "Persistent workspace" || restarted.AdditionalSystemPrompt != "Persistent prompt" ||
+		fmt.Sprint(restarted.SkillPaths) != fmt.Sprint([]string{"/srv/skills/a", "/srv/skills/b"}) ||
+		!restarted.NoSkills ||
+		fmt.Sprint(restarted.ExtensionPaths) != fmt.Sprint([]string{"/srv/extensions/a.ts"}) ||
+		!restarted.NoExtensions ||
 		len(restarted.Sessions) != 1 || restarted.Sessions[0].ID != sessionID || restarted.Sessions[0].Name != "Persistent session" {
 		t.Fatalf("restarted workspace = %#v", restarted)
 	}

@@ -142,6 +142,15 @@ else
 	title_model=auto
 fi
 
+existing_scheduled_session_retention=$(config_value OHPI_SCHEDULED_SESSION_RETENTION)
+if [ -n "${OHPI_SCHEDULED_SESSION_RETENTION-}" ]; then
+	scheduled_session_retention=$OHPI_SCHEDULED_SESSION_RETENTION
+elif [ -n "$existing_scheduled_session_retention" ]; then
+	scheduled_session_retention=$existing_scheduled_session_retention
+else
+	scheduled_session_retention=168h
+fi
+
 existing_pi_command=$(plist_value EnvironmentVariables.OHPI_PI_COMMAND)
 if [ -n "${OHPI_PI_COMMAND-}" ]; then
 	pi_command=$OHPI_PI_COMMAND
@@ -229,6 +238,7 @@ set_config_value OHPI_LISTEN "$listen"
 set_config_value OHPI_DATA_DIR "$data_dir"
 set_config_value OHPI_WORK_DIR "$work_dir"
 set_config_value OHPI_TITLE_MODEL "$title_model"
+set_config_value OHPI_SCHEDULED_SESSION_RETENTION "$scheduled_session_retention"
 /usr/bin/plutil -convert json -r -o "$rendered_config" "$rendered_config_plist"
 /usr/bin/plutil -p "$rendered_config" >/dev/null
 

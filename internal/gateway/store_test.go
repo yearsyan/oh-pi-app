@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load session: %v", err)
 	}
-	if loaded != created || loadedDir != dir {
+	if !reflect.DeepEqual(loaded, created) || loadedDir != dir {
 		t.Fatalf("loaded session = (%#v, %q), want (%#v, %q)", loaded, loadedDir, created, dir)
 	}
 	info, err := os.Stat(filepath.Join(dir, metadataFileName))
@@ -44,6 +45,48 @@ func TestSessionStorePersistsMetadata(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("metadata permissions = %o, want 600", got)
+	}
+}
+
+func TestSessionStorePersistsScheduledTaskAssociation(t *testing.T) {
+	store, err := newSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID, err := newSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, _, err := store.createForScheduledTask(workspaceID, taskID, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := store.load(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Source != sessionSourceScheduledTask || loaded.ScheduledTaskID != taskID {
+		t.Fatalf("scheduled association = (%q, %q)", loaded.Source, loaded.ScheduledTaskID)
+	}
+
+	legacy, _, err := store.createWithSource(workspaceID, sessionSourceScheduledTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := store.markScheduled(legacy.ID, taskID)
+	if err != nil || !changed {
+		t.Fatalf("mark legacy scheduled session = (%v, %v)", changed, err)
+	}
+	migrated, _, err := store.load(legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.ScheduledTaskID != taskID {
+		t.Fatalf("migrated task id = %q, want %q", migrated.ScheduledTaskID, taskID)
 	}
 }
 

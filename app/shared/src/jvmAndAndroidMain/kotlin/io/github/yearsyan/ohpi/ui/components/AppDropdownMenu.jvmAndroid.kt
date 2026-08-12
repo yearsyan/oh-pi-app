@@ -14,6 +14,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -143,4 +145,6 @@ private val AppMenuIcon.imageVector: ImageVector
             AppMenuIcon.Info -> Icons.Filled.Info
             AppMenuIcon.Stop -> Icons.Filled.PowerSettingsNew
             AppMenuIcon.Delete -> Icons.Filled.Delete
+            AppMenuIcon.Schedule -> Icons.Filled.Schedule
+            AppMenuIcon.Swap -> Icons.Filled.SwapHoriz
         }

@@ -102,7 +102,7 @@ func decodeRuntimeConfig(reader io.Reader) (runtimeConfig, error) {
 
 func isRuntimeConfigKey(key string) bool {
 	switch key {
-	case "OHPI_LISTEN", "OHPI_DATA_DIR", "OHPI_WORK_DIR", "OHPI_TITLE_MODEL", "OHPI_PI_COMMAND", "OHPI_PI_ENV_PATH", "OHPI_PI_ENV_FILE", "OHPI_PI_ENV_SHELL":
+	case "OHPI_LISTEN", "OHPI_DATA_DIR", "OHPI_WORK_DIR", "OHPI_TITLE_MODEL", "OHPI_PI_COMMAND", "OHPI_PI_ENV_PATH", "OHPI_PI_ENV_FILE", "OHPI_PI_ENV_SHELL", "OHPI_SCHEDULED_SESSION_RETENTION":
 		return true
 	default:
 		return false

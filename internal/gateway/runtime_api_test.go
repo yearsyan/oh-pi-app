@@ -53,10 +53,11 @@ func TestRuntimeConfigAPIUpdatesConfigAndRequestsRestart(t *testing.T) {
 		t.Fatalf("unauthorized status = %d, want %d", unauthorizedResponse.Code, http.StatusUnauthorized)
 	}
 
-	updateBody, err := json.Marshal(map[string]string{
-		"title_model":  "active",
-		"pi_env_file":  environmentFile,
-		"pi_env_shell": "/bin/sh",
+	updateBody, err := json.Marshal(map[string]any{
+		"title_model":                         "active",
+		"pi_env_file":                         environmentFile,
+		"pi_env_shell":                        "/bin/sh",
+		"scheduled_session_retention_seconds": int64(3 * 24 * time.Hour / time.Second),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +73,9 @@ func TestRuntimeConfigAPIUpdatesConfigAndRequestsRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.TitleModel != "active" || response.PiEnvironmentFile != environmentFile ||
-		response.PiEnvironmentShell != "/bin/sh" || !response.RestartRequired || !response.RestartSupported {
+		response.PiEnvironmentShell != "/bin/sh" ||
+		response.ScheduledSessionRetentionSeconds != int64(3*24*time.Hour/time.Second) ||
+		!response.RestartRequired || !response.RestartSupported {
 		t.Fatalf("unexpected runtime config response: %+v", response)
 	}
 
@@ -83,7 +86,8 @@ func TestRuntimeConfigAPIUpdatesConfigAndRequestsRestart(t *testing.T) {
 	if values["OHPI_LISTEN"] != "127.0.0.1:18080" ||
 		values[runtimeConfigTitleModelKey] != "active" ||
 		values[runtimeConfigEnvFileKey] != environmentFile ||
-		values[runtimeConfigEnvShellKey] != "/bin/sh" {
+		values[runtimeConfigEnvShellKey] != "/bin/sh" ||
+		values[runtimeConfigScheduledRetentionKey] != "72h0m0s" {
 		t.Fatalf("persisted runtime config = %#v", values)
 	}
 	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != initialInfo.Mode().Perm() {
@@ -145,6 +149,16 @@ func TestRuntimeConfigAPIClearsEnvironmentSourceAndRejectsInvalidValues(t *testi
 	app.Handler().ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest {
 		t.Fatalf("invalid update status = %d, body=%s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+	invalidRetention := authenticatedRuntimeRequest(
+		http.MethodPatch,
+		"/api/runtime-config",
+		[]byte(`{"scheduled_session_retention_seconds":3599}`),
+	)
+	invalidRetentionResponse := httptest.NewRecorder()
+	app.Handler().ServeHTTP(invalidRetentionResponse, invalidRetention)
+	if invalidRetentionResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid retention status = %d, body=%s", invalidRetentionResponse.Code, invalidRetentionResponse.Body.String())
 	}
 
 	clearRequest := authenticatedRuntimeRequest(http.MethodPatch, "/api/runtime-config", []byte(`{"pi_env_file":""}`))

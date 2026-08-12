@@ -20,6 +20,7 @@ import io.github.yearsyan.ohpi.data.SettingsStore
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.data.SshPrivateKey
 import io.github.yearsyan.ohpi.data.ThemeMode
+import io.github.yearsyan.ohpi.data.WorkspaceResourceConfiguration
 import io.github.yearsyan.ohpi.data.WorkspaceSummary
 import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.isApplicationActive
@@ -30,12 +31,22 @@ import io.github.yearsyan.ohpi.net.FsListException
 import io.github.yearsyan.ohpi.net.FsListResponse
 import io.github.yearsyan.ohpi.net.GatewayTransport
 import io.github.yearsyan.ohpi.net.GatewayRuntimeConfig
+import io.github.yearsyan.ohpi.net.GatewayScheduledTask
+import io.github.yearsyan.ohpi.net.GatewayScheduledTaskMutation
+import io.github.yearsyan.ohpi.net.GatewayScheduledTaskSessionPage
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_RUNTIME_CONFIG
 import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SESSION_PROCESS_STOP
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_WORKSPACE_DELETE
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_WORKSPACE_RESOURCES
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASKS
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASK_SKILLS
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_SESSION_MANAGEMENT
+import io.github.yearsyan.ohpi.net.GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS
 import io.github.yearsyan.ohpi.net.GatewayProvider
 import io.github.yearsyan.ohpi.net.GatewayProviderAuthMethod
 import io.github.yearsyan.ohpi.net.PiClient
 import io.github.yearsyan.ohpi.net.ProviderAuthEvent
+import io.github.yearsyan.ohpi.net.ScheduledTaskApiException
 import io.github.yearsyan.ohpi.net.PortForwardManager
 import io.github.yearsyan.ohpi.net.PortForwardStatus
 import io.github.yearsyan.ohpi.net.SshHostKeyPrompt
@@ -44,26 +55,34 @@ import io.github.yearsyan.ohpi.net.rewriteLoopbackUrl
 import io.github.yearsyan.ohpi.net.rewriteLoopbackUrlToGatewayHost
 import io.github.yearsyan.ohpi.net.createGatewayDir
 import io.github.yearsyan.ohpi.net.createGatewayWorkspace
+import io.github.yearsyan.ohpi.net.createGatewayScheduledTask
+import io.github.yearsyan.ohpi.net.deleteGatewayWorkspace
 import io.github.yearsyan.ohpi.net.gatewayTarget
 import io.github.yearsyan.ohpi.net.isLoopbackHostName
 import io.github.yearsyan.ohpi.net.deleteGatewaySession
+import io.github.yearsyan.ohpi.net.deleteGatewayScheduledTask
 import io.github.yearsyan.ohpi.net.downloadGatewayFile
 import io.github.yearsyan.ohpi.net.fetchGatewayHealth
 import io.github.yearsyan.ohpi.net.getGatewayRuntimeConfig
 import io.github.yearsyan.ohpi.net.getGatewayCapabilities
+import io.github.yearsyan.ohpi.net.getGatewayScheduledTask
 import io.github.yearsyan.ohpi.net.listGatewayProviders
 import io.github.yearsyan.ohpi.net.listGatewayDirs
 import io.github.yearsyan.ohpi.net.listGatewayFiles
 import io.github.yearsyan.ohpi.net.listGatewayWorkspaceSessions
 import io.github.yearsyan.ohpi.net.listGatewayWorkspaces
+import io.github.yearsyan.ohpi.net.listGatewayScheduledTasks
+import io.github.yearsyan.ohpi.net.listGatewayScheduledTaskSessions
 import io.github.yearsyan.ohpi.net.logoutGatewayProvider
 import io.github.yearsyan.ohpi.net.nowMillis
 import io.github.yearsyan.ohpi.net.readGatewayFile
 import io.github.yearsyan.ohpi.net.renameGatewaySession
+import io.github.yearsyan.ohpi.net.runGatewayScheduledTaskNow
 import io.github.yearsyan.ohpi.net.stopGatewaySessionProcess
 import io.github.yearsyan.ohpi.net.requestGatewayRuntimeRestart
 import io.github.yearsyan.ohpi.net.updateGatewayRuntimeConfig
 import io.github.yearsyan.ohpi.net.updateGatewayWorkspace
+import io.github.yearsyan.ohpi.net.updateGatewayScheduledTask
 import io.github.yearsyan.ohpi.net.awaitManagedGatewayHealth
 import io.github.yearsyan.ohpi.net.buildProviderAuthWsUrl
 import io.github.yearsyan.ohpi.net.parseProviderAuthEvent
@@ -124,8 +143,26 @@ data class GatewayServerInfo(
     val supportsSessionProcessStop: Boolean
         get() = GATEWAY_FEATURE_SESSION_PROCESS_STOP in features
 
+    val supportsWorkspaceDelete: Boolean
+        get() = GATEWAY_FEATURE_WORKSPACE_DELETE in features
+
+    val supportsWorkspaceResources: Boolean
+        get() = GATEWAY_FEATURE_WORKSPACE_RESOURCES in features
+
     val supportsRuntimeConfig: Boolean
         get() = GATEWAY_FEATURE_RUNTIME_CONFIG in features
+
+    val supportsScheduledTasks: Boolean
+        get() = GATEWAY_FEATURE_SCHEDULED_TASKS in features
+
+    val supportsScheduledTaskSkills: Boolean
+        get() = GATEWAY_FEATURE_SCHEDULED_TASK_SKILLS in features
+
+    val supportsScheduledSessionManagement: Boolean
+        get() = GATEWAY_FEATURE_SCHEDULED_SESSION_MANAGEMENT in features
+
+    val supportsScheduledTaskSessions: Boolean
+        get() = GATEWAY_FEATURE_SCHEDULED_TASK_SESSIONS in features
 
     val hostOs: GatewayHostOs
         get() =
@@ -148,9 +185,9 @@ class AppViewModel(
     var themeMode by mutableStateOf(ThemeMode.System); private set
     var language by mutableStateOf(AppLanguage.System); private set
     var sidebarCollapsed by mutableStateOf(false); private set
+    var hideScheduledTaskSessions by mutableStateOf(false); private set
     var workspaces = mutableStateListOf<WorkspaceSummary>(); private set
     private val archivedWorkspaceIds = mutableStateListOf<String>()
-    private val deletedWorkspaceIds = mutableStateListOf<String>()
     var sessions = mutableStateListOf<SavedSession>(); private set
     var providers = mutableStateListOf<GatewayProvider>(); private set
 
@@ -169,6 +206,7 @@ class AppViewModel(
     val toasts = mutableStateListOf<Toast>()
 
     private val controllers = HashMap<String, ChatController>()
+    private val detachedSessions = HashMap<String, SavedSession>()
     private val composerDraftCache = ComposerDraftCache()
     private val workspaceDraftRoutes = HashMap<String, String>()
     private var gatewayTransport: GatewayTransport? = null
@@ -194,6 +232,7 @@ class AppViewModel(
         themeMode = store.themeMode
         language = store.language
         sidebarCollapsed = store.sidebarCollapsed
+        hideScheduledTaskSessions = store.hideScheduledTaskSessions
         loadWorkspaceVisibility()
         loadSessionsForActive()
         syncPortForwards()
@@ -207,8 +246,8 @@ class AppViewModel(
     val hasServers: Boolean get() = servers.isNotEmpty()
     val homeWorkspaces: List<WorkspaceSummary>
         get() {
-            val hiddenIds = archivedWorkspaceIds.toSet() + deletedWorkspaceIds
-            return workspaces.filterNot { it.id in hiddenIds }
+            val archivedIds = archivedWorkspaceIds.toSet()
+            return workspaces.filterNot { it.id in archivedIds }
         }
     val archivedWorkspaces: List<WorkspaceSummary>
         get() {
@@ -233,6 +272,17 @@ class AppViewModel(
         }
     }
 
+    /** Opens a session discovered outside the normal (possibly filtered) session list. */
+    fun openSavedSession(session: SavedSession) {
+        detachedSessions[session.id] = session
+        activeChatId = session.id
+        val controller = controllerFor(session.id)
+        if (session.name.isNotBlank() && controller.sessionName.isBlank()) {
+            controller.setSessionNameLocally(session.name)
+        }
+        if (!controller.active) controller.connect("attach", session.id)
+    }
+
     fun selectChatWide(
         sessionId: String?,
         isNew: Boolean = false,
@@ -253,7 +303,7 @@ class AppViewModel(
     /** Shows the known list name while the attach fetches the authoritative one. */
     private fun seedSessionName(controller: ChatController, sessionId: String) {
         if (controller.sessionName.isNotBlank()) return
-        val name = sessions.firstOrNull { it.id == sessionId }?.name.orEmpty()
+        val name = knownSession(sessionId)?.name.orEmpty()
         if (name.isNotBlank()) controller.setSessionNameLocally(name)
     }
 
@@ -421,6 +471,7 @@ class AppViewModel(
         titleModel: String,
         piEnvironmentFile: String,
         piEnvironmentShell: String,
+        scheduledSessionRetentionSeconds: Long? = null,
     ): GatewayRuntimeConfig {
         val server = activeServer ?: error("no active server")
         val gateway = transportFor(server).resolveGateway()
@@ -430,6 +481,7 @@ class AppViewModel(
             titleModel = titleModel,
             piEnvironmentFile = piEnvironmentFile,
             piEnvironmentShell = piEnvironmentShell,
+            scheduledSessionRetentionSeconds = scheduledSessionRetentionSeconds,
         )
     }
 
@@ -463,6 +515,7 @@ class AppViewModel(
     private fun resetActiveConnections() {
         disconnectAll()
         controllers.clear()
+        detachedSessions.clear()
         composerDraftCache.clear()
         workspaceDraftRoutes.clear()
         gatewayTransport?.close()
@@ -501,6 +554,14 @@ class AppViewModel(
         store.sidebarCollapsed = collapsed
     }
 
+    /** Updates the local list filter and reloads server pagination with matching cursors. */
+    fun updateHideScheduledTaskSessions(hidden: Boolean) {
+        if (hideScheduledTaskSessions == hidden) return
+        hideScheduledTaskSessions = hidden
+        store.hideScheduledTaskSessions = hidden
+        loadSessionsForActive(clearExisting = true)
+    }
+
     // ---- local workspace visibility ----
 
     /** Archives a workspace on this device and returns whether its active chat was closed. */
@@ -510,7 +571,6 @@ class AppViewModel(
             sessions.firstOrNull { it.id == chatId }?.workspaceId
                 ?: controllers[chatId]?.workspaceId
         }
-        deletedWorkspaceIds.removeAll { it == workspaceId }
         if (workspaceId !in archivedWorkspaceIds) archivedWorkspaceIds.add(workspaceId)
         persistWorkspaceVisibility()
         val closedActiveChat = activeWorkspaceId == workspaceId
@@ -525,37 +585,23 @@ class AppViewModel(
     }
 
     private fun unhideWorkspace(workspaceId: String): Boolean {
-        val restoredArchive = archivedWorkspaceIds.removeAll { it == workspaceId }
-        val restoredDeletion = deletedWorkspaceIds.removeAll { it == workspaceId }
-        if (!restoredArchive && !restoredDeletion) return false
+        if (!archivedWorkspaceIds.removeAll { it == workspaceId }) return false
         persistWorkspaceVisibility()
         return true
     }
 
     private fun loadWorkspaceVisibility() {
         archivedWorkspaceIds.clear()
-        deletedWorkspaceIds.clear()
         val serverId = activeServerId.takeIf { it.isNotBlank() } ?: return
         archivedWorkspaceIds.addAll(store.archivedWorkspaceIds(serverId))
-        deletedWorkspaceIds.addAll(store.deletedWorkspaceIds(serverId))
+        // Releases before workspace_delete_v1 locally hid deleted workspaces.
+        // The gateway now owns deletion, so discard that legacy suppression.
+        store.saveDeletedWorkspaceIds(serverId, emptySet())
     }
 
     private fun persistWorkspaceVisibility() {
         val serverId = activeServerId.takeIf { it.isNotBlank() } ?: return
         store.saveArchivedWorkspaceIds(serverId, archivedWorkspaceIds.toSet())
-        store.saveDeletedWorkspaceIds(serverId, deletedWorkspaceIds.toSet())
-    }
-
-    /** Deleted empty workspaces return automatically if another client creates a new session. */
-    private fun revealDeletedWorkspacesWithActivity(loaded: List<WorkspaceSummary>) {
-        val revivedIds =
-            loaded.asSequence()
-                .filter { it.sessionCount > 0 && it.id in deletedWorkspaceIds }
-                .map(WorkspaceSummary::id)
-                .toSet()
-        if (revivedIds.isEmpty()) return
-        deletedWorkspaceIds.removeAll { it in revivedIds }
-        persistWorkspaceVisibility()
     }
 
     // ---- built-in providers ----
@@ -838,6 +884,7 @@ class AppViewModel(
     ) {
         val generation = ++sessionRefreshGeneration
         val server = activeServer
+        val includeScheduled = !hideScheduledTaskSessions
         val expandedSessionWindows =
             if (clearExisting) emptyMap() else expandedWorkspaceSessionWindows(workspaces)
         if (clearExisting) {
@@ -873,7 +920,11 @@ class AppViewModel(
                         features = it.features.toSet(),
                     )
                 }
-                val loaded = listGatewayWorkspaces(gateway, server.token)
+                val loaded = listGatewayWorkspaces(
+                    gateway = gateway,
+                    token = server.token,
+                    includeScheduled = includeScheduled,
+                )
                 val refreshed = restoreExpandedWorkspaceSessions(
                     workspaces = loaded,
                     windows = expandedSessionWindows,
@@ -884,11 +935,11 @@ class AppViewModel(
                         workspace = workspace,
                         cursor = cursor,
                         limit = limit,
+                        includeScheduled = includeScheduled,
                     )
                 }
 
                 if (generation != sessionRefreshGeneration || activeServerId != server.id) return@launch
-                revealDeletedWorkspacesWithActivity(refreshed)
                 workspaces.clear()
                 workspaces.addAll(
                     refreshed.map { workspace ->
@@ -939,6 +990,8 @@ class AppViewModel(
         val snapshot = workspaces.getOrNull(index) ?: return
         if (snapshot.sessionsLoading || snapshot.nextCursor.isBlank()) return
         val server = activeServer ?: return
+        val includeScheduled = !hideScheduledTaskSessions
+        val refreshGeneration = sessionRefreshGeneration
         workspaces[index] = snapshot.copy(sessionsLoading = true)
         viewModelScope.launch {
             try {
@@ -948,8 +1001,15 @@ class AppViewModel(
                     token = server.token,
                     workspace = snapshot,
                     cursor = snapshot.nextCursor,
+                    includeScheduled = includeScheduled,
                 )
-                if (activeServerId != server.id) return@launch
+                if (
+                    activeServerId != server.id ||
+                    refreshGeneration != sessionRefreshGeneration ||
+                    includeScheduled != !hideScheduledTaskSessions
+                ) {
+                    return@launch
+                }
                 val currentIndex = workspaces.indexOfFirst { it.id == workspaceId }
                 val current = workspaces.getOrNull(currentIndex) ?: return@launch
                 val merged =
@@ -984,7 +1044,12 @@ class AppViewModel(
     suspend fun addWorkspace(directory: String): WorkspaceSummary {
         val server = activeServer ?: throw FsListException("no active server")
         val gateway = transportFor(server).resolveGateway()
-        val created = createGatewayWorkspace(gateway, server.token, directory)
+        val created = createGatewayWorkspace(
+            gateway = gateway,
+            token = server.token,
+            directory = directory,
+            includeScheduled = !hideScheduledTaskSessions,
+        )
         if (activeServerId == server.id) {
             // Explicitly choosing an archived/deleted directory makes it visible again.
             unhideWorkspace(created.id)
@@ -1005,7 +1070,12 @@ class AppViewModel(
         return created
     }
 
-    fun saveWorkspaceMetadata(workspaceId: String, name: String, additionalSystemPrompt: String) {
+    fun saveWorkspaceMetadata(
+        workspaceId: String,
+        name: String,
+        additionalSystemPrompt: String,
+        resources: WorkspaceResourceConfiguration?,
+    ) {
         val server = activeServer ?: return
         viewModelScope.launch {
             try {
@@ -1016,6 +1086,8 @@ class AppViewModel(
                     workspaceId,
                     name,
                     additionalSystemPrompt,
+                    includeScheduled = !hideScheduledTaskSessions,
+                    resources = resources,
                 )
                 if (activeServerId != server.id) return@launch
                 val index = workspaces.indexOfFirst { it.id == workspaceId }
@@ -1041,72 +1113,50 @@ class AppViewModel(
         }
     }
 
-    /**
-     * Removes every remote chat in an archived workspace, then suppresses the now-empty
-     * workspace locally because current gateways do not expose workspace-metadata deletion.
-     */
-    fun deleteWorkspace(workspaceId: String) {
-        if (workspaceDeletingId != null) return
-        val workspace = workspaces.firstOrNull { it.id == workspaceId } ?: return
-        val server = activeServer ?: return
+    /** Deletes only the workspace registration; its remote chats remain recoverable. */
+    fun deleteWorkspace(workspaceId: String): Boolean {
+        if (workspaceDeletingId != null) return false
+        if (workspaces.none { it.id == workspaceId }) return false
+        val server = activeServer ?: return false
+        if (activeGatewayInfo?.supportsWorkspaceDelete != true) {
+            toast(stringsProvider().workspaceDeleteUnsupported, Toast.Kind.Error)
+            return false
+        }
+        val activeWorkspaceId = activeChatId?.let { chatId ->
+            sessions.firstOrNull { it.id == chatId }?.workspaceId
+                ?: controllers[chatId]?.workspaceId
+        }
         workspaceDeletingId = workspaceId
         viewModelScope.launch {
-            val deletedSessions = mutableListOf<SavedSession>()
             try {
                 val gateway = transportFor(server).resolveGateway()
-                val remoteSessions =
-                    loadAllWorkspaceSessions(workspace) { target, cursor, limit ->
-                        listGatewayWorkspaceSessions(
-                            gateway = gateway,
-                            token = server.token,
-                            workspace = target,
-                            cursor = cursor,
-                            limit = limit,
-                        )
-                    }
-                remoteSessions.forEach { session ->
-                    deleteGatewaySession(gateway, server.token, workspaceId, session.id)
-                    deletedSessions += session
-                }
-                val remaining =
-                    loadAllWorkspaceSessions(workspace) { target, cursor, limit ->
-                        listGatewayWorkspaceSessions(
-                            gateway = gateway,
-                            token = server.token,
-                            workspace = target,
-                            cursor = cursor,
-                            limit = limit,
-                        )
-                    }
-                if (remaining.isNotEmpty()) {
-                    error("workspace received new sessions while it was being deleted")
-                }
-
-                discardDeletedSessionState(server.id, deletedSessions)
-                markWorkspaceDeleted(server.id, workspaceId)
+                deleteGatewayWorkspace(gateway, server.token, workspaceId)
+                store.saveArchivedWorkspaceIds(
+                    server.id,
+                    store.archivedWorkspaceIds(server.id) - workspaceId,
+                )
                 if (activeServerId == server.id) {
-                    val workspaceIndex = workspaces.indexOfFirst { it.id == workspaceId }
-                    if (workspaceIndex >= 0) {
-                        workspaces[workspaceIndex] =
-                            workspaces[workspaceIndex].copy(
-                                sessionCount = 0,
-                                sessions = emptyList(),
-                                nextCursor = "",
-                                sessionsLoading = false,
-                            )
-                    }
+                    archivedWorkspaceIds.removeAll { it == workspaceId }
+                    workspaces.removeAll { it.id == workspaceId }
+                    controllers.entries
+                        .filter { (_, controller) -> controller.workspaceId == workspaceId }
+                        .map { (routeId, _) -> routeId }
+                        .forEach { routeId ->
+                            controllers.remove(routeId)?.disconnect()
+                            if (activeChatId == routeId) activeChatId = null
+                        }
                     workspaceDraftRoutes.remove(workspaceId)?.let { routeId ->
                         controllers.remove(routeId)?.disconnect()
                         if (activeChatId == routeId) activeChatId = null
                     }
                     composerDraftCache.remove(ComposerDraftKey.Workspace(server.id, workspaceId))
+                    if (activeWorkspaceId == workspaceId) activeChatId = null
                     syncSessionsFromWorkspaces()
                     toast(stringsProvider().workspaceDeleted, Toast.Kind.Success)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                discardDeletedSessionState(server.id, deletedSessions)
                 if (activeServerId == server.id) {
                     loadSessionsForActive(clearExisting = false)
                     toast(
@@ -1120,42 +1170,78 @@ class AppViewModel(
                 if (workspaceDeletingId == workspaceId) workspaceDeletingId = null
             }
         }
-    }
-
-    private fun markWorkspaceDeleted(serverId: String, workspaceId: String) {
-        val archivedIds = store.archivedWorkspaceIds(serverId) - workspaceId
-        val deletedIds = store.deletedWorkspaceIds(serverId) + workspaceId
-        store.saveArchivedWorkspaceIds(serverId, archivedIds)
-        store.saveDeletedWorkspaceIds(serverId, deletedIds)
-        if (activeServerId != serverId) return
-        archivedWorkspaceIds.removeAll { it == workspaceId }
-        if (workspaceId !in deletedWorkspaceIds) deletedWorkspaceIds.add(workspaceId)
-    }
-
-    private suspend fun discardDeletedSessionState(
-        serverId: String,
-        deletedSessions: List<SavedSession>,
-    ) {
-        if (deletedSessions.isEmpty()) return
-        val sessionIds = deletedSessions.mapTo(linkedSetOf(), SavedSession::id)
-        if (activeServerId == serverId) {
-            sessionIds.forEach { sessionId ->
-                controllers.remove(sessionId)?.disconnect()
-                composerDraftCache.remove(ComposerDraftKey.Session(serverId, sessionId))
-                removeWorkspaceSession(sessionId)
-            }
-            if (activeChatId in sessionIds) activeChatId = null
-        }
-        withContext(Dispatchers.Default) {
-            sessionIds.forEach { sessionId ->
-                runCatching { clearEntryCache(serverId, sessionId) }
-            }
-        }
+        return activeWorkspaceId == workspaceId
     }
 
     private fun syncSessionsFromWorkspaces() {
         sessions.clear()
         sessions.addAll(workspaces.flatMap { it.sessions }.distinctBy { it.id })
+    }
+
+    // ---- scheduled tasks ----
+
+    suspend fun loadScheduledTasks(): List<GatewayScheduledTask> {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return listGatewayScheduledTasks(gateway, server.token)
+    }
+
+    suspend fun loadScheduledTask(taskId: String): GatewayScheduledTask {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return getGatewayScheduledTask(gateway, server.token, taskId)
+    }
+
+    suspend fun loadScheduledTaskSessions(
+        taskId: String,
+        cursor: String = "",
+    ): GatewayScheduledTaskSessionPage {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return listGatewayScheduledTaskSessions(gateway, server.token, taskId, cursor)
+    }
+
+    suspend fun loadScheduledTaskCapabilities(workspaceId: String) =
+        activeServer?.let { server ->
+            getGatewayCapabilities(transportFor(server).resolveGateway(), server.token, workspaceId)
+        } ?: throw ScheduledTaskApiException("no active server")
+
+    suspend fun createScheduledTask(mutation: GatewayScheduledTaskMutation): GatewayScheduledTask {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return createGatewayScheduledTask(
+            gateway,
+            server.token,
+            mutation,
+            includeSkillConfiguration = activeGatewayInfo?.supportsScheduledTaskSkills == true,
+        )
+    }
+
+    suspend fun updateScheduledTask(
+        taskId: String,
+        mutation: GatewayScheduledTaskMutation,
+    ): GatewayScheduledTask {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return updateGatewayScheduledTask(
+            gateway,
+            server.token,
+            taskId,
+            mutation,
+            includeSkillConfiguration = activeGatewayInfo?.supportsScheduledTaskSkills == true,
+        )
+    }
+
+    suspend fun deleteScheduledTask(taskId: String) {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        deleteGatewayScheduledTask(gateway, server.token, taskId)
+    }
+
+    suspend fun runScheduledTaskNow(taskId: String): GatewayScheduledTask {
+        val server = activeServer ?: throw ScheduledTaskApiException("no active server")
+        val gateway = transportFor(server).resolveGateway()
+        return runGatewayScheduledTaskNow(gateway, server.token, taskId)
     }
 
     private fun addOrTouchSession(
@@ -1164,7 +1250,7 @@ class AppViewModel(
         workspaceId: String = "",
         workspaceDirectory: String = "",
     ) {
-        val previous = sessions.firstOrNull { it.id == id }
+        val previous = knownSession(id)
         val controller = controllers[id]
         val now = nowMillis()
         val resolvedWorkspaceId =
@@ -1189,13 +1275,10 @@ class AppViewModel(
                 workspaceDirectory = resolvedDirectory,
                 running = true,
             )
-        upsertWorkspaceSession(updated)
+        storeKnownSession(updated)
     }
 
     private fun upsertWorkspaceSession(session: SavedSession) {
-        if (deletedWorkspaceIds.removeAll { it == session.workspaceId }) {
-            persistWorkspaceVisibility()
-        }
         var workspaceIndex = workspaces.indexOfFirst { it.id == session.workspaceId }
         if (workspaceIndex < 0 && session.workspaceId.isNotBlank()) {
             workspaces.add(
@@ -1266,8 +1349,8 @@ class AppViewModel(
     }
 
     private fun updateSessionStreaming(id: String, streaming: Boolean) {
-        val session = sessions.firstOrNull { it.id == id } ?: return
-        upsertWorkspaceSession(session.copy(running = true, outputting = streaming))
+        val session = knownSession(id) ?: return
+        storeKnownSession(session.copy(running = true, outputting = streaming))
     }
 
     fun renameSession(id: String, name: String) {
@@ -1275,8 +1358,8 @@ class AppViewModel(
             it.setSessionNameLocally(name)
             return
         }
-        val previous = sessions.firstOrNull { it.id == id } ?: return
-        upsertWorkspaceSession(previous.copy(name = name))
+        val previous = knownSession(id) ?: return
+        storeKnownSession(previous.copy(name = name))
         controllers[id]?.setSessionNameLocally(name)
         val server = activeServer ?: return
         viewModelScope.launch {
@@ -1291,15 +1374,15 @@ class AppViewModel(
                     name,
                 )
                 if (activeServerId != server.id) return@launch
-                upsertWorkspaceSession(updated)
+                storeKnownSession(updated)
                 controllers[id]?.setSessionNameLocally(updated.name)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
-                    val current = sessions.firstOrNull { it.id == id }
+                    val current = knownSession(id)
                     if (current?.name == name) {
-                        upsertWorkspaceSession(previous)
+                        storeKnownSession(previous)
                         controllers[id]?.setSessionNameLocally(previous.name)
                     }
                     toast(
@@ -1315,7 +1398,7 @@ class AppViewModel(
 
     /** Stops only the live pi runtime; the saved chat remains attachable. */
     fun stopSessionProcess(id: String) {
-        val session = sessions.firstOrNull { it.id == id } ?: return
+        val session = knownSession(id) ?: return
         if (!session.running) return
         if (session.outputting || controllers[id]?.isStreaming == true) {
             toast(stringsProvider().stopPiProcessOutputtingHint)
@@ -1332,7 +1415,7 @@ class AppViewModel(
                 stopGatewaySessionProcess(gateway, server.token, session.workspaceId, id)
                 if (activeServerId != server.id) return@launch
                 controllers[id]?.disconnect()
-                upsertWorkspaceSession(session.copy(running = false, outputting = false))
+                storeKnownSession(session.copy(running = false, outputting = false))
                 toast(stringsProvider().piProcessStopped, Toast.Kind.Success)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -1361,8 +1444,9 @@ class AppViewModel(
             if (activeChatId == id) activeChatId = null
             return
         }
-        val removed = sessions.firstOrNull { it.id == id } ?: return
+        val removed = knownSession(id) ?: return
         removeWorkspaceSession(id)
+        detachedSessions.remove(id)
         controllers.remove(id)?.disconnect()
         if (activeChatId == id) {
             activeChatId = null
@@ -1380,7 +1464,7 @@ class AppViewModel(
             } catch (failure: Throwable) {
                 if (activeServerId == server.id) {
                     if (sessions.none { it.id == id }) {
-                        upsertWorkspaceSession(removed)
+                        storeKnownSession(removed)
                     }
                     toast(
                         stringsProvider().sessionDeleteFailed(
@@ -1390,6 +1474,16 @@ class AppViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private fun knownSession(id: String): SavedSession? =
+        sessions.firstOrNull { it.id == id } ?: detachedSessions[id]
+
+    private fun storeKnownSession(session: SavedSession) {
+        detachedSessions[session.id] = session
+        if (!(hideScheduledTaskSessions && session.source == "scheduled_task")) {
+            upsertWorkspaceSession(session)
         }
     }
 

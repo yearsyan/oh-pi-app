@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -73,8 +74,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 
@@ -98,10 +101,13 @@ fun SessionListPane(
     onLoadMoreSessions: (WorkspaceSummary) -> Unit,
     onEditWorkspace: (WorkspaceSummary) -> Unit,
     onArchiveWorkspace: (WorkspaceSummary) -> Unit,
+    onDeleteWorkspace: (WorkspaceSummary) -> Unit,
     sessionProcessStopSupported: Boolean,
     hostOs: GatewayHostOs,
     onBrowseFiles: () -> Unit,
     onOpenPortForwards: () -> Unit,
+    scheduledTasksSupported: Boolean,
+    onOpenScheduledTasks: () -> Unit,
     modifier: Modifier = Modifier,
     onCollapse: (() -> Unit)? = null,
 ) {
@@ -136,66 +142,60 @@ fun SessionListPane(
         }
 
         // server picker + quick actions
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (activeServer != null) {
-                ServerChip(servers, activeServer, hostOs, onSelectServer, Modifier.weight(1f))
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            Spacer(Modifier.width(10.dp))
-            // file browser entry
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    .clickable(onClick = onBrowseFiles),
-                contentAlignment = Alignment.Center,
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            val showPortForwards = activeServer?.connectionMode?.usesSsh == true
+            val utilityActions = 1 +
+                (if (showPortForwards) 1 else 0) +
+                (if (scheduledTasksSupported) 1 else 0)
+            // Each round action is 38dp + 10dp gap; keep at least ~96dp for the chip.
+            val collapseActions = maxWidth < ((utilityActions + 1) * 48 + 96).dp
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    Icons.Filled.FolderOpen,
-                    contentDescription = S.browseFiles,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (activeServer?.connectionMode?.usesSsh == true) {
-                Spacer(Modifier.width(10.dp))
-                // port forwarding entry (SSH servers only)
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .clickable(onClick = onOpenPortForwards),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.SwapHoriz,
-                        contentDescription = S.portForwardsTitle,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                if (activeServer != null) {
+                    ServerChip(servers, activeServer, hostOs, onSelectServer, Modifier.weight(1f))
+                } else {
+                    Spacer(Modifier.weight(1f))
                 }
-            }
-            Spacer(Modifier.width(10.dp))
-            // new chat
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable(onClick = onNewChat),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Filled.Add,
-                    contentDescription = S.newChat,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                Spacer(Modifier.width(10.dp))
+                if (collapseActions) {
+                    QuickActionsMenu(
+                        showPortForwards = showPortForwards,
+                        scheduledTasksSupported = scheduledTasksSupported,
+                        onBrowseFiles = onBrowseFiles,
+                        onOpenPortForwards = onOpenPortForwards,
+                        onOpenScheduledTasks = onOpenScheduledTasks,
+                    )
+                } else {
+                    QuickActionButton(
+                        icon = Icons.Filled.FolderOpen,
+                        label = S.browseFiles,
+                        onClick = onBrowseFiles,
+                    )
+                    if (showPortForwards) {
+                        Spacer(Modifier.width(10.dp))
+                        QuickActionButton(
+                            icon = Icons.Filled.SwapHoriz,
+                            label = S.portForwardsTitle,
+                            onClick = onOpenPortForwards,
+                        )
+                    }
+                    if (scheduledTasksSupported) {
+                        Spacer(Modifier.width(10.dp))
+                        QuickActionButton(
+                            icon = Icons.Filled.Schedule,
+                            label = S.scheduledTasksTitle,
+                            onClick = onOpenScheduledTasks,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                QuickActionButton(
+                    icon = Icons.Filled.Add,
+                    label = S.newChat,
+                    onClick = onNewChat,
+                    primary = true,
                 )
             }
         }
@@ -236,6 +236,7 @@ fun SessionListPane(
                                 },
                                 onEdit = { onEditWorkspace(workspace) },
                                 onArchive = { onArchiveWorkspace(workspace) },
+                                onDelete = { onDeleteWorkspace(workspace) },
                             )
                         }
                         if (!collapsed) {
@@ -290,6 +291,69 @@ fun SessionListPane(
 
 private const val RECENT_WORKSPACE_ACTIVITY_WINDOW_MS = 3L * 24 * 60 * 60 * 1_000
 
+@Composable
+private fun QuickActionButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    primary: Boolean = false,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(
+                if (primary) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            modifier = Modifier.size(if (primary) 20.dp else 18.dp),
+            tint = if (primary) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun QuickActionsMenu(
+    showPortForwards: Boolean,
+    scheduledTasksSupported: Boolean,
+    onBrowseFiles: () -> Unit,
+    onOpenPortForwards: () -> Unit,
+    onOpenScheduledTasks: () -> Unit,
+) {
+    AppDropdownMenu(
+        items = buildList {
+            add(AppMenuItem(id = "files", title = S.browseFiles, icon = AppMenuIcon.Folder))
+            if (showPortForwards) {
+                add(AppMenuItem(id = "ports", title = S.portForwardsTitle, icon = AppMenuIcon.Swap))
+            }
+            if (scheduledTasksSupported) {
+                add(AppMenuItem(id = "tasks", title = S.scheduledTasksTitle, icon = AppMenuIcon.Schedule))
+            }
+        },
+        onItemClick = { id ->
+            when (id) {
+                "files" -> onBrowseFiles()
+                "ports" -> onOpenPortForwards()
+                "tasks" -> onOpenScheduledTasks()
+            }
+        },
+        accessibilityLabel = S.moreOptions,
+    ) { openMenu ->
+        QuickActionButton(
+            icon = Icons.Filled.MoreHoriz,
+            label = S.moreOptions,
+            onClick = openMenu,
+        )
+    }
+}
+
 internal fun workspaceCollapsedByDefault(
     workspace: WorkspaceSummary,
     now: Long,
@@ -306,18 +370,28 @@ private fun WorkspaceHeader(
     onToggle: () -> Unit,
     onEdit: () -> Unit,
     onArchive: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var actionSheetOpen by remember { mutableStateOf(false) }
+    var deleteConfirmationOpen by remember { mutableStateOf(false) }
     val desktop = getPlatform().target == PlatformTarget.Desktop
     val menuItems =
         listOf(
             AppMenuItem(id = "edit", title = S.editWorkspace, icon = AppMenuIcon.Edit),
             AppMenuItem(id = "archive", title = S.archiveWorkspace, icon = AppMenuIcon.Archive),
+            AppMenuItem(
+                id = "delete",
+                title = S.delete,
+                icon = AppMenuIcon.Delete,
+                destructive = true,
+                startsSection = true,
+            ),
         )
     val onMenuItemClick: (String) -> Unit = { action ->
         when (action) {
             "edit" -> onEdit()
             "archive" -> onArchive()
+            "delete" -> deleteConfirmationOpen = true
         }
     }
     AppContextMenu(
@@ -404,6 +478,18 @@ private fun WorkspaceHeader(
                     actionSheetOpen = false
                     onArchive()
                 }
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                SheetAction(
+                    icon = { tint -> Icon(Icons.Filled.Delete, null, Modifier.size(19.dp), tint = tint) },
+                    label = S.delete,
+                    destructive = true,
+                ) {
+                    actionSheetOpen = false
+                    deleteConfirmationOpen = true
+                }
                 Spacer(Modifier.height(6.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Box(
@@ -417,6 +503,15 @@ private fun WorkspaceHeader(
                 }
             }
         }
+    }
+    if (deleteConfirmationOpen) {
+        ConfirmDialog(
+            title = S.deleteWorkspaceTitle,
+            body = S.deleteWorkspaceBody(workspace.displayName),
+            confirmLabel = S.delete,
+            onDismiss = { deleteConfirmationOpen = false },
+            onConfirm = onDelete,
+        )
     }
 }
 
@@ -839,47 +934,6 @@ private fun SessionRow(
         color = MaterialTheme.colorScheme.outlineVariant,
         thickness = 0.5.dp,
     )
-}
-
-@Composable
-private fun SheetAction(
-    icon: @Composable (Color) -> Unit,
-    label: String,
-    supportingText: String? = null,
-    destructive: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val tint = when {
-        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-        destructive -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { icon(tint) }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = tint,
-            )
-            supportingText?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tint,
-                    maxLines = 2,
-                )
-            }
-        }
-    }
 }
 
 @Composable

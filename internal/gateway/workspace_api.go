@@ -16,15 +16,23 @@ const (
 	defaultWorkspaceSessionPreview = 5
 	defaultWorkspaceSessionPage    = 20
 	maxWorkspaceSessionPage        = 100
+	maxWorkspaceMetadataRequest    = maxWorkspaceSystemPromptSize +
+		(2 * maxWorkspaceResourceEntries * maxWorkspaceResourceEntrySize) + (16 << 10)
 )
 
 type sessionResponse struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	CreatedAt  int64  `json:"created_at"`
-	LastActive int64  `json:"last_active"`
-	Running    bool   `json:"running"`
-	Outputting bool   `json:"outputting"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	CreatedAt          int64  `json:"created_at"`
+	LastActive         int64  `json:"last_active"`
+	Running            bool   `json:"running"`
+	Outputting         bool   `json:"outputting"`
+	Source             string `json:"source,omitempty"`
+	ScheduledTaskID    string `json:"scheduled_task_id,omitempty"`
+	WorkspaceID        string `json:"workspace_id,omitempty"`
+	WorkspaceDirectory string `json:"workspace_directory,omitempty"`
+	WorkspaceName      string `json:"workspace_name,omitempty"`
+	WorkspaceDeleted   bool   `json:"workspace_deleted,omitempty"`
 }
 
 type workspaceResponse struct {
@@ -32,6 +40,10 @@ type workspaceResponse struct {
 	Directory              string            `json:"directory"`
 	Name                   string            `json:"name"`
 	AdditionalSystemPrompt string            `json:"additional_system_prompt"`
+	SkillPaths             []string          `json:"skill_paths"`
+	NoSkills               bool              `json:"no_skills"`
+	ExtensionPaths         []string          `json:"extension_paths"`
+	NoExtensions           bool              `json:"no_extensions"`
 	Technology             string            `json:"technology"`
 	Technologies           []string          `json:"technologies"`
 	SessionCount           int               `json:"session_count"`
@@ -55,11 +67,6 @@ type createWorkspaceRequest struct {
 	Directory string `json:"directory"`
 }
 
-type updateWorkspaceRequest struct {
-	Name                   *string `json:"name"`
-	AdditionalSystemPrompt *string `json:"additional_system_prompt"`
-}
-
 type updateSessionRequest struct {
 	Name *string `json:"name"`
 }
@@ -74,8 +81,13 @@ func (g *Gateway) handleWorkspaces(writer http.ResponseWriter, request *http.Req
 		writeHTTPError(writer, http.StatusUnauthorized, "unauthorized", "invalid authentication token")
 		return
 	}
+	includeScheduled, err := parseIncludeScheduled(request.URL.Query().Get("include_scheduled"))
+	if err != nil {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_include_scheduled", err.Error())
+		return
+	}
 	if request.Method == http.MethodPost {
-		g.handleCreateWorkspace(writer, request)
+		g.handleCreateWorkspace(writer, request, includeScheduled)
 		return
 	}
 
@@ -96,6 +108,7 @@ func (g *Gateway) handleWorkspaces(writer http.ResponseWriter, request *http.Req
 		writeHTTPError(writer, http.StatusInternalServerError, "workspace_list_failed", "could not list workspace sessions")
 		return
 	}
+	allSessions = filterScheduledSessions(allSessions, includeScheduled)
 	byWorkspace := make(map[string][]managedSession, len(workspaces))
 	for _, session := range allSessions {
 		byWorkspace[session.Metadata.WorkspaceID] = append(byWorkspace[session.Metadata.WorkspaceID], session)
@@ -121,7 +134,11 @@ func (g *Gateway) handleWorkspaces(writer http.ResponseWriter, request *http.Req
 	writeJSONResponse(writer, http.StatusOK, workspaceListResponse{Workspaces: responses})
 }
 
-func (g *Gateway) handleCreateWorkspace(writer http.ResponseWriter, request *http.Request) {
+func (g *Gateway) handleCreateWorkspace(
+	writer http.ResponseWriter,
+	request *http.Request,
+	includeScheduled bool,
+) {
 	request.Body = http.MaxBytesReader(writer, request.Body, 8<<10)
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
@@ -141,6 +158,7 @@ func (g *Gateway) handleCreateWorkspace(writer http.ResponseWriter, request *htt
 		writeHTTPError(writer, http.StatusInternalServerError, "workspace_sessions_failed", "could not list workspace sessions")
 		return
 	}
+	sessions = filterScheduledSessions(sessions, includeScheduled)
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -179,9 +197,33 @@ func (g *Gateway) handleWorkspace(writer http.ResponseWriter, request *http.Requ
 }
 
 func (g *Gateway) handleWorkspaceMetadata(writer http.ResponseWriter, request *http.Request, workspaceID string) {
-	if request.Method != http.MethodGet && request.Method != http.MethodPatch {
-		writer.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch}, ", "))
-		writeHTTPError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "only GET and PATCH are allowed")
+	if request.Method != http.MethodGet && request.Method != http.MethodPatch && request.Method != http.MethodDelete {
+		writer.Header().Set(
+			"Allow",
+			strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "),
+		)
+		writeHTTPError(
+			writer,
+			http.StatusMethodNotAllowed,
+			"method_not_allowed",
+			"only GET, PATCH, and DELETE are allowed",
+		)
+		return
+	}
+	if request.Method == http.MethodDelete {
+		if g.scheduledTasks != nil {
+			if err := g.scheduledTasks.DisableWorkspace(workspaceID); err != nil {
+				g.cfg.Logger.Error("pause workspace scheduled tasks", "workspace_id", workspaceID, "error", err)
+				writeHTTPError(writer, http.StatusInternalServerError, "scheduled_task_pause_failed", "could not pause workspace scheduled tasks")
+				return
+			}
+		}
+		if err := g.workspaces.delete(workspaceID); err != nil {
+			g.writeWorkspaceError(writer, err)
+			return
+		}
+		writer.Header().Set("Cache-Control", "no-store")
+		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
 	workspace, err := g.workspaces.load(workspaceID)
@@ -189,20 +231,25 @@ func (g *Gateway) handleWorkspaceMetadata(writer http.ResponseWriter, request *h
 		g.writeWorkspaceError(writer, err)
 		return
 	}
+	includeScheduled, err := parseIncludeScheduled(request.URL.Query().Get("include_scheduled"))
+	if err != nil {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_include_scheduled", err.Error())
+		return
+	}
 	if request.Method == http.MethodPatch {
-		request.Body = http.MaxBytesReader(writer, request.Body, maxWorkspaceSystemPromptSize+(8<<10))
+		request.Body = http.MaxBytesReader(writer, request.Body, maxWorkspaceMetadataRequest)
 		decoder := json.NewDecoder(request.Body)
 		decoder.DisallowUnknownFields()
-		var update updateWorkspaceRequest
+		var update workspaceMetadataUpdate
 		if err := decoder.Decode(&update); err != nil || ensureJSONEOF(decoder) != nil {
 			writeHTTPError(writer, http.StatusBadRequest, "invalid_request", "body must contain workspace metadata fields")
 			return
 		}
-		if update.Name == nil && update.AdditionalSystemPrompt == nil {
+		if update.empty() {
 			writeHTTPError(writer, http.StatusBadRequest, "empty_update", "at least one workspace metadata field is required")
 			return
 		}
-		workspace, err = g.workspaces.update(workspaceID, update.Name, update.AdditionalSystemPrompt)
+		workspace, err = g.workspaces.update(workspaceID, update)
 		if err != nil {
 			if errors.Is(err, errWorkspaceNotFound) {
 				g.writeWorkspaceError(writer, err)
@@ -211,6 +258,7 @@ func (g *Gateway) handleWorkspaceMetadata(writer http.ResponseWriter, request *h
 			writeHTTPError(writer, http.StatusBadRequest, "invalid_workspace_metadata", err.Error())
 			return
 		}
+		g.capabilities.invalidate()
 	}
 	sessions, err := g.manager.listWorkspace(workspace.ID)
 	if err != nil {
@@ -218,6 +266,7 @@ func (g *Gateway) handleWorkspaceMetadata(writer http.ResponseWriter, request *h
 		writeHTTPError(writer, http.StatusInternalServerError, "workspace_sessions_failed", "could not list workspace sessions")
 		return
 	}
+	sessions = filterScheduledSessions(sessions, includeScheduled)
 	writeJSONResponse(writer, http.StatusOK, makeWorkspaceResponse(workspace, sessions, defaultWorkspaceSessionPreview))
 }
 
@@ -230,6 +279,11 @@ func (g *Gateway) handleWorkspaceSessions(writer http.ResponseWriter, request *h
 	limit, err := parsePageLimit(request.URL.Query().Get("limit"), defaultWorkspaceSessionPage)
 	if err != nil {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_limit", err.Error())
+		return
+	}
+	includeScheduled, err := parseIncludeScheduled(request.URL.Query().Get("include_scheduled"))
+	if err != nil {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_include_scheduled", err.Error())
 		return
 	}
 	offset, err := decodeSessionCursor(request.URL.Query().Get("cursor"))
@@ -247,6 +301,7 @@ func (g *Gateway) handleWorkspaceSessions(writer http.ResponseWriter, request *h
 		writeHTTPError(writer, http.StatusInternalServerError, "workspace_sessions_failed", "could not list workspace sessions")
 		return
 	}
+	sessions = filterScheduledSessions(sessions, includeScheduled)
 	if offset > len(sessions) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_cursor", "cursor is beyond the session list")
 		return
@@ -423,6 +478,10 @@ func makeWorkspaceResponse(
 		Directory:              workspace.Directory,
 		Name:                   workspace.Name,
 		AdditionalSystemPrompt: workspace.AdditionalSystemPrompt,
+		SkillPaths:             append([]string{}, workspace.SkillPaths...),
+		NoSkills:               workspace.NoSkills,
+		ExtensionPaths:         append([]string{}, workspace.ExtensionPaths...),
+		NoExtensions:           workspace.NoExtensions,
 		Technology:             technology.Primary,
 		Technologies:           technology.Technologies,
 		SessionCount:           len(sessions),
@@ -447,13 +506,28 @@ func makeSessionResponses(sessions []managedSession) []sessionResponse {
 func makeSessionResponse(session managedSession) sessionResponse {
 	meta := session.Metadata
 	return sessionResponse{
-		ID:         meta.ID,
-		Name:       meta.Name,
-		CreatedAt:  meta.CreatedAt.UnixMilli(),
-		LastActive: meta.UpdatedAt.UnixMilli(),
-		Running:    session.Running,
-		Outputting: session.Outputting,
+		ID:              meta.ID,
+		Name:            meta.Name,
+		CreatedAt:       meta.CreatedAt.UnixMilli(),
+		LastActive:      meta.UpdatedAt.UnixMilli(),
+		Running:         session.Running,
+		Outputting:      session.Outputting,
+		Source:          meta.Source,
+		ScheduledTaskID: meta.ScheduledTaskID,
 	}
+}
+
+func filterScheduledSessions(sessions []managedSession, includeScheduled bool) []managedSession {
+	if includeScheduled {
+		return sessions
+	}
+	filtered := make([]managedSession, 0, len(sessions))
+	for _, session := range sessions {
+		if session.Metadata.Source != sessionSourceScheduledTask {
+			filtered = append(filtered, session)
+		}
+	}
+	return filtered
 }
 
 func workspaceResponseActive(workspace workspaceResponse) bool {
@@ -484,6 +558,17 @@ func parsePageLimit(raw string, fallback int) (int, error) {
 		return 0, fmt.Errorf("limit must be between 1 and %d", maxWorkspaceSessionPage)
 	}
 	return value, nil
+}
+
+func parseIncludeScheduled(raw string) (bool, error) {
+	switch raw {
+	case "", "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("include_scheduled must be true or false")
+	}
 }
 
 func encodeSessionCursor(offset int) string {

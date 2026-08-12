@@ -149,4 +149,6 @@ private val AppMenuIcon.systemImageName: String
             AppMenuIcon.Info -> "info.circle"
             AppMenuIcon.Stop -> "stop.circle"
             AppMenuIcon.Delete -> "trash"
+            AppMenuIcon.Schedule -> "clock"
+            AppMenuIcon.Swap -> "arrow.left.arrow.right"
         }

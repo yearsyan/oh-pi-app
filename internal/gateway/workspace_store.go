@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	workspaceMetadataFileName    = "workspace.json"
-	maxWorkspaceNameRunes        = 200
-	maxWorkspaceSystemPromptSize = 64 << 10
+	workspaceMetadataFileName     = "workspace.json"
+	maxWorkspaceNameRunes         = 200
+	maxWorkspaceSystemPromptSize  = 64 << 10
+	maxWorkspaceResourceEntries   = 32
+	maxWorkspaceResourceEntrySize = 4 << 10
 )
 
 var errWorkspaceNotFound = errors.New("workspace not found")
@@ -28,8 +30,31 @@ type workspaceMetadata struct {
 	Directory              string    `json:"directory"`
 	Name                   string    `json:"name,omitempty"`
 	AdditionalSystemPrompt string    `json:"additional_system_prompt,omitempty"`
+	SkillPaths             []string  `json:"skill_paths,omitempty"`
+	NoSkills               bool      `json:"no_skills,omitempty"`
+	ExtensionPaths         []string  `json:"extension_paths,omitempty"`
+	NoExtensions           bool      `json:"no_extensions,omitempty"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
+	Deleted                bool      `json:"deleted,omitempty"`
+}
+
+type workspaceMetadataUpdate struct {
+	Name                   *string   `json:"name"`
+	AdditionalSystemPrompt *string   `json:"additional_system_prompt"`
+	SkillPaths             *[]string `json:"skill_paths"`
+	NoSkills               *bool     `json:"no_skills"`
+	ExtensionPaths         *[]string `json:"extension_paths"`
+	NoExtensions           *bool     `json:"no_extensions"`
+}
+
+func (update workspaceMetadataUpdate) empty() bool {
+	return update.Name == nil &&
+		update.AdditionalSystemPrompt == nil &&
+		update.SkillPaths == nil &&
+		update.NoSkills == nil &&
+		update.ExtensionPaths == nil &&
+		update.NoExtensions == nil
 }
 
 type workspaceStore struct {
@@ -70,6 +95,19 @@ func resolveWorkspaceDirectory(raw string) (string, error) {
 // ensure returns the existing workspace for directory or creates one. A
 // canonical directory can only have one workspace identity.
 func (s *workspaceStore) ensure(directory string) (workspaceMetadata, bool, error) {
+	return s.ensureWithRestore(directory, true)
+}
+
+// ensureDefault registers a previously unseen default directory without
+// reviving a workspace that a user explicitly deleted.
+func (s *workspaceStore) ensureDefault(directory string) (workspaceMetadata, bool, error) {
+	return s.ensureWithRestore(directory, false)
+}
+
+func (s *workspaceStore) ensureWithRestore(
+	directory string,
+	restoreDeleted bool,
+) (workspaceMetadata, bool, error) {
 	resolved, err := resolveWorkspaceDirectory(directory)
 	if err != nil {
 		return workspaceMetadata{}, false, err
@@ -77,12 +115,20 @@ func (s *workspaceStore) ensure(directory string) (workspaceMetadata, bool, erro
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	metas, err := s.listLocked()
+	metas, err := s.listAllLocked()
 	if err != nil {
 		return workspaceMetadata{}, false, err
 	}
 	for _, meta := range metas {
 		if meta.Directory == resolved {
+			if meta.Deleted && restoreDeleted {
+				meta.Deleted = false
+				meta.UpdatedAt = time.Now().UTC()
+				if err := replaceWorkspaceMetadata(s.workspaceDir(meta.ID), meta); err != nil {
+					return workspaceMetadata{}, false, err
+				}
+				return meta, true, nil
+			}
 			return meta, false, nil
 		}
 	}
@@ -121,7 +167,24 @@ func (s *workspaceStore) load(id string) (workspaceMetadata, error) {
 	return s.loadLocked(id)
 }
 
+func (s *workspaceStore) loadIncludingDeleted(id string) (workspaceMetadata, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadAnyLocked(id)
+}
+
 func (s *workspaceStore) loadLocked(id string) (workspaceMetadata, error) {
+	meta, err := s.loadAnyLocked(id)
+	if err != nil {
+		return workspaceMetadata{}, err
+	}
+	if meta.Deleted {
+		return workspaceMetadata{}, errWorkspaceNotFound
+	}
+	return meta, nil
+}
+
+func (s *workspaceStore) loadAnyLocked(id string) (workspaceMetadata, error) {
 	if !validSessionID(id) {
 		return workspaceMetadata{}, errWorkspaceNotFound
 	}
@@ -167,6 +230,20 @@ func (s *workspaceStore) list() ([]workspaceMetadata, error) {
 }
 
 func (s *workspaceStore) listLocked() ([]workspaceMetadata, error) {
+	metas, err := s.listAllLocked()
+	if err != nil {
+		return nil, err
+	}
+	active := make([]workspaceMetadata, 0, len(metas))
+	for _, meta := range metas {
+		if !meta.Deleted {
+			active = append(active, meta)
+		}
+	}
+	return active, nil
+}
+
+func (s *workspaceStore) listAllLocked() ([]workspaceMetadata, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return nil, fmt.Errorf("read workspace store: %w", err)
@@ -176,7 +253,7 @@ func (s *workspaceStore) listLocked() ([]workspaceMetadata, error) {
 		if !entry.IsDir() || !validSessionID(entry.Name()) {
 			continue
 		}
-		meta, err := s.loadLocked(entry.Name())
+		meta, err := s.loadAnyLocked(entry.Name())
 		if err != nil {
 			if errors.Is(err, errWorkspaceNotFound) {
 				continue
@@ -188,26 +265,37 @@ func (s *workspaceStore) listLocked() ([]workspaceMetadata, error) {
 	return metas, nil
 }
 
-func (s *workspaceStore) update(
-	id string,
-	name *string,
-	additionalSystemPrompt *string,
-) (workspaceMetadata, error) {
+// delete hides a workspace registration while retaining its stable identity.
+// Session metadata continues to reference that identity so explicitly adding
+// the same directory later can restore all of its conversations.
+func (s *workspaceStore) delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, err := s.loadLocked(id)
+	if err != nil {
+		return err
+	}
+	meta.Deleted = true
+	meta.UpdatedAt = time.Now().UTC()
+	return replaceWorkspaceMetadata(s.workspaceDir(id), meta)
+}
+
+func (s *workspaceStore) update(id string, update workspaceMetadataUpdate) (workspaceMetadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	meta, err := s.loadLocked(id)
 	if err != nil {
 		return workspaceMetadata{}, err
 	}
-	if name != nil {
-		normalized := strings.TrimSpace(*name)
+	if update.Name != nil {
+		normalized := strings.TrimSpace(*update.Name)
 		if utf8.RuneCountInString(normalized) > maxWorkspaceNameRunes {
 			return workspaceMetadata{}, fmt.Errorf("name must not exceed %d characters", maxWorkspaceNameRunes)
 		}
 		meta.Name = normalized
 	}
-	if additionalSystemPrompt != nil {
-		normalized := strings.TrimSpace(*additionalSystemPrompt)
+	if update.AdditionalSystemPrompt != nil {
+		normalized := strings.TrimSpace(*update.AdditionalSystemPrompt)
 		if !utf8.ValidString(normalized) || len(normalized) > maxWorkspaceSystemPromptSize {
 			return workspaceMetadata{}, fmt.Errorf(
 				"additional_system_prompt must be valid UTF-8 and not exceed %d bytes",
@@ -216,11 +304,58 @@ func (s *workspaceStore) update(
 		}
 		meta.AdditionalSystemPrompt = normalized
 	}
+	if update.SkillPaths != nil {
+		normalized, err := normalizeWorkspaceResourceEntries("skill_paths", *update.SkillPaths)
+		if err != nil {
+			return workspaceMetadata{}, err
+		}
+		meta.SkillPaths = normalized
+	}
+	if update.NoSkills != nil {
+		meta.NoSkills = *update.NoSkills
+	}
+	if update.ExtensionPaths != nil {
+		normalized, err := normalizeWorkspaceResourceEntries("extension_paths", *update.ExtensionPaths)
+		if err != nil {
+			return workspaceMetadata{}, err
+		}
+		meta.ExtensionPaths = normalized
+	}
+	if update.NoExtensions != nil {
+		meta.NoExtensions = *update.NoExtensions
+	}
 	meta.UpdatedAt = time.Now().UTC()
 	if err := replaceWorkspaceMetadata(s.workspaceDir(id), meta); err != nil {
 		return workspaceMetadata{}, err
 	}
 	return meta, nil
+}
+
+func normalizeWorkspaceResourceEntries(field string, entries []string) ([]string, error) {
+	if len(entries) > maxWorkspaceResourceEntries {
+		return nil, fmt.Errorf("%s must not contain more than %d entries", field, maxWorkspaceResourceEntries)
+	}
+	normalized := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, fmt.Errorf("%s entries must not be empty", field)
+		}
+		if !utf8.ValidString(entry) || len(entry) > maxWorkspaceResourceEntrySize || strings.ContainsRune(entry, '\x00') {
+			return nil, fmt.Errorf(
+				"%s entries must be valid UTF-8, contain no NUL byte, and not exceed %d bytes",
+				field,
+				maxWorkspaceResourceEntrySize,
+			)
+		}
+		if _, exists := seen[entry]; exists {
+			continue
+		}
+		seen[entry] = struct{}{}
+		normalized = append(normalized, entry)
+	}
+	return normalized, nil
 }
 
 func (s *workspaceStore) workspaceDir(id string) string {

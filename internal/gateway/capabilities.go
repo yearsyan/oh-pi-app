@@ -78,16 +78,21 @@ func newCapabilitiesLoader(cfg Config) *capabilitiesLoader {
 	}
 }
 
-func (loader *capabilitiesLoader) get(ctx context.Context, workDir string) (capabilitiesResponse, error) {
+func (loader *capabilitiesLoader) get(
+	ctx context.Context,
+	cacheKey string,
+	workDir string,
+	piArgs []string,
+) (capabilitiesResponse, error) {
 	for {
 		now := time.Now()
 		loader.mu.Lock()
 		generation := loader.generation
-		if cached, ok := loader.cache[workDir]; ok && now.Sub(cached.fetchedAt) < capabilitiesCacheTTL {
+		if cached, ok := loader.cache[cacheKey]; ok && now.Sub(cached.fetchedAt) < capabilitiesCacheTTL {
 			loader.mu.Unlock()
 			return cached.response, nil
 		}
-		if call := loader.inflight[workDir]; call != nil {
+		if call := loader.inflight[cacheKey]; call != nil {
 			loader.mu.Unlock()
 			select {
 			case <-call.done:
@@ -103,20 +108,20 @@ func (loader *capabilitiesLoader) get(ctx context.Context, workDir string) (capa
 			}
 		}
 		call := &capabilitiesCall{generation: generation, done: make(chan struct{})}
-		loader.inflight[workDir] = call
+		loader.inflight[cacheKey] = call
 		loader.mu.Unlock()
 
 		probeContext, cancel := context.WithTimeout(ctx, loader.cfg.CapabilitiesTimeout)
-		response, err := probeCapabilities(probeContext, loader.cfg, workDir)
+		response, err := probeCapabilities(probeContext, loader.cfg, workDir, piArgs)
 		cancel()
 
 		loader.mu.Lock()
-		delete(loader.inflight, workDir)
+		delete(loader.inflight, cacheKey)
 		call.response = response
 		call.err = err
 		stale := call.generation != loader.generation
 		if err == nil && !stale {
-			loader.insertLocked(workDir, cachedCapabilities{response: response, fetchedAt: time.Now()})
+			loader.insertLocked(cacheKey, cachedCapabilities{response: response, fetchedAt: time.Now()})
 		}
 		close(call.done)
 		loader.mu.Unlock()
@@ -140,7 +145,7 @@ func (loader *capabilitiesLoader) invalidate() {
 	loader.mu.Unlock()
 }
 
-func (loader *capabilitiesLoader) insertLocked(workDir string, value cachedCapabilities) {
+func (loader *capabilitiesLoader) insertLocked(cacheKey string, value cachedCapabilities) {
 	if len(loader.cache) >= capabilitiesCacheSize {
 		oldestKey := ""
 		var oldestTime time.Time
@@ -152,7 +157,7 @@ func (loader *capabilitiesLoader) insertLocked(workDir string, value cachedCapab
 		}
 		delete(loader.cache, oldestKey)
 	}
-	loader.cache[workDir] = value
+	loader.cache[cacheKey] = value
 }
 
 func (g *Gateway) handleWorkspaceCapabilities(writer http.ResponseWriter, request *http.Request, workspaceID string) {
@@ -176,7 +181,12 @@ func (g *Gateway) handleWorkspaceCapabilities(writer http.ResponseWriter, reques
 		writeHTTPError(writer, http.StatusInternalServerError, "workspace_lookup_failed", "could not inspect workspace")
 		return
 	}
-	response, err := g.capabilities.get(request.Context(), workspace.Directory)
+	response, err := g.capabilities.get(
+		request.Context(),
+		workspace.ID,
+		workspace.Directory,
+		piArgsForWorkspace(g.cfg.PiArgs, workspace),
+	)
 	if err != nil {
 		g.cfg.Logger.Error("inspect pi capabilities", "workspace_id", workspaceID, "directory", workspace.Directory, "error", err)
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -220,8 +230,13 @@ type capabilityRawModel struct {
 	ThinkingLevelMap map[string]json.RawMessage `json:"thinkingLevelMap"`
 }
 
-func probeCapabilities(ctx context.Context, cfg Config, workDir string) (capabilitiesResponse, error) {
-	args := append([]string(nil), cfg.PiArgs...)
+func probeCapabilities(
+	ctx context.Context,
+	cfg Config,
+	workDir string,
+	piArgs []string,
+) (capabilitiesResponse, error) {
+	args := append([]string(nil), piArgs...)
 	args = append(args, "--mode", "rpc", "--no-session")
 	command := newPiProcessContext(ctx, cfg.PiCommand, args...)
 	command.Dir = workDir

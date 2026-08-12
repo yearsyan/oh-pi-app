@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,6 +49,19 @@ func TestPiHelperProcess(t *testing.T) {
 				os.Exit(3)
 			}
 			_, _ = fmt.Fprintln(logFile, os.Getpid())
+			_ = logFile.Close()
+		}
+		if argsLog := os.Getenv("OHPI_TEST_PROBE_ARGS_LOG"); argsLog != "" && !providerHelper {
+			logFile, err := os.OpenFile(argsLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+			if err != nil {
+				os.Exit(3)
+			}
+			encoded, err := json.Marshal(os.Args)
+			if err != nil {
+				_ = logFile.Close()
+				os.Exit(3)
+			}
+			_, _ = fmt.Fprintln(logFile, string(encoded))
 			_ = logFile.Close()
 		}
 	} else {
@@ -239,6 +253,24 @@ func TestPiHelperProcess(t *testing.T) {
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(6)
 		}
+		commandID, _ := command["id"].(string)
+		if commandType == "prompt" && strings.HasPrefix(commandID, "ohpi-scheduled:") {
+			for _, event := range []any{
+				map[string]any{"type": "agent_start"},
+				map[string]any{
+					"type": "message_end",
+					"message": map[string]any{
+						"role": "assistant", "stopReason": "stop",
+						"content": []any{map[string]any{"type": "text", "text": "scheduled result"}},
+					},
+				},
+				map[string]any{"type": "agent_settled"},
+			} {
+				if err := encoder.Encode(event); err != nil {
+					os.Exit(6)
+				}
+			}
+		}
 	}
 }
 
@@ -277,7 +309,9 @@ func writeFakeSessionFile(path, sessionID string, entries []any) error {
 
 func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 	probeLog := filepath.Join(t.TempDir(), "capability-probes.log")
+	probeArgsLog := filepath.Join(t.TempDir(), "capability-probe-args.log")
 	t.Setenv("OHPI_TEST_PROBE_LOG", probeLog)
+	t.Setenv("OHPI_TEST_PROBE_ARGS_LOG", probeArgsLog)
 	app, server := startTestGateway(t, t.TempDir())
 	workDir := t.TempDir()
 	resolvedWorkDir, err := filepath.EvalSymlinks(workDir)
@@ -285,6 +319,23 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 		t.Fatalf("resolve test work directory: %v", err)
 	}
 	workspace := createTestWorkspace(t, server, workDir)
+	resourceUpdate := workspaceAPIRequest(
+		t,
+		server,
+		http.MethodPatch,
+		"/api/workspaces/"+workspace.ID,
+		[]byte(`{
+			"skill_paths":["skills/team"],
+			"no_skills":true,
+			"extension_paths":["extensions/team.ts"],
+			"no_extensions":true
+		}`),
+		testToken,
+	)
+	resourceUpdate.Body.Close()
+	if resourceUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("resource update status = %d, want 200", resourceUpdate.StatusCode)
+	}
 	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
 
 	unauthorized, err := http.Get(endpoint)
@@ -345,6 +396,20 @@ func TestCapabilitiesAreAuthenticatedCachedAndSessionless(t *testing.T) {
 	}
 	if starts := strings.Fields(string(probeData)); len(starts) != 1 {
 		t.Fatalf("capability probe starts = %d, want one cached start", len(starts))
+	}
+	argsData, err := os.ReadFile(probeArgsLog)
+	if err != nil {
+		t.Fatalf("read probe args log: %v", err)
+	}
+	var probeArgs []string
+	if err := json.Unmarshal(bytes.TrimSpace(argsData), &probeArgs); err != nil {
+		t.Fatalf("decode probe args: %v", err)
+	}
+	if !hasArgument(probeArgs, "--no-skills") ||
+		!containsArgumentPair(probeArgs, "--skill", "skills/team") ||
+		!hasArgument(probeArgs, "--no-extensions") ||
+		!containsArgumentPair(probeArgs, "--extension", "extensions/team.ts") {
+		t.Fatalf("capability probe args = %q, missing workspace resources", probeArgs)
 	}
 	sessions, err := app.manager.list()
 	if err != nil {
@@ -1631,9 +1696,15 @@ func TestHealthIdentifiesGatewayVersion(t *testing.T) {
 	if response.StatusCode != http.StatusOK || health.Status != "ok" ||
 		health.Service != "ohpi-gateway" || health.Version != "1.2.3" ||
 		health.Protocol != gatewayProtocolVersion || health.OS != runtime.GOOS ||
-		len(health.Features) != 2 ||
+		len(health.Features) != 8 ||
 		health.Features[0] != gatewayFeatureWorkspaces ||
-		health.Features[1] != gatewayFeatureSessionProcessStop {
+		health.Features[1] != gatewayFeatureSessionProcessStop ||
+		health.Features[2] != gatewayFeatureWorkspaceDelete ||
+		health.Features[3] != gatewayFeatureWorkspaceResources ||
+		health.Features[4] != gatewayFeatureScheduledTasks ||
+		health.Features[5] != gatewayFeatureScheduledTaskSkills ||
+		health.Features[6] != gatewayFeatureScheduledSessionManagement ||
+		health.Features[7] != gatewayFeatureScheduledTaskSessions {
 		t.Fatalf("unexpected health response: status=%d body=%+v", response.StatusCode, health)
 	}
 }

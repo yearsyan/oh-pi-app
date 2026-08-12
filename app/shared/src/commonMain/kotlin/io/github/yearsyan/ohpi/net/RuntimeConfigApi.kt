@@ -11,6 +11,10 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+
+const val DEFAULT_SCHEDULED_SESSION_RETENTION_SECONDS = 7L * 24 * 60 * 60
 
 /** Gateway settings that take effect after its process restarts. */
 @Serializable
@@ -18,15 +22,10 @@ data class GatewayRuntimeConfig(
     @SerialName("title_model") val titleModel: String,
     @SerialName("pi_env_file") val piEnvironmentFile: String = "",
     @SerialName("pi_env_shell") val piEnvironmentShell: String = "",
+    @SerialName("scheduled_session_retention_seconds")
+    val scheduledSessionRetentionSeconds: Long = DEFAULT_SCHEDULED_SESSION_RETENTION_SECONDS,
     @SerialName("restart_required") val restartRequired: Boolean = false,
     @SerialName("restart_supported") val restartSupported: Boolean = false,
-)
-
-@Serializable
-private data class GatewayRuntimeConfigUpdate(
-    @SerialName("title_model") val titleModel: String,
-    @SerialName("pi_env_file") val piEnvironmentFile: String,
-    @SerialName("pi_env_shell") val piEnvironmentShell: String,
 )
 
 /** Failure returned by the gateway runtime configuration endpoints. */
@@ -45,15 +44,16 @@ suspend fun updateGatewayRuntimeConfig(
     titleModel: String,
     piEnvironmentFile: String,
     piEnvironmentShell: String,
+    scheduledSessionRetentionSeconds: Long? = null,
 ): GatewayRuntimeConfig {
-    val payload = PiJson.encodeToString(
-        GatewayRuntimeConfigUpdate.serializer(),
-        GatewayRuntimeConfigUpdate(
-            titleModel = titleModel,
-            piEnvironmentFile = piEnvironmentFile,
-            piEnvironmentShell = piEnvironmentShell,
-        ),
-    )
+    val payload = buildJsonObject {
+        put("title_model", JsonPrimitive(titleModel))
+        put("pi_env_file", JsonPrimitive(piEnvironmentFile))
+        put("pi_env_shell", JsonPrimitive(piEnvironmentShell))
+        scheduledSessionRetentionSeconds?.let {
+            put("scheduled_session_retention_seconds", JsonPrimitive(it))
+        }
+    }.toString()
     val response = gatewayHttp.patch("${gatewayHttpBase(gateway)}/api/runtime-config") {
         gatewayAuthorization(token)
         contentType(ContentType.Application.Json)

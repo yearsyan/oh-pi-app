@@ -88,6 +88,10 @@ data class SavedSession(
     val running: Boolean = false,
     /** Whether that process is between agent_start and agent_settled. */
     val outputting: Boolean = false,
+    /** Empty for user chats; "scheduled_task" for unattended task runs. */
+    val source: String = "",
+    /** Stable owner for sessions produced by a scheduled task. */
+    val scheduledTaskId: String = "",
 )
 
 /** Server-owned workspace plus the currently loaded prefix of its sessions. */
@@ -97,6 +101,10 @@ data class WorkspaceSummary(
     val directory: String,
     val name: String = "",
     val additionalSystemPrompt: String = "",
+    val skillPaths: List<String> = emptyList(),
+    val noSkills: Boolean = false,
+    val extensionPaths: List<String> = emptyList(),
+    val noExtensions: Boolean = false,
     val technology: String = "generic",
     val technologies: List<String> = emptyList(),
     val sessionCount: Int = 0,
@@ -112,6 +120,14 @@ data class WorkspaceSummary(
                 .ifBlank { directory }
         }
 }
+
+/** Pi resources explicitly selected for one workspace. */
+data class WorkspaceResourceConfiguration(
+    val skillPaths: List<String> = emptyList(),
+    val noSkills: Boolean = false,
+    val extensionPaths: List<String> = emptyList(),
+    val noExtensions: Boolean = false,
+)
 
 enum class ThemeMode { System, Light, Dark }
 

@@ -1,5 +1,6 @@
 /bin/
 /.agents/
+/.pi/
 /.oh-pi-app/
 /app/iosApp/build-device/
 web-demo/node_modules/

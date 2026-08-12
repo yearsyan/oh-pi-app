@@ -37,7 +37,7 @@ Provider 或 extension Provider。正式 session 和工作空间 `capabilities` 
 <data-dir>/workspaces/<workspace-id>/workspace.json
 ```
 
-其中包含 ID、目录、显示名、追加系统提示词和时间戳。技术栈不持久化，而是在返回 API 时根据根目录的框架配置、语言 manifest 和 `package.json` 依赖按优先级重新探测。未来可以在该结构上增加子工作空间；当前协议暂不提供子目录层级。
+其中包含 ID、目录、显示名、追加系统提示词、工作空间级 Skills/Extensions 配置、时间戳和可选删除墓碑。删除工作空间只设置墓碑，不删除元信息或 session；重新注册同一规范化目录会清除墓碑，因此原 ID 和会话关联保持稳定。技术栈不持久化，而是在返回 API 时根据根目录的框架配置、语言 manifest 和 `package.json` 依赖按优先级重新探测。未来可以在该结构上增加子工作空间；当前协议暂不提供子目录层级。
 
 每个 session 使用独立目录：
 
@@ -53,16 +53,38 @@ Provider 或 extension Provider。正式 session 和工作空间 `capabilities` 
 ohpi 以以下受控参数启动子进程：
 
 ```text
-pi <额外参数> [--append-system-prompt <工作空间提示词>] --mode rpc --session-dir <目录> --session-id <ID>
+pi <全局参数> \
+  [--no-skills] [--skill <路径>]... \
+  [--no-extensions] [--extension <路径>]... \
+  [--append-system-prompt <工作空间提示词>] \
+  --mode rpc --session-dir <目录> --session-id <ID>
 ```
+
+Skills 和 Extensions 路径可以配置多个；相对路径由 Pi 以工作空间目录解析。`--no-skills` 和 `--no-extensions` 只关闭自动发现，显式路径仍会加载。普通会话、能力探测和定时任务创建的会话共享同一个工作空间参数构造逻辑，避免模型/Slash 命令列表与真正执行环境不一致；定时任务还会在此基础上合并自己的 Skills 路径，并可单独追加 `--no-skills`。
 
 各文件的职责如下：
 
-- `ohpi-session.json` 是会话元数据的权威来源，包含名称、`workspace_id`、创建时间和最近活跃时间。缺少有效 `workspace_id` 的旧格式元数据不会被迁移或加载；HTTP、WebSocket 与磁盘元数据均不兼容 1.x。
+- `ohpi-session.json` 是会话元数据的权威来源，包含名称、`workspace_id`、创建时间、最近活跃时间，以及可选的来源。定时任务创建的会话持久化 `source: "scheduled_task"` 和稳定的 `scheduled_task_id`，并保存本次运行的任务级 Skills 参数快照，使之后 attach 重启 pi 时仍使用同一组任务 Skills；普通交互会话不写来源。缺少有效 `workspace_id` 的旧格式元数据不会被迁移或加载；HTTP、WebSocket 与磁盘元数据均不兼容 1.x。
 - pi 创建的 append-only session JSONL 保存已经稳定的历史 entry。
 - `ohpi-replay.log` 是当前活动 turn 的紧凑事件 WAL。ohpi 在广播可回放事件前先写入该文件；累计 message 快照会被剥离，已完成消息/工具的中间更新会被最终状态替代。
 - `ohpi-history.json` 记录 session JSONL 的稳定文件边界、最后 entry ID 和事件序号。
 - `ohpi-metrics.jsonl` 每次追加一条可测量 assistant 模型调用的 TTFT、生成时长和 output token。它独立于对话历史与 replay，可在 pi 子进程停止后继续查询。
+
+## 定时任务调度
+
+定时能力位于独立的 `internal/scheduledtask` package；它只负责定义校验、计算时间、持久化领取、有界调度和保留期清理循环，不依赖 Gateway 的 WebSocket 或 session 实现。Gateway 通过 Runner 适配器把一次 occurrence 转换为带 `scheduled_task` 来源和任务 ID 的新持久化 pi session：先应用任务配置的工作空间、模型、思考强度及任务级 Skills 参数，再提交初始化 Prompt，等待 `agent_settled` 后结算结果并回收该 session 的 pi 进程；会话及历史仍保留，之后可以正常 attach。交互式 extension 请求无法无人值守处理，会中止该次执行并记为失败。
+
+每个任务使用独立目录：
+
+```text
+<data-dir>/scheduled-tasks/<task-id>/task.json
+```
+
+JSON 以 `0600` 权限原子替换，保存用户定义、`next_run_at`、当前领取和最近一次结果。调度器使用单一计时循环，空闲时不轮询；每次唤醒扫描任务元数据，最多并发运行两个任务，每次模型 turn 最长一小时。同一任务禁止重叠。
+
+领取 occurrence 时会先原子写入 `current_run` 并把 `next_run_at` 推进到未来，之后才启动 pi。这提供 at-most-once 的崩溃语义：重启发现未完成领取时将其标记为 `interrupted`，不会冒险重复可能已经产生副作用的 Prompt。Cron 和固定间隔在长时间停机后只补一次，不会瞬间回放全部历史触发点；单次任务在恢复后仍执行一次。任务自身仅产生少量定时器、JSON 元数据和进程管理成本，主要费用来自实际触发的模型调用；全局并发限制和禁止任务重叠共同限制突发成本。
+
+会话列表可以在排序、计数和分页之前按来源排除定时任务会话，也可以按持久化任务 ID 跨工作空间分页查询一个任务的全部关联会话。独立的保留期循环在网关启动后立即执行一次，之后每小时按 `ohpi-session.json` 的最近活跃时间删除过期定时任务会话；默认阈值为 7 天。它通过 session manager 与元数据存储的二次条件检查避开正在运行、正在删除、被并发打开或刚刚产生新活动的会话，且永不自动删除普通交互会话。attach、用户输入、模型输出和重命名都会延长定时任务会话的保留时间。
 
 ## 生成性能统计
 

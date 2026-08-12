@@ -136,6 +136,8 @@ interface Strings {
     val noSessionsHint: String
     val rename: String
     val delete: String
+    val edit: String
+    val moreOptions: String
     val moreActions: String
     val renameDialogTitle: String
     val sessionNameLabel: String
@@ -180,6 +182,15 @@ interface Strings {
     val workspaceNameLabel: String
     val additionalSystemPromptLabel: String
     val additionalSystemPromptHint: String
+    val workspaceSkillsTitle: String
+    val workspaceSkillPathsLabel: String
+    val workspaceSkillPathsHint: String
+    val workspaceNoSkillsLabel: String
+    val workspaceExtensionsTitle: String
+    val workspaceExtensionPathsLabel: String
+    val workspaceExtensionPathsHint: String
+    val workspaceNoExtensionsLabel: String
+    val workspaceExtensionsSecurityHint: String
     val workspaceLoadFailed: (String) -> String
     val workspaceMoreSessionsLoadFailed: (String) -> String
     val workspaceUpdateFailed: (String) -> String
@@ -187,6 +198,7 @@ interface Strings {
     val workspaceRestored: String
     val workspaceDeleted: String
     val workspaceDeleteFailed: (String) -> String
+    val workspaceDeleteUnsupported: String
 
     // file browser
     val browseFiles: String
@@ -360,6 +372,12 @@ interface Strings {
     val gatewayRuntimeUnavailable: String
     val gatewayRuntimeUnsupported: String
     val gatewayRuntimeLoading: String
+    val gatewayScheduledSessions: String
+    val gatewayHideScheduledSessions: String
+    val gatewayHideScheduledSessionsHint: String
+    val gatewayScheduledSessionsUnsupported: String
+    val gatewayScheduledSessionRetention: String
+    val gatewayScheduledSessionRetentionHint: String
     val gatewayEnvironmentSource: String
     val gatewayEnvironmentNone: String
     val gatewayEnvironmentCustom: String
@@ -456,6 +474,75 @@ interface Strings {
     val requestTimedOutError: String
     val serverUnreachableError: String
     val authenticationFailedError: String
+
+    // scheduled tasks
+    val scheduledTasksTitle: String
+    val scheduledTasksUnsupported: String
+    val scheduledTasksEmpty: String
+    val scheduledTasksEmptyHint: String
+    val scheduledTaskAdd: String
+    val scheduledTaskCreateTitle: String
+    val scheduledTaskEditTitle: String
+    val scheduledTaskName: String
+    val scheduledTaskNameHint: String
+    val scheduledTaskWorkspace: String
+    val scheduledTaskScheduleType: String
+    val scheduledTaskCron: String
+    val scheduledTaskInterval: String
+    val scheduledTaskOnce: String
+    val scheduledTaskWeekdays: String
+    val scheduledTaskWeekdayLabels: List<String>
+    val scheduledTaskEveryDay: String
+    val scheduledTaskTimezone: String
+    val scheduledTaskIntervalValue: String
+    val scheduledTaskIntervalUnit: String
+    val scheduledTaskMinutes: String
+    val scheduledTaskHours: String
+    val scheduledTaskDays: String
+    val scheduledTaskAnchorAt: String
+    val scheduledTaskRunAt: String
+    val scheduledTaskSectionBasics: String
+    val scheduledTaskDateLabel: String
+    val scheduledTaskTimeLabel: String
+    val scheduledTaskSelectTime: String
+    val scheduledTaskCronDesc: String
+    val scheduledTaskIntervalDesc: String
+    val scheduledTaskOnceDesc: String
+    val scheduledTaskDefaultModel: String
+    val scheduledTaskDefaultThinking: String
+    val scheduledTaskSkillsTitle: String
+    val scheduledTaskSkillPathsLabel: String
+    val scheduledTaskSkillPathsHint: String
+    val scheduledTaskNoSkillsLabel: String
+    val scheduledTaskNoSkillsHint: String
+    val scheduledTaskPrompt: String
+    val scheduledTaskPromptHint: String
+    val scheduledTaskEnabled: String
+    val scheduledTaskNextRun: String
+    val scheduledTaskLastRun: String
+    val scheduledTaskRunning: String
+    val scheduledTaskRunNow: String
+    val scheduledTaskSessionsAction: String
+    val scheduledTaskSessionsTitle: String
+    val scheduledTaskSessionsEmpty: String
+    val scheduledTaskSessionsEmptyHint: String
+    val scheduledTaskSessionsLoadFailed: (String) -> String
+    val scheduledTaskSessionWorkspaceDeleted: String
+    val scheduledTaskDeleteTitle: String
+    val scheduledTaskDeleteBody: (String) -> String
+    val scheduledTaskLoadFailed: (String) -> String
+    val scheduledTaskSaveFailed: (String) -> String
+    val scheduledTaskDeleteFailed: (String) -> String
+    val scheduledTaskRunFailed: (String) -> String
+    val scheduledTaskSaved: String
+    val scheduledTaskDeleted: String
+    val scheduledTaskRunStarted: String
+    val scheduledTaskSave: String
+    val scheduledTaskRequiredFields: String
+    val scheduledTaskInvalidCron: String
+    val scheduledTaskUnsupportedCron: String
+    val scheduledTaskInvalidInterval: String
+    val scheduledTaskInvalidTime: String
 
     // port forwarding
     val portForwardsTitle: String
@@ -628,6 +715,8 @@ object EnStrings : Strings {
     override val noSessionsHint = "Start a new chat to talk with your agent."
     override val rename = "Rename"
     override val delete = "Delete"
+    override val edit = "Edit"
+    override val moreOptions = "More"
     override val moreActions = "More actions"
     override val renameDialogTitle = "Rename chat"
     override val sessionNameLabel = "Chat name"
@@ -675,6 +764,18 @@ object EnStrings : Strings {
     override val additionalSystemPromptLabel = "Additional system prompt"
     override val additionalSystemPromptHint =
         "Appended whenever a new pi process starts in this workspace."
+    override val workspaceSkillsTitle = "Skills"
+    override val workspaceSkillPathsLabel = "Skill paths"
+    override val workspaceSkillPathsHint =
+        "One file or directory per line. Relative paths start from the workspace directory."
+    override val workspaceNoSkillsLabel = "Exclude other Skills"
+    override val workspaceExtensionsTitle = "Extensions"
+    override val workspaceExtensionPathsLabel = "Extension paths"
+    override val workspaceExtensionPathsHint =
+        "One file or directory per line. Relative paths start from the workspace directory."
+    override val workspaceNoExtensionsLabel = "Exclude other Extensions"
+    override val workspaceExtensionsSecurityHint =
+        "Extensions run with the gateway user's permissions. Only configure sources you trust."
     override val workspaceLoadFailed = { error: String -> "Could not load workspaces: $error" }
     override val workspaceMoreSessionsLoadFailed = { error: String ->
         "Could not load more chats: $error"
@@ -682,8 +783,10 @@ object EnStrings : Strings {
     override val workspaceUpdateFailed = { error: String -> "Could not update the workspace: $error" }
     override val workspaceArchived = "Workspace archived"
     override val workspaceRestored = "Workspace restored"
-    override val workspaceDeleted = "Workspace and its remote chats deleted"
+    override val workspaceDeleted = "Workspace deleted; chats kept"
     override val workspaceDeleteFailed = { error: String -> "Could not delete the workspace: $error" }
+    override val workspaceDeleteUnsupported =
+        "This gateway version does not support deleting workspaces."
 
     override val browseFiles = "Browse files"
     override val filesRoot = "Root"
@@ -844,7 +947,7 @@ object EnStrings : Strings {
     override val restoreWorkspace = "Restore"
     override val deleteWorkspaceTitle = "Delete workspace?"
     override val deleteWorkspaceBody = { name: String ->
-        "This removes $name from this device and permanently deletes all of its chats and history from the remote server. Files in the workspace directory are not deleted. This cannot be undone."
+        "This removes $name from the server's workspace list. Its chats, history, and directory files are kept. Add the same directory again to restore the workspace and its chats."
     }
     override val addServer = "Add server"
     override val editServer = "Edit server"
@@ -860,10 +963,19 @@ object EnStrings : Strings {
         "Gateway $label · protocol $protocol"
     }
     override val gatewayRuntimeSection = "Gateway runtime"
-    override val gatewayRuntimeDescription = "Shell environment, title model, and restart"
+    override val gatewayRuntimeDescription = "Sessions, shell environment, title model, and restart"
     override val gatewayRuntimeUnavailable = "Connect to a server before editing gateway runtime settings."
     override val gatewayRuntimeUnsupported = "This gateway does not support runtime settings. Upgrade the gateway first."
     override val gatewayRuntimeLoading = "Loading gateway settings…"
+    override val gatewayScheduledSessions = "Scheduled-task sessions"
+    override val gatewayHideScheduledSessions = "Hide from session list"
+    override val gatewayHideScheduledSessionsHint =
+        "Scheduled runs remain on the gateway and can be shown again at any time."
+    override val gatewayScheduledSessionsUnsupported =
+        "Update the gateway before filtering or configuring scheduled-task sessions."
+    override val gatewayScheduledSessionRetention = "Delete after inactivity (days)"
+    override val gatewayScheduledSessionRetentionHint =
+        "Only sessions created by scheduled tasks are deleted. Default: 7 days; changing this requires a restart."
     override val gatewayEnvironmentSource = "pi environment"
     override val gatewayEnvironmentNone = "None"
     override val gatewayEnvironmentCustom = "Custom"
@@ -970,6 +1082,77 @@ object EnStrings : Strings {
     override val requestTimedOutError = "The request timed out. Please try again."
     override val serverUnreachableError = "Could not reach the server."
     override val authenticationFailedError = "Authentication failed. Check the server token."
+
+    override val scheduledTasksTitle = "Scheduled tasks"
+    override val scheduledTasksUnsupported = "Update the gateway to manage scheduled tasks."
+    override val scheduledTasksEmpty = "No scheduled tasks"
+    override val scheduledTasksEmptyHint = "Create a recurring or one-time Pi task for this server."
+    override val scheduledTaskAdd = "New task"
+    override val scheduledTaskCreateTitle = "Create scheduled task"
+    override val scheduledTaskEditTitle = "Edit scheduled task"
+    override val scheduledTaskName = "Task name"
+    override val scheduledTaskNameHint = "Weekday project check"
+    override val scheduledTaskWorkspace = "Workspace"
+    override val scheduledTaskScheduleType = "Schedule"
+    override val scheduledTaskCron = "Weekly"
+    override val scheduledTaskInterval = "Interval"
+    override val scheduledTaskOnce = "One time"
+    override val scheduledTaskWeekdays = "Weekdays"
+    override val scheduledTaskWeekdayLabels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    override val scheduledTaskEveryDay = "Every day"
+    override val scheduledTaskTimezone = "Time zone"
+    override val scheduledTaskIntervalValue = "Every"
+    override val scheduledTaskIntervalUnit = "Unit"
+    override val scheduledTaskMinutes = "Minutes"
+    override val scheduledTaskHours = "Hours"
+    override val scheduledTaskDays = "Days"
+    override val scheduledTaskAnchorAt = "Start at"
+    override val scheduledTaskRunAt = "Run at"
+    override val scheduledTaskSectionBasics = "Basics"
+    override val scheduledTaskDateLabel = "Date"
+    override val scheduledTaskTimeLabel = "Time"
+    override val scheduledTaskSelectTime = "Select time"
+    override val scheduledTaskCronDesc = "Repeats every week on the selected days"
+    override val scheduledTaskIntervalDesc = "Repeats at a fixed interval"
+    override val scheduledTaskOnceDesc = "Runs a single time"
+    override val scheduledTaskDefaultModel = "Workspace default"
+    override val scheduledTaskDefaultThinking = "Model default"
+    override val scheduledTaskSkillsTitle = "Task Skills"
+    override val scheduledTaskSkillPathsLabel = "Additional Skill paths"
+    override val scheduledTaskSkillPathsHint =
+        "One file or directory per line. Paths are merged with the workspace Skills; relative paths start at the workspace directory."
+    override val scheduledTaskNoSkillsLabel = "Exclude automatically discovered Skills"
+    override val scheduledTaskNoSkillsHint =
+        "Explicit paths configured for the workspace or this task are still loaded."
+    override val scheduledTaskPrompt = "Initial prompt"
+    override val scheduledTaskPromptHint = "Describe the work Pi should perform unattended."
+    override val scheduledTaskEnabled = "Enabled"
+    override val scheduledTaskNextRun = "Next"
+    override val scheduledTaskLastRun = "Last run"
+    override val scheduledTaskRunning = "Running"
+    override val scheduledTaskRunNow = "Run now"
+    override val scheduledTaskSessionsAction = "View sessions"
+    override val scheduledTaskSessionsTitle = "Task sessions"
+    override val scheduledTaskSessionsEmpty = "No task sessions"
+    override val scheduledTaskSessionsEmptyHint = "Sessions created by this task will appear here after it runs."
+    override val scheduledTaskSessionsLoadFailed = { error: String -> "Could not load task sessions: $error" }
+    override val scheduledTaskSessionWorkspaceDeleted = "Workspace unavailable"
+    override val scheduledTaskDeleteTitle = "Delete scheduled task?"
+    override val scheduledTaskDeleteBody = { name: String -> "Delete $name? Existing task sessions are kept." }
+    override val scheduledTaskLoadFailed = { error: String -> "Could not load scheduled tasks: $error" }
+    override val scheduledTaskSaveFailed = { error: String -> "Could not save the scheduled task: $error" }
+    override val scheduledTaskDeleteFailed = { error: String -> "Could not delete the scheduled task: $error" }
+    override val scheduledTaskRunFailed = { error: String -> "Could not start the scheduled task: $error" }
+    override val scheduledTaskSaved = "Scheduled task saved"
+    override val scheduledTaskDeleted = "Scheduled task deleted"
+    override val scheduledTaskRunStarted = "Scheduled task started"
+    override val scheduledTaskSave = "Save task"
+    override val scheduledTaskRequiredFields = "Name, workspace, and initial prompt are required."
+    override val scheduledTaskInvalidCron = "Select at least one weekday."
+    override val scheduledTaskUnsupportedCron =
+        "This task uses an advanced Cron schedule that cannot be edited as weekdays and time."
+    override val scheduledTaskInvalidInterval = "Enter a positive interval of at least one minute."
+    override val scheduledTaskInvalidTime = "Choose a future date and time."
 
     override val portForwardsTitle = "Port forwarding"
     override val portForwardAdd = "Add mapping"
@@ -1131,6 +1314,8 @@ object ZhStrings : Strings {
     override val noSessionsHint = "开始一个新会话，与智能体对话吧。"
     override val rename = "重命名"
     override val delete = "删除"
+    override val edit = "编辑"
+    override val moreOptions = "更多"
     override val moreActions = "更多操作"
     override val renameDialogTitle = "重命名会话"
     override val sessionNameLabel = "会话名称"
@@ -1175,13 +1360,23 @@ object ZhStrings : Strings {
     override val workspaceNameLabel = "显示名称"
     override val additionalSystemPromptLabel = "追加系统提示词"
     override val additionalSystemPromptHint = "每次在此工作区启动新的 pi 进程时追加。"
+    override val workspaceSkillsTitle = "Skills"
+    override val workspaceSkillPathsLabel = "Skills 路径"
+    override val workspaceSkillPathsHint = "每行一个文件或目录；相对路径以工作区目录为起点。"
+    override val workspaceNoSkillsLabel = "排除其他 Skills"
+    override val workspaceExtensionsTitle = "Extensions"
+    override val workspaceExtensionPathsLabel = "Extensions 路径"
+    override val workspaceExtensionPathsHint = "每行一个文件或目录；相对路径以工作区目录为起点。"
+    override val workspaceNoExtensionsLabel = "排除其他 Extensions"
+    override val workspaceExtensionsSecurityHint = "Extension 会以网关用户权限运行，请仅配置可信来源。"
     override val workspaceLoadFailed = { error: String -> "无法加载工作区：$error" }
     override val workspaceMoreSessionsLoadFailed = { error: String -> "无法加载更多会话：$error" }
     override val workspaceUpdateFailed = { error: String -> "无法更新工作区：$error" }
     override val workspaceArchived = "工作区已归档"
     override val workspaceRestored = "工作区已还原"
-    override val workspaceDeleted = "工作区及其远端会话已删除"
+    override val workspaceDeleted = "工作区已删除，会话已保留"
     override val workspaceDeleteFailed = { error: String -> "无法删除工作区：$error" }
+    override val workspaceDeleteUnsupported = "当前网关版本不支持删除工作区。"
 
     override val browseFiles = "浏览文件"
     override val filesRoot = "根目录"
@@ -1338,7 +1533,7 @@ object ZhStrings : Strings {
     override val restoreWorkspace = "还原"
     override val deleteWorkspaceTitle = "删除工作区？"
     override val deleteWorkspaceBody = { name: String ->
-        "这会从本设备移除 $name，并永久删除远端服务器上该工作区的全部会话及历史记录；工作区目录中的文件不会被删除。此操作无法撤销。"
+        "这会从服务器的工作区列表中移除 $name，但保留全部会话、历史记录和目录文件。重新添加同一目录后，工作区及其会话会恢复。"
     }
     override val addServer = "添加服务器"
     override val editServer = "编辑服务器"
@@ -1354,10 +1549,17 @@ object ZhStrings : Strings {
         "网关 $label · 协议 $protocol"
     }
     override val gatewayRuntimeSection = "网关运行环境"
-    override val gatewayRuntimeDescription = "Shell 环境、标题模型与重启"
+    override val gatewayRuntimeDescription = "会话、Shell 环境、标题模型与重启"
     override val gatewayRuntimeUnavailable = "请先连接服务器，再编辑网关运行配置。"
     override val gatewayRuntimeUnsupported = "当前网关不支持运行配置接口，请先升级网关。"
     override val gatewayRuntimeLoading = "正在读取网关配置…"
+    override val gatewayScheduledSessions = "定时任务会话"
+    override val gatewayHideScheduledSessions = "从会话列表中隐藏"
+    override val gatewayHideScheduledSessionsHint = "定时任务会话仍会保留，可随时关闭此开关重新显示。"
+    override val gatewayScheduledSessionsUnsupported = "请先更新网关，再过滤或配置定时任务会话。"
+    override val gatewayScheduledSessionRetention = "闲置后清除（天）"
+    override val gatewayScheduledSessionRetentionHint =
+        "仅清除定时任务产生的会话；默认 7 天，修改后需要重启网关。"
     override val gatewayEnvironmentSource = "pi 环境"
     override val gatewayEnvironmentNone = "不加载"
     override val gatewayEnvironmentCustom = "自定义"
@@ -1464,6 +1666,74 @@ object ZhStrings : Strings {
     override val requestTimedOutError = "请求超时，请重试。"
     override val serverUnreachableError = "无法连接服务器。"
     override val authenticationFailedError = "认证失败，请检查服务器令牌。"
+
+    override val scheduledTasksTitle = "定时任务"
+    override val scheduledTasksUnsupported = "请更新网关后再管理定时任务。"
+    override val scheduledTasksEmpty = "暂无定时任务"
+    override val scheduledTasksEmptyHint = "为当前服务器创建周期或一次性 Pi 任务。"
+    override val scheduledTaskAdd = "新建任务"
+    override val scheduledTaskCreateTitle = "创建定时任务"
+    override val scheduledTaskEditTitle = "编辑定时任务"
+    override val scheduledTaskName = "任务名称"
+    override val scheduledTaskNameHint = "工作日项目检查"
+    override val scheduledTaskWorkspace = "工作空间"
+    override val scheduledTaskScheduleType = "执行时间"
+    override val scheduledTaskCron = "按星期"
+    override val scheduledTaskInterval = "固定间隔"
+    override val scheduledTaskOnce = "单次执行"
+    override val scheduledTaskWeekdays = "选择星期"
+    override val scheduledTaskWeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    override val scheduledTaskEveryDay = "每天"
+    override val scheduledTaskTimezone = "时区"
+    override val scheduledTaskIntervalValue = "每隔"
+    override val scheduledTaskIntervalUnit = "单位"
+    override val scheduledTaskMinutes = "分钟"
+    override val scheduledTaskHours = "小时"
+    override val scheduledTaskDays = "天"
+    override val scheduledTaskAnchorAt = "开始时间"
+    override val scheduledTaskRunAt = "执行时间"
+    override val scheduledTaskSectionBasics = "基本信息"
+    override val scheduledTaskDateLabel = "日期"
+    override val scheduledTaskTimeLabel = "时间"
+    override val scheduledTaskSelectTime = "选择时间"
+    override val scheduledTaskCronDesc = "按选定星期每周重复执行"
+    override val scheduledTaskIntervalDesc = "按固定间隔重复执行"
+    override val scheduledTaskOnceDesc = "仅在指定时间执行一次"
+    override val scheduledTaskDefaultModel = "工作空间默认模型"
+    override val scheduledTaskDefaultThinking = "模型默认强度"
+    override val scheduledTaskSkillsTitle = "任务专属 Skills"
+    override val scheduledTaskSkillPathsLabel = "额外 Skills 路径"
+    override val scheduledTaskSkillPathsHint = "每行一个文件或目录；会与工作空间 Skills 合并，相对路径以工作空间目录为起点。"
+    override val scheduledTaskNoSkillsLabel = "排除自动发现的其他 Skills"
+    override val scheduledTaskNoSkillsHint = "工作空间和该任务中显式配置的路径仍会加载。"
+    override val scheduledTaskPrompt = "初始化 Prompt"
+    override val scheduledTaskPromptHint = "描述 Pi 在无人值守时需要完成的工作。"
+    override val scheduledTaskEnabled = "启用任务"
+    override val scheduledTaskNextRun = "下次执行"
+    override val scheduledTaskLastRun = "上次执行"
+    override val scheduledTaskRunning = "运行中"
+    override val scheduledTaskRunNow = "立即执行"
+    override val scheduledTaskSessionsAction = "查看关联会话"
+    override val scheduledTaskSessionsTitle = "任务关联会话"
+    override val scheduledTaskSessionsEmpty = "暂无关联会话"
+    override val scheduledTaskSessionsEmptyHint = "该任务执行后，产生的会话会显示在这里。"
+    override val scheduledTaskSessionsLoadFailed = { error: String -> "无法加载任务关联会话：$error" }
+    override val scheduledTaskSessionWorkspaceDeleted = "工作空间不可用"
+    override val scheduledTaskDeleteTitle = "删除定时任务？"
+    override val scheduledTaskDeleteBody = { name: String -> "确定删除 $name？已经产生的任务会话会保留。" }
+    override val scheduledTaskLoadFailed = { error: String -> "无法加载定时任务：$error" }
+    override val scheduledTaskSaveFailed = { error: String -> "无法保存定时任务：$error" }
+    override val scheduledTaskDeleteFailed = { error: String -> "无法删除定时任务：$error" }
+    override val scheduledTaskRunFailed = { error: String -> "无法启动定时任务：$error" }
+    override val scheduledTaskSaved = "定时任务已保存"
+    override val scheduledTaskDeleted = "定时任务已删除"
+    override val scheduledTaskRunStarted = "定时任务已启动"
+    override val scheduledTaskSave = "保存任务"
+    override val scheduledTaskRequiredFields = "请填写任务名称、工作空间和初始化 Prompt。"
+    override val scheduledTaskInvalidCron = "请至少选择一个星期。"
+    override val scheduledTaskUnsupportedCron = "该任务使用了高级 Cron 计划，无法通过星期和时间表单编辑。"
+    override val scheduledTaskInvalidInterval = "请输入不少于一分钟的有效间隔。"
+    override val scheduledTaskInvalidTime = "请选择晚于当前时间的执行时间。"
 
     override val portForwardsTitle = "端口映射"
     override val portForwardAdd = "添加映射"

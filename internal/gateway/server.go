@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/yearsyan/oh-pi-app/internal/filebrowser"
 	"github.com/yearsyan/oh-pi-app/internal/providerauth"
+	"github.com/yearsyan/oh-pi-app/internal/scheduledtask"
 )
 
 var sessionChangingCommands = map[string]struct{}{
@@ -35,18 +36,26 @@ const gatewayProtocolVersion = 3
 
 const gatewayFeatureSessionProcessStop = "session_process_stop"
 const gatewayFeatureWorkspaces = "workspaces_v2"
+const gatewayFeatureWorkspaceDelete = "workspace_delete_v1"
+const gatewayFeatureWorkspaceResources = "workspace_resources_v1"
 const gatewayFeatureRuntimeConfig = "runtime_config_v1"
+const gatewayFeatureScheduledTasks = "scheduled_tasks_v1"
+const gatewayFeatureScheduledTaskSkills = "scheduled_task_skills_v1"
+const gatewayFeatureScheduledSessionManagement = "scheduled_session_management_v1"
+const gatewayFeatureScheduledTaskSessions = "scheduled_task_sessions_v1"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
-	cfg           Config
-	manager       *sessionManager
-	workspaces    *workspaceStore
-	capabilities  *capabilitiesLoader
-	providers     *providerService
-	runtimeConfig *runtimeConfigService
-	upgrader      websocket.Upgrader
-	handler       http.Handler
+	cfg            Config
+	manager        *sessionManager
+	workspaces     *workspaceStore
+	capabilities   *capabilitiesLoader
+	providers      *providerService
+	runtimeConfig  *runtimeConfigService
+	scheduledTasks *scheduledtask.Engine
+	sessionCleaner *scheduledtask.RetentionCleaner
+	upgrader       websocket.Upgrader
+	handler        http.Handler
 }
 
 // New constructs a gateway and initializes its persistent session store.
@@ -63,7 +72,7 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := workspaces.ensure(cfg.WorkDir); err != nil {
+	if _, _, err := workspaces.ensureDefault(cfg.WorkDir); err != nil {
 		return nil, fmt.Errorf("register default workspace: %w", err)
 	}
 	providerExtension, err := providerauth.Install(cfg.DataDir)
@@ -71,9 +80,17 @@ func New(cfg Config) (*Gateway, error) {
 		return nil, fmt.Errorf("install provider authentication extension: %w", err)
 	}
 
+	manager := newSessionManager(cfg, store, workspaces)
+	taskStore, err := scheduledtask.NewStore(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := markExistingScheduledSessions(store, taskStore, cfg.Logger); err != nil {
+		return nil, err
+	}
 	gateway := &Gateway{
 		cfg:           cfg,
-		manager:       newSessionManager(cfg, store, workspaces),
+		manager:       manager,
 		workspaces:    workspaces,
 		capabilities:  newCapabilitiesLoader(cfg),
 		providers:     newProviderService(cfg, providerExtension),
@@ -83,6 +100,16 @@ func New(cfg Config) (*Gateway, error) {
 			WriteBufferSize: 4096,
 		},
 	}
+	gateway.scheduledTasks = scheduledtask.NewEngine(
+		taskStore,
+		scheduledtask.RunnerFunc(gateway.runScheduledTask),
+		cfg.Logger,
+	)
+	gateway.sessionCleaner = scheduledtask.NewRetentionCleaner(
+		cfg.ScheduledSessionRetention,
+		manager.pruneScheduledSessions,
+		cfg.Logger,
+	)
 	gateway.upgrader.CheckOrigin = gateway.checkOrigin
 
 	mux := http.NewServeMux()
@@ -94,6 +121,8 @@ func New(cfg Config) (*Gateway, error) {
 	mux.HandleFunc("/api/provider-auth", gateway.handleProviderAuth)
 	mux.HandleFunc("/api/workspaces", gateway.handleWorkspaces)
 	mux.HandleFunc("/api/workspaces/", gateway.handleWorkspace)
+	mux.HandleFunc("/api/tasks", gateway.handleScheduledTasks)
+	mux.HandleFunc("/api/tasks/", gateway.handleScheduledTask)
 	if gateway.runtimeConfig != nil {
 		mux.HandleFunc("/api/runtime-config", gateway.handleRuntimeConfig)
 		mux.HandleFunc("/api/runtime-restart", gateway.handleRuntimeRestart)
@@ -105,6 +134,13 @@ func New(cfg Config) (*Gateway, error) {
 		Logger:       cfg.Logger,
 	}).Register(mux)
 	gateway.handler = mux
+	if err := gateway.scheduledTasks.Start(); err != nil {
+		return nil, fmt.Errorf("start scheduled task engine: %w", err)
+	}
+	if err := gateway.sessionCleaner.Start(); err != nil {
+		_ = gateway.scheduledTasks.Stop(context.Background())
+		return nil, fmt.Errorf("start scheduled session retention: %w", err)
+	}
 	return gateway, nil
 }
 
@@ -115,7 +151,14 @@ func (g *Gateway) Handler() http.Handler {
 
 // Shutdown closes WebSocket clients and gracefully stops all pi processes.
 func (g *Gateway) Shutdown(ctx context.Context) error {
-	return g.manager.shutdown(ctx)
+	var result error
+	if g.sessionCleaner != nil {
+		result = g.sessionCleaner.Stop(ctx)
+	}
+	if g.scheduledTasks != nil {
+		result = errors.Join(result, g.scheduledTasks.Stop(ctx))
+	}
+	return errors.Join(result, g.manager.shutdown(ctx))
 }
 
 func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request) {
@@ -129,7 +172,16 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		writeHTTPError(writer, http.StatusServiceUnavailable, "restarting", "gateway restart is in progress")
 		return
 	}
-	features := []string{gatewayFeatureWorkspaces, gatewayFeatureSessionProcessStop}
+	features := []string{
+		gatewayFeatureWorkspaces,
+		gatewayFeatureSessionProcessStop,
+		gatewayFeatureWorkspaceDelete,
+		gatewayFeatureWorkspaceResources,
+		gatewayFeatureScheduledTasks,
+		gatewayFeatureScheduledTaskSkills,
+		gatewayFeatureScheduledSessionManagement,
+		gatewayFeatureScheduledTaskSessions,
+	}
 	if g.runtimeConfig != nil {
 		features = append(features, gatewayFeatureRuntimeConfig)
 	}
@@ -322,21 +374,36 @@ func (g *Gateway) handleWebSocket(writer http.ResponseWriter, request *http.Requ
 }
 
 type initialSessionConfig struct {
-	model    string
-	thinking string
+	model      string
+	thinking   string
+	skillPaths []string
+	noSkills   bool
 }
 
 func (config initialSessionConfig) empty() bool {
-	return config.model == "" && config.thinking == ""
+	return config.model == "" && config.thinking == "" && len(config.skillPaths) == 0 && !config.noSkills
 }
 
-func (config initialSessionConfig) args() []string {
-	args := make([]string, 0, 4)
+func (config initialSessionConfig) args(inheritedSkills []string, inheritedNoSkills bool) []string {
+	args := make([]string, 0, 5+len(config.skillPaths)*2)
 	if config.model != "" {
 		args = append(args, "--model", config.model)
 	}
 	if config.thinking != "" {
 		args = append(args, "--thinking", config.thinking)
+	}
+	if config.noSkills && !inheritedNoSkills {
+		args = append(args, "--no-skills")
+	}
+	inherited := make(map[string]struct{}, len(inheritedSkills))
+	for _, path := range inheritedSkills {
+		inherited[path] = struct{}{}
+	}
+	for _, path := range config.skillPaths {
+		if _, exists := inherited[path]; exists {
+			continue
+		}
+		args = append(args, "--skill", path)
 	}
 	return args
 }

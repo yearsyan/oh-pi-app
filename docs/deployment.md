@@ -31,6 +31,7 @@ OHPI_DATA_DIR="$HOME/.local/state/oh-pi-app" \
 OHPI_WORK_DIR="/path/to/project" \
 OHPI_TITLE_MODEL="openai/gpt-5-nano" \
 OHPI_PI_COMMAND="/absolute/path/to/pi" \
+OHPI_SCHEDULED_SESSION_RETENTION="168h" \
 ./scripts/deploy-launchd.sh
 ```
 
@@ -61,11 +62,12 @@ curl http://127.0.0.1:18080/healthz
   "OHPI_PI_COMMAND": "/absolute/path/to/pi",
   "OHPI_PI_ENV_PATH": "/absolute/path/to/node/bin:/usr/local/bin:/usr/bin:/bin",
   "OHPI_PI_ENV_FILE": "~/.zshrc",
-  "OHPI_PI_ENV_SHELL": "/bin/zsh"
+  "OHPI_PI_ENV_SHELL": "/bin/zsh",
+  "OHPI_SCHEDULED_SESSION_RETENTION": "168h"
 }
 ```
 
-配置文件只接受上面八个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。`OHPI_PI_ENV_FILE` 和 `OHPI_PI_ENV_SHELL` 可一起省略，以禁用 shell 环境加载。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
+配置文件只接受上面九个字符串字段，未知字段、重复字段、空值或错误类型都会导致启动失败；它不能配置 token。`OHPI_PI_ENV_FILE` 和 `OHPI_PI_ENV_SHELL` 可一起省略，以禁用 shell 环境加载。配置优先级为：命令行参数 > 环境变量 > 配置文件 > 内置默认值。传入 `--config=` 可以禁用配置文件读取。
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |---|---|---:|---|
@@ -85,6 +87,7 @@ curl http://127.0.0.1:18080/healthz
 | `--allow-origin` | 无 | 同源 | 允许的浏览器 Origin，可重复；`*` 表示全部 |
 | `--max-message-bytes` | 无 | `134217728` | 单条 WS 命令和 pi 事件上限 |
 | `--session-idle-timeout` | 无 | `5m` | `agent_settled` 后无新 RPC 输入的 pi 进程回收时间 |
+| `--scheduled-session-retention` | `OHPI_SCHEDULED_SESSION_RETENTION` | `168h`（7 天） | 定时任务会话按最近活跃时间自动清理的保留期，最短 1 小时；修改后重启生效 |
 | `--shutdown-timeout` | 无 | `10s` | 优雅退出等待时间 |
 
 只需普通用户 SSH 凭据的三平台自动部署方式见 [SSH 自动安装模式](managed-install.md)。

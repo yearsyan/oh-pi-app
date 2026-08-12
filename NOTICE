@@ -12,6 +12,7 @@ Third-party components are redistributed under their own terms. In particular:
   - libssh is licensed under LGPL-2.1-or-later
   - Mbed TLS is used under Apache-2.0 (dual-licensed upstream)
   - gorilla/websocket is licensed under BSD-2-Clause
+  - robfig/cron is licensed under MIT
   - Kotlin, AndroidX, Compose Multiplatform and related libraries are
     primarily Apache-2.0
 

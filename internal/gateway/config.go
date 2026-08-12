@@ -14,6 +14,7 @@ const (
 	defaultInputQueueSize      = 64
 	defaultClientQueueSize     = 128
 	defaultSessionIdle         = 5 * time.Minute
+	defaultScheduledRetention  = 7 * 24 * time.Hour
 	defaultHistoryTimeout      = 10 * time.Second
 	defaultCapabilitiesTimeout = 30 * time.Second
 )
@@ -47,17 +48,20 @@ type Config struct {
 	// probes. Production leaves this empty; tests use it to launch the helper
 	// process through the Go test binary without leaking session extensions or
 	// their flags into the authentication runtime.
-	ProviderPiArgs      []string
-	AllowedOrigins      []string
-	MaxMessageBytes     int64
-	InputQueueSize      int
-	ClientQueueSize     int
-	WriteTimeout        time.Duration
-	PongTimeout         time.Duration
-	SessionIdle         time.Duration
-	HistoryTimeout      time.Duration
-	CapabilitiesTimeout time.Duration
-	Logger              *slog.Logger
+	ProviderPiArgs  []string
+	AllowedOrigins  []string
+	MaxMessageBytes int64
+	InputQueueSize  int
+	ClientQueueSize int
+	WriteTimeout    time.Duration
+	PongTimeout     time.Duration
+	SessionIdle     time.Duration
+	// ScheduledSessionRetention deletes inactive sessions produced by scheduled
+	// tasks after this duration. Opening a session refreshes its activity time.
+	ScheduledSessionRetention time.Duration
+	HistoryTimeout            time.Duration
+	CapabilitiesTimeout       time.Duration
+	Logger                    *slog.Logger
 
 	piEnvironment []string
 }
@@ -117,6 +121,12 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.SessionIdle < 1 {
 		return Config{}, fmt.Errorf("session idle timeout must be positive")
+	}
+	if c.ScheduledSessionRetention == 0 {
+		c.ScheduledSessionRetention = defaultScheduledRetention
+	}
+	if c.ScheduledSessionRetention < time.Hour {
+		return Config{}, fmt.Errorf("scheduled session retention must be at least one hour")
 	}
 	if c.HistoryTimeout == 0 {
 		c.HistoryTimeout = defaultHistoryTimeout

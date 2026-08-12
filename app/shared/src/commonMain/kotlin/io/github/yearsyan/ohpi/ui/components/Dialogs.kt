@@ -31,6 +31,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -58,6 +59,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import io.github.yearsyan.ohpi.chat.UiDialogRequest
 import io.github.yearsyan.ohpi.data.WorkspaceSummary
+import io.github.yearsyan.ohpi.data.WorkspaceResourceConfiguration
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.net.FsListResponse
 import kotlinx.coroutines.CancellationException
@@ -233,13 +235,22 @@ fun WorkspaceDialog(
 @Composable
 fun WorkspaceMetadataDialog(
     workspace: WorkspaceSummary,
+    supportsResourceConfiguration: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, additionalSystemPrompt: String) -> Unit,
+    onConfirm: (
+        name: String,
+        additionalSystemPrompt: String,
+        resources: WorkspaceResourceConfiguration?,
+    ) -> Unit,
 ) {
     var name by remember(workspace.id) { mutableStateOf(workspace.name) }
     var prompt by remember(workspace.id) {
         mutableStateOf(workspace.additionalSystemPrompt)
     }
+    var skillPaths by remember(workspace.id) { mutableStateOf(workspace.skillPaths.joinToString("\n")) }
+    var noSkills by remember(workspace.id) { mutableStateOf(workspace.noSkills) }
+    var extensionPaths by remember(workspace.id) { mutableStateOf(workspace.extensionPaths.joinToString("\n")) }
+    var noExtensions by remember(workspace.id) { mutableStateOf(workspace.noExtensions) }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -278,6 +289,52 @@ fun WorkspaceMetadataDialog(
                 minLines = 5,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (supportsResourceConfiguration) {
+                Spacer(Modifier.height(20.dp))
+                Text(S.workspaceSkillsTitle, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = skillPaths,
+                    onValueChange = { skillPaths = it },
+                    label = { Text(S.workspaceSkillPathsLabel) },
+                    supportingText = { Text(S.workspaceSkillPathsHint) },
+                    minLines = 2,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(S.workspaceNoSkillsLabel, modifier = Modifier.weight(1f))
+                    Switch(checked = noSkills, onCheckedChange = { noSkills = it })
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text(S.workspaceExtensionsTitle, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = extensionPaths,
+                    onValueChange = { extensionPaths = it },
+                    label = { Text(S.workspaceExtensionPathsLabel) },
+                    supportingText = { Text(S.workspaceExtensionPathsHint) },
+                    minLines = 2,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(S.workspaceNoExtensionsLabel, modifier = Modifier.weight(1f))
+                    Switch(checked = noExtensions, onCheckedChange = { noExtensions = it })
+                }
+                Text(
+                    S.workspaceExtensionsSecurityHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.End,
@@ -285,7 +342,18 @@ fun WorkspaceMetadataDialog(
                 TextButton(onClick = onDismiss) { Text(S.cancel) }
                 TextButton(
                     onClick = {
-                        onConfirm(name.trim(), prompt)
+                        val resources =
+                            if (supportsResourceConfiguration) {
+                                WorkspaceResourceConfiguration(
+                                    skillPaths = parseWorkspaceResourceEntries(skillPaths),
+                                    noSkills = noSkills,
+                                    extensionPaths = parseWorkspaceResourceEntries(extensionPaths),
+                                    noExtensions = noExtensions,
+                                )
+                            } else {
+                                null
+                            }
+                        onConfirm(name.trim(), prompt, resources)
                         onDismiss()
                     },
                 ) { Text(S.confirm) }
@@ -293,6 +361,9 @@ fun WorkspaceMetadataDialog(
         }
     }
 }
+
+private fun parseWorkspaceResourceEntries(value: String): List<String> =
+    value.lineSequence().map(String::trim).filter(String::isNotEmpty).distinct().toList()
 
 /** Bottom-sheet directory browser used to add a workspace on the gateway host. */
 @OptIn(ExperimentalMaterial3Api::class)

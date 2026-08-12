@@ -12,16 +12,19 @@ import okio.ByteString.Companion.toByteString
 
 class ManagedGatewayTest {
     @Test
-    fun decodesGatewayVersionAndProcessStopFeature() {
+    fun decodesGatewayVersionAndFeatures() {
         val health =
             PiJson.decodeFromString<ManagedGatewayHealth>(
-                """{"status":"ok","service":"ohpi-gateway","version":"1.11.0","protocol":1,"os":"darwin","features":["session_process_stop"]}""",
+                """{"status":"ok","service":"ohpi-gateway","version":"1.11.0","protocol":1,"os":"darwin","features":["session_process_stop","workspace_delete_v1"]}""",
             )
 
         assertEquals("1.11.0", health.version)
         assertEquals(1, health.protocol)
         assertEquals("darwin", health.os)
-        assertEquals(listOf(GATEWAY_FEATURE_SESSION_PROCESS_STOP), health.features)
+        assertEquals(
+            listOf(GATEWAY_FEATURE_SESSION_PROCESS_STOP, GATEWAY_FEATURE_WORKSPACE_DELETE),
+            health.features,
+        )
 
         val legacy =
             PiJson.decodeFromString<ManagedGatewayHealth>(
