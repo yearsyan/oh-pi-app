@@ -64,6 +64,19 @@ func TestPiHelperProcess(t *testing.T) {
 			_, _ = fmt.Fprintln(logFile, string(encoded))
 			_ = logFile.Close()
 		}
+		if failureMarker := os.Getenv("OHPI_TEST_CAPABILITY_FAIL_ONCE"); failureMarker != "" && !providerHelper {
+			marker, err := os.OpenFile(failureMarker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil {
+				_ = marker.Close()
+				os.Exit(12)
+			}
+			if !errors.Is(err, os.ErrExist) {
+				os.Exit(3)
+			}
+		}
+		if os.Getenv("OHPI_TEST_CAPABILITY_ALWAYS_FAIL") == "1" && !providerHelper {
+			os.Exit(12)
+		}
 	} else {
 		var found bool
 		sessionDir, found = argumentValue(os.Args, "--session-dir")
@@ -441,6 +454,89 @@ func TestCapabilitiesAllowPiWithoutGetCommands(t *testing.T) {
 	}
 	if response.StatusCode != http.StatusOK || len(payload.Commands) != 0 {
 		t.Fatalf("capabilities status = %d, commands = %#v", response.StatusCode, payload.Commands)
+	}
+}
+
+func TestCapabilitiesRetryTransientProbeFailure(t *testing.T) {
+	testDir := t.TempDir()
+	probeLog := filepath.Join(testDir, "capability-probes.log")
+	t.Setenv("OHPI_TEST_PROBE_LOG", probeLog)
+	t.Setenv("OHPI_TEST_CAPABILITY_FAIL_ONCE", filepath.Join(testDir, "failed-once"))
+	_, server := startTestGateway(t, t.TempDir())
+	workspace := createTestWorkspace(t, server, t.TempDir())
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
+
+	getAuthenticated(t, endpoint)
+
+	probeData, err := os.ReadFile(probeLog)
+	if err != nil {
+		t.Fatalf("read capability probe log: %v", err)
+	}
+	if starts := strings.Fields(string(probeData)); len(starts) != 2 {
+		t.Fatalf("capability probe starts = %d, want two after one transient failure", len(starts))
+	}
+}
+
+func TestCapabilitiesStopRetryingAfterTransientFailures(t *testing.T) {
+	probeLog := filepath.Join(t.TempDir(), "capability-probes.log")
+	t.Setenv("OHPI_TEST_PROBE_LOG", probeLog)
+	t.Setenv("OHPI_TEST_CAPABILITY_ALWAYS_FAIL", "1")
+	_, server := startTestGateway(t, t.TempDir())
+	workspace := createTestWorkspace(t, server, t.TempDir())
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("create capabilities request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("capabilities status = %d, want 502", response.StatusCode)
+	}
+
+	probeData, err := os.ReadFile(probeLog)
+	if err != nil {
+		t.Fatalf("read capability probe log: %v", err)
+	}
+	if starts := strings.Fields(string(probeData)); len(starts) != capabilityProbeMaxAttempts {
+		t.Fatalf(
+			"capability probe starts = %d, want %d",
+			len(starts),
+			capabilityProbeMaxAttempts,
+		)
+	}
+}
+
+func TestCapabilitiesDoNotRetryPermanentStartFailure(t *testing.T) {
+	var logs bytes.Buffer
+	_, server := startTestGatewayWithConfig(t, t.TempDir(), func(cfg *Config) {
+		cfg.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	workDir := t.TempDir()
+	workspace := createTestWorkspace(t, server, workDir)
+	if err := os.Remove(workDir); err != nil {
+		t.Fatalf("remove workspace directory: %v", err)
+	}
+	endpoint := server.URL + "/api/workspaces/" + workspace.ID + "/capabilities"
+	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		t.Fatalf("create capabilities request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("capabilities status = %d, want 502", response.StatusCode)
+	}
+	if strings.Contains(logs.String(), "retry pi capability probe") {
+		t.Fatalf("permanent start failure was retried: %s", logs.String())
 	}
 }
 

@@ -23,7 +23,7 @@ val piSshOutputDir = layout.buildDirectory.dir("piSsh/output/$piSshClassifier")
 val piSshResourcesDir = layout.buildDirectory.dir("generated/piSshResources")
 val piSshBuildPath = piSshBuildDir.get().asFile.absolutePath
 val piSshOutputPath = piSshOutputDir.get().asFile.absolutePath
-val desktopAppVersion = providers.gradleProperty("versionName").getOrElse("2.3.3")
+val desktopAppVersion = providers.gradleProperty("versionName").getOrElse("2.3.4")
 
 plugins {
     alias(libs.plugins.kotlinJvm)

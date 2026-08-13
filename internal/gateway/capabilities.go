@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	capabilitiesCacheTTL  = time.Minute
-	capabilitiesCacheSize = 32
-	capabilitiesStderrMax = 64 << 10
+	capabilitiesCacheTTL          = time.Minute
+	capabilitiesCacheSize         = 32
+	capabilitiesStderrMax         = 64 << 10
+	capabilityProbeMaxAttempts    = 3
+	capabilityProbeRetryBaseDelay = 250 * time.Millisecond
 )
 
 var orderedThinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -112,7 +114,7 @@ func (loader *capabilitiesLoader) get(
 		loader.mu.Unlock()
 
 		probeContext, cancel := context.WithTimeout(ctx, loader.cfg.CapabilitiesTimeout)
-		response, err := probeCapabilities(probeContext, loader.cfg, workDir, piArgs)
+		response, err := probeCapabilitiesWithRetry(probeContext, loader.cfg, workDir, piArgs)
 		cancel()
 
 		loader.mu.Lock()
@@ -230,6 +232,90 @@ type capabilityRawModel struct {
 	ThinkingLevelMap map[string]json.RawMessage `json:"thinkingLevelMap"`
 }
 
+type transientCapabilityProbeFailure struct {
+	cause error
+}
+
+func (failure *transientCapabilityProbeFailure) Error() string {
+	return failure.cause.Error()
+}
+
+func (failure *transientCapabilityProbeFailure) Unwrap() error {
+	return failure.cause
+}
+
+func probeCapabilitiesWithRetry(
+	ctx context.Context,
+	cfg Config,
+	workDir string,
+	piArgs []string,
+) (capabilitiesResponse, error) {
+	// A fresh pi installation can exit once while initializing its local state.
+	// Keep retries inside the request's original timeout and only retry failures
+	// that happened after the child process started.
+	var lastErr error
+	for attempt := 1; attempt <= capabilityProbeMaxAttempts; attempt++ {
+		response, err := probeCapabilities(ctx, cfg, workDir, piArgs)
+		if err == nil {
+			return response, nil
+		}
+		if contextErr := ctx.Err(); contextErr != nil {
+			return capabilitiesResponse{}, contextErr
+		}
+		var transient *transientCapabilityProbeFailure
+		if !errors.As(err, &transient) {
+			return capabilitiesResponse{}, err
+		}
+		if attempt == capabilityProbeMaxAttempts {
+			lastErr = fmt.Errorf(
+				"capability probe failed after %d attempts: %w",
+				attempt,
+				err,
+			)
+			break
+		}
+
+		delay := capabilityProbeRetryBaseDelay * time.Duration(1<<(attempt-1))
+		if cfg.Logger != nil {
+			cfg.Logger.Warn(
+				"retry pi capability probe",
+				"attempt", attempt+1,
+				"max_attempts", capabilityProbeMaxAttempts,
+				"delay", delay,
+				"directory", workDir,
+				"error", err,
+			)
+		}
+		if err := waitForCapabilityProbeRetry(ctx, delay); err != nil {
+			return capabilitiesResponse{}, err
+		}
+	}
+	return capabilitiesResponse{}, lastErr
+}
+
+func waitForCapabilityProbeRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func transientCapabilityProbeError(format string, args ...any) error {
+	return &transientCapabilityProbeFailure{cause: fmt.Errorf(format, args...)}
+}
+
 func probeCapabilities(
 	ctx context.Context,
 	cfg Config,
@@ -268,7 +354,10 @@ func probeCapabilities(
 		if err := encoder.Encode(rpcCommand); err != nil {
 			_ = stdin.Close()
 			_ = command.Wait()
-			return capabilitiesResponse{}, fmt.Errorf("send capability probe command: %w", err)
+			return capabilitiesResponse{}, transientCapabilityProbeError(
+				"send capability probe command: %w",
+				err,
+			)
 		}
 	}
 
@@ -338,16 +427,29 @@ func probeCapabilities(
 		return capabilitiesResponse{}, ctx.Err()
 	}
 	if scanErr != nil {
-		return capabilitiesResponse{}, fmt.Errorf("read capability probe output: %w", scanErr)
+		return capabilitiesResponse{}, transientCapabilityProbeError(
+			"read capability probe output: %w",
+			scanErr,
+		)
 	}
 	if state == nil || models == nil {
 		if waitErr != nil {
-			return capabilitiesResponse{}, fmt.Errorf("capability probe exited: %w: %s", waitErr, stderr.String())
+			return capabilitiesResponse{}, transientCapabilityProbeError(
+				"capability probe exited: %w: %s",
+				waitErr,
+				stderr.String(),
+			)
 		}
-		return capabilitiesResponse{}, errors.New("capability probe did not return state and models")
+		return capabilitiesResponse{}, transientCapabilityProbeError(
+			"capability probe did not return state and models",
+		)
 	}
 	if waitErr != nil {
-		return capabilitiesResponse{}, fmt.Errorf("stop capability probe: %w: %s", waitErr, stderr.String())
+		return capabilitiesResponse{}, transientCapabilityProbeError(
+			"stop capability probe: %w: %s",
+			waitErr,
+			stderr.String(),
+		)
 	}
 
 	response := capabilitiesResponse{
