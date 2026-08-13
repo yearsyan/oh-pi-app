@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 4. 注册用户级服务并启动：macOS 使用 LaunchAgent（`~/Library/LaunchAgents/io.github.yearsyan.ohpi.gateway.plist`），Linux 优先使用 systemd user unit（`~/.config/systemd/user/ohpi-gateway.service`），systemd user manager 不可用时回退为 `nohup` 后台进程（PID 文件 `~/.local/state/oh-pi-app/gateway.pid`）；
 5. 轮询 `http://127.0.0.1:18080/healthz` 确认服务可用后打印 token、监听地址与目录。
 
-前提是 `pi` 已安装且在 `PATH` 中（脚本会解析其绝对路径，fnm 安装会优先稳定路径）；缺失时脚本直接报错并给出安装提示，因为网关启动阶段就需要定位 pi。网关只监听回环地址，不涉及 TLS。
+前提是 `pi` 已安装且在 `PATH` 中（脚本会解析其绝对路径，fnm 安装会优先稳定路径）。网关启动阶段就需要定位 pi，因此未检测到 `pi` 时脚本会自动安装（与 App SSH 自动安装模式同一套方案）：优先复用系统已兼容的 Node（≥ 22.19）；否则按官方 `SHASUMS256.txt` 校验后下载托管 Node.js 22 到 `~/.local/share/oh-pi-app/node/`，再以 `npm install -g --ignore-scripts --prefix ~/.local` 安装 `pi`（`~/.local/bin/pi`）。全程不调用 sudo，也不修改 shell 启动文件；托管 Node 场景会把 `OHPI_PI_ENV_PATH` 写入配置，保证 pi 子进程能找到 node。设置 `OHPI_NO_PI_INSTALL=1` 可跳过自动安装（缺 pi 时直接报错）。网关只监听回环地址，不涉及 TLS。
 
 重复执行同一命令即升级：下载新版本、替换二进制并重启服务，token、配置与 session 数据全部保留。
 
@@ -44,6 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 | `OHPI_WORK_DIR` | `$HOME` | 默认工作空间目录（仅首次写入配置） |
 | `OHPI_TOKEN` | 自动生成 | 显式指定 token（覆盖已有 token 文件）；否则保留已有文件，缺失时自动生成 |
 | `OHPI_PI_COMMAND` | 从 PATH 探测 | pi 可执行文件绝对路径 |
+| `OHPI_NO_PI_INSTALL` | 空 | 非空时跳过 pi 自动安装（缺 pi 直接报错） |
 | `OHPI_HEALTH_URL` | 由 `OHPI_LISTEN` 推导 | 健康检查地址 |
 | `OHPI_NO_SERVICE` | 空 | 非空时只安装二进制与配置，不注册/启动服务 |
 

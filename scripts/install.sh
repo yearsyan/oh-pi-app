@@ -12,6 +12,11 @@
 #      无 systemd 时回退 nohup + PID 文件；
 #   5. 轮询 /healthz 验证服务可用。
 #
+# 未检测到 pi 时自动安装 Node.js 22 与 pi（~/.local/bin/pi）：优先复用系统已兼容的
+# Node，否则按官方 SHASUMS256.txt 校验后下载托管 Node 到 ~/.local/share/oh-pi-app/node/，
+# 再以 npm --ignore-scripts 安装；全程不调用 sudo，也不修改 shell 启动文件。
+# 设置 OHPI_NO_PI_INSTALL=1 可跳过自动安装（缺 pi 时直接报错）。
+#
 # 网关只监听 127.0.0.1:18080（可通过 OHPI_LISTEN 修改），不涉及 TLS。
 # 重复执行同一命令会升级二进制并重启服务；token、配置与 session 数据全部保留。
 #
@@ -25,6 +30,7 @@
 #   OHPI_WORK_DIR     默认工作空间目录（默认 $HOME）
 #   OHPI_TOKEN        指定 token（默认自动生成；已有 token 文件时保留）
 #   OHPI_PI_COMMAND   pi 可执行文件绝对路径（默认从 PATH 探测）
+#   OHPI_NO_PI_INSTALL 非空时跳过 pi 自动安装（缺 pi 直接报错）
 #   OHPI_HEALTH_URL   健康检查地址（默认由 OHPI_LISTEN 推导）
 #   OHPI_NO_SERVICE   非空时只安装二进制与配置，不注册/启动服务
 
@@ -46,6 +52,7 @@ log_dir=$state_dir/log
 stdout_log=$log_dir/ohpi-gateway.stdout.log
 stderr_log=$log_dir/ohpi-gateway.stderr.log
 pid_file=$state_dir/gateway.pid
+pi_env_path=
 launch_agents_dir=$home/Library/LaunchAgents
 plist_path=$launch_agents_dir/$label.plist
 units_dir=$home/.config/systemd/user
@@ -158,6 +165,88 @@ resolve_pi_command() {
 	fi
 }
 
+# 检测不到 pi 时自动安装；逻辑与 App SSH 自动安装模式（unixPiInstallScript）保持一致。
+install_pi() {
+	require_command curl
+	require_command tar
+	require_command awk
+
+	node_bin=
+	npm_command=
+	# 系统已有兼容 Node（>= 22.19）时直接复用，否则下载托管 Node。
+	if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
+		node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1)' >/dev/null 2>&1; then
+		node_bin=$(dirname -- "$(command -v node)")
+		npm_command=$(command -v npm)
+	else
+		case $os in
+			darwin) node_platform=darwin ;;
+			linux) node_platform=linux ;;
+		esac
+		case $arch in
+			amd64) node_arch=x64 ;;
+			arm64) node_arch=arm64 ;;
+		esac
+		node_dist=https://nodejs.org/dist/latest-v22.x
+		node_root=$home/.local/share/oh-pi-app/node
+		tmp_node=$tmp/pi-node
+		mkdir -p "$tmp_node"
+		curl -fsSL "$node_dist/SHASUMS256.txt" -o "$tmp_node/SHASUMS256.txt"
+		node_file=$(awk -v suffix="-$node_platform-$node_arch.tar.gz" '
+			index($2, "node-v22.") == 1 && substr($2, length($2) - length(suffix) + 1) == suffix { print $2; exit }
+		' "$tmp_node/SHASUMS256.txt")
+		case $node_file in
+			node-v22.*-$node_platform-$node_arch.tar.gz) ;;
+			*) die "could not resolve a compatible Node.js archive from $node_dist/SHASUMS256.txt" ;;
+		esac
+		expected=$(awk -v file="$node_file" '$2 == file { print $1; exit }' "$tmp_node/SHASUMS256.txt")
+		curl -fsSL "$node_dist/$node_file" -o "$tmp_node/$node_file"
+		actual=$(compute_sha256 "$tmp_node/$node_file")
+		[ -n "$expected" ] && [ "$actual" = "$expected" ] || die "Node.js checksum verification failed"
+		tar -xzf "$tmp_node/$node_file" -C "$tmp_node"
+		node_dir=${node_file%.tar.gz}
+		case $node_dir in
+			node-v22.*-$node_platform-$node_arch) ;;
+			*) die "unexpected Node.js archive layout: $node_file" ;;
+		esac
+		mkdir -p "$node_root"
+		target=$node_root/$node_dir
+		rm -rf "$target"
+		mv "$tmp_node/$node_dir" "$target"
+		rm -f "$node_root/current"
+		ln -s "$target" "$node_root/current"
+		node_bin=$node_root/current/bin
+		npm_command=$node_bin/npm
+		# 托管 Node 不在系统 PATH 中；pi 的 npm wrapper 运行时需要找到 node。
+		pi_env_path=$node_bin:$home/.local/bin
+	fi
+
+	PATH="$node_bin:$home/.local/bin:$PATH"
+	export PATH
+	mkdir -p "$home/.local"
+	note "Installing pi via npm (this can take a minute)"
+	"$npm_command" install -g --ignore-scripts --prefix "$home/.local" --no-fund --no-audit '@earendil-works/pi-coding-agent'
+}
+
+ensure_pi() {
+	[ -n "$pi_command" ] && return
+	# 上次自动安装的托管 pi 已存在（不在 PATH 中）时直接复用。
+	if [ -x "$home/.local/bin/pi" ] && "$home/.local/bin/pi" --version >/dev/null 2>&1; then
+		pi_command=$home/.local/bin/pi
+		note "Using pi: $pi_command"
+		return
+	fi
+	if [ -n "${OHPI_NO_PI_INSTALL-}" ]; then
+		die "pi was not found in PATH; install it (npm i -g @earendil-works/pi-coding-agent) or set OHPI_PI_COMMAND to its absolute path"
+	fi
+	note "pi was not found; installing Node.js 22 and pi (no sudo, no shell profile changes)"
+	install_pi
+	pi_command=$home/.local/bin/pi
+	[ -x "$pi_command" ] || die "pi installation failed; check the output above"
+	"$pi_command" --version >/dev/null 2>&1 || die "installed pi could not run: $pi_command"
+	note "Installed pi: $pi_command"
+}
+
 download_and_verify() {
 	tmp=$1
 	artifact=ohpi-gateway-$version-$os-$arch
@@ -214,10 +303,11 @@ install_config() {
 		printf '  "OHPI_LISTEN": "%s",\n' "$(printf '%s' "$listen" | json_escape)"
 		printf '  "OHPI_DATA_DIR": "%s",\n' "$(printf '%s' "$data_dir" | json_escape)"
 		printf '  "OHPI_WORK_DIR": "%s",\n' "$(printf '%s' "$work_dir" | json_escape)"
-		if [ -n "$pi_command" ]; then
-			printf '  "OHPI_PI_COMMAND": "%s"\n' "$(printf '%s' "$pi_command" | json_escape)"
+		printf '  "OHPI_PI_COMMAND": "%s"' "$(printf '%s' "$pi_command" | json_escape)"
+		if [ -n "$pi_env_path" ]; then
+			printf ',\n  "OHPI_PI_ENV_PATH": "%s"\n' "$(printf '%s' "$pi_env_path" | json_escape)"
 		else
-			printf '  "OHPI_TITLE_MODEL": "auto"\n'
+			printf '\n'
 		fi
 		printf '}\n'
 	} >"$tmp/config.json"
@@ -442,9 +532,6 @@ cmd_install() {
 	resolve_listen
 	resolve_version
 	resolve_pi_command
-	if [ -z "$pi_command" ]; then
-		die "pi was not found in PATH; install it (npm i -g @earendil-works/pi-coding-agent) or set OHPI_PI_COMMAND to its absolute path"
-	fi
 
 	work_dir=${OHPI_WORK_DIR:-$home}
 	[ -d "$work_dir" ] || die "OHPI_WORK_DIR is not a directory: $work_dir"
@@ -455,6 +542,8 @@ cmd_install() {
 		rm -rf "$tmp"
 	}
 	trap cleanup EXIT HUP INT TERM
+
+	ensure_pi
 
 	download_and_verify "$tmp"
 
