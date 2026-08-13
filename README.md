@@ -35,7 +35,17 @@ WebSocket D ─── session 2 ── pi --mode rpc
 - `pi` 0.83.0 或更高版本在 `PATH` 中（标题链路使用 `before_agent_start` 与 `session_info_changed`）
 - pi 可由 App 配置内置 Provider 认证；`models.json` 与扩展 Provider 仍按 pi 原有方式配置
 
-构建并启动：
+### 一行安装（macOS / Linux，无需 TLS）
+
+不想自己构建时，可以用一行命令安装并启动最新 Release：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh | sh
+```
+
+脚本会按系统/架构下载 Release 二进制并校验 SHA-256，生成 token 与 `~/.config/oh-pi-app/config.json`，注册用户级服务（macOS LaunchAgent / Linux systemd user，无 systemd 时回退 nohup）并启动，最后通过 `/healthz` 验证。网关只监听 `127.0.0.1:18080`，不涉及 TLS。重复执行同一命令会升级二进制并重启服务，token、配置与 session 全部保留。`install.sh` 的前提是 `pi` 已安装且在 `PATH` 中。子命令与环境变量见[部署与配置](docs/deployment.md#快速安装脚本macos--linux)。
+
+### 构建并启动
 
 ```bash
 mkdir -p bin

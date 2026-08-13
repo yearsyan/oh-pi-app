@@ -1,6 +1,61 @@
 # 部署与配置
 
-本文介绍 Oh Pi App 网关（`ohpi-gateway`）的 macOS LaunchAgent 部署、全部运行参数和生产安全建议。首次运行可先参考根目录的[快速开始](../README.md#快速开始)。
+本文介绍 Oh Pi App 网关（`ohpi-gateway`）的快速安装脚本、macOS LaunchAgent 部署、全部运行参数和生产安全建议。首次运行可先参考根目录的[快速开始](../README.md#快速开始)。
+
+## 快速安装脚本（macOS / Linux）
+
+不想自己构建、也不需要 TLS 时，一行命令即可安装并启动最新 Release：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh | sh
+```
+
+脚本（`scripts/install.sh`）自包含，不依赖仓库其他文件，执行流程：
+
+1. 探测系统与 CPU 架构（macOS/Linux × amd64/arm64），从 GitHub Release 下载对应二进制并对照 `SHA256SUMS.txt` 校验 SHA-256，再用 `--version` 核对产物版本；
+2. 生成 32 字节随机 token（`~/.config/oh-pi-app/token`，权限 `0600`）或保留已有 token；配置文件 `~/.config/oh-pi-app/config.json` 仅在首次写入，之后升级一律保留；
+3. 安装二进制到 `~/.local/bin/ohpi-gateway`，写入启动包装器 `~/.local/libexec/oh-pi-app/ohpi-gateway-launch`（从 token 文件读取 token 后 exec 网关，token 不进命令行）；
+4. 注册用户级服务并启动：macOS 使用 LaunchAgent（`~/Library/LaunchAgents/io.github.yearsyan.ohpi.gateway.plist`），Linux 优先使用 systemd user unit（`~/.config/systemd/user/ohpi-gateway.service`），systemd user manager 不可用时回退为 `nohup` 后台进程（PID 文件 `~/.local/state/oh-pi-app/gateway.pid`）；
+5. 轮询 `http://127.0.0.1:18080/healthz` 确认服务可用后打印 token、监听地址与目录。
+
+前提是 `pi` 已安装且在 `PATH` 中（脚本会解析其绝对路径，fnm 安装会优先稳定路径）；缺失时脚本直接报错并给出安装提示，因为网关启动阶段就需要定位 pi。网关只监听回环地址，不涉及 TLS。
+
+重复执行同一命令即升级：下载新版本、替换二进制并重启服务，token、配置与 session 数据全部保留。
+
+### 子命令
+
+`install`（默认）之外还支持 `status` 与 `uninstall`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh | sh -s status
+curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh | sh -s uninstall
+```
+
+`status` 打印二进制版本、服务状态与健康检查结果；`uninstall` 停止服务并移除服务定义，但保留二进制、配置、token 与 session 数据（重跑安装会自动复用，与 SSH 自动安装模式的行为一致）。
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `OHPI_VERSION` | 最新 Release | 固定安装版本，例如 `2.3.0` |
+| `OHPI_REPO` | `yearsyan/oh-pi-app` | 下载来源仓库 |
+| `OHPI_LISTEN` | `127.0.0.1:18080` | 网关监听地址（仅首次写入配置） |
+| `OHPI_DATA_DIR` | `~/.local/state/oh-pi-app` | session 数据目录（仅首次写入配置） |
+| `OHPI_WORK_DIR` | `$HOME` | 默认工作空间目录（仅首次写入配置） |
+| `OHPI_TOKEN` | 自动生成 | 显式指定 token（覆盖已有 token 文件）；否则保留已有文件，缺失时自动生成 |
+| `OHPI_PI_COMMAND` | 从 PATH 探测 | pi 可执行文件绝对路径 |
+| `OHPI_HEALTH_URL` | 由 `OHPI_LISTEN` 推导 | 健康检查地址 |
+| `OHPI_NO_SERVICE` | 空 | 非空时只安装二进制与配置，不注册/启动服务 |
+
+### 与签名部署脚本的区别
+
+`scripts/deploy-signed-release.sh` 面向 macOS 生产部署：它严格校验 Developer ID、notarization 与固定代码标识，保证 macOS TCC 在升级后仍把网关识别为同一程序，从而保留 Documents、Desktop、Downloads 授权。快速安装脚本不校验签名（Release 二进制本身已由 CI 签名并公证），也不保证 TCC 身份延续；需要该保证时请使用签名部署脚本。
+
+### Linux 注意
+
+- systemd user manager 未运行时（部分 WSL、容器、无桌面会话的机器），脚本回退为 `nohup` 后台进程，不会随登录自动拉起；需要用户退出后仍全天候运行时，由管理员执行 `loginctl enable-linger <username>`。
+- 日志位于 `~/.local/state/oh-pi-app/log/`（systemd 模式下也可用 `journalctl --user -u ohpi-gateway`）。
+- 容器内安装建议配合 `OHPI_NO_SERVICE=1` 安装后由容器编排自行管理进程生命周期。
 
 ## macOS LaunchAgent 部署
 
