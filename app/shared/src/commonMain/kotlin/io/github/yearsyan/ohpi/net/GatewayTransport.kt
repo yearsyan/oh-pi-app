@@ -6,6 +6,7 @@ import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.ssh.PlatformSsh
 import io.github.yearsyan.ohpi.ssh.SshAuthType
 import io.github.yearsyan.ohpi.ssh.SshCommandConfig
+import io.github.yearsyan.ohpi.ssh.SshCommandOutput
 import io.github.yearsyan.ohpi.ssh.SshCommandResult
 import io.github.yearsyan.ohpi.ssh.SshTunnelConfig
 import io.github.yearsyan.ohpi.ssh.SshTunnelErrorCode
@@ -17,6 +18,9 @@ import io.ktor.http.Url
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -93,6 +97,7 @@ internal class GatewayTransport(
     private val confirmHostKey: suspend (SshHostKeyPrompt) -> Boolean,
     private val onHostKeyTrusted: (String) -> Unit,
     installProgress: ((ManagedInstallStep) -> Unit)? = null,
+    installOutput: ((SshCommandOutput) -> Unit)? = null,
 ) {
     private val mutex = Mutex()
 
@@ -108,7 +113,9 @@ internal class GatewayTransport(
         ManagedGatewayProvisioner(
             profile = profile,
             execute = ::executeCommand,
+            executeStreaming = ::executeCommandStreaming,
             onProgress = installProgress ?: {},
+            onOutput = installOutput ?: {},
         )
     }
 
@@ -229,19 +236,33 @@ internal class GatewayTransport(
         command: String,
         stdin: ByteArray,
         timeoutMillis: Int,
+    ): SshCommandResult =
+        executeCommand(command, stdin, timeoutMillis, onOutput = null)
+
+    private suspend fun executeCommandStreaming(
+        command: String,
+        stdin: ByteArray,
+        timeoutMillis: Int,
+        onOutput: (SshCommandOutput) -> Unit,
+    ): SshCommandResult =
+        executeCommand(command, stdin, timeoutMillis, onOutput)
+
+    private suspend fun executeCommand(
+        command: String,
+        stdin: ByteArray,
+        timeoutMillis: Int,
+        onOutput: ((SshCommandOutput) -> Unit)?,
     ): SshCommandResult {
         while (true) {
             try {
-                return withContext(Dispatchers.Default) {
-                    PlatformSsh.execute(
-                        profile.toSshCommandConfig(
-                            command = command,
-                            stdin = stdin,
-                            hostKey = trustedHostKey,
-                            commandTimeoutMillis = timeoutMillis,
-                        ),
+                val config =
+                    profile.toSshCommandConfig(
+                        command = command,
+                        stdin = stdin,
+                        hostKey = trustedHostKey,
+                        commandTimeoutMillis = timeoutMillis,
                     )
-                }
+                return executeCommandOnce(config, onOutput)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: SshTunnelException) {
@@ -271,6 +292,32 @@ internal class GatewayTransport(
                 trustedHostKey = observed
                 onHostKeyTrusted(observed)
             }
+        }
+    }
+
+    private suspend fun executeCommandOnce(
+        config: SshCommandConfig,
+        onOutput: ((SshCommandOutput) -> Unit)?,
+    ): SshCommandResult {
+        if (onOutput == null) {
+            return withContext(Dispatchers.Default) { PlatformSsh.execute(config) }
+        }
+        return supervisorScope {
+            // Native callbacks run on this worker. The channel brings chunks
+            // back to the caller context before UI state is updated.
+            val chunks = Channel<SshCommandOutput>(Channel.UNLIMITED)
+            val command =
+                async(Dispatchers.Default) {
+                    try {
+                        PlatformSsh.execute(
+                            config.copy(onOutput = { chunk -> chunks.trySend(chunk) }),
+                        )
+                    } finally {
+                        chunks.close()
+                    }
+                }
+            for (chunk in chunks) onOutput(chunk)
+            command.await()
         }
     }
 

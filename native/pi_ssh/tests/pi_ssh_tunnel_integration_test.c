@@ -156,6 +156,43 @@ static char *read_file(const char *path)
     return contents;
 }
 
+typedef struct test_command_output {
+    uint8_t stdout_data[128];
+    size_t stdout_size;
+    uint8_t stderr_data[128];
+    size_t stderr_size;
+    size_t callback_count;
+} test_command_output;
+
+static int collect_command_output(void *context,
+                                  int32_t stream,
+                                  const uint8_t *data,
+                                  size_t size)
+{
+    test_command_output *output = (test_command_output *)context;
+    uint8_t *destination;
+    size_t *destination_size;
+    size_t capacity;
+
+    assert(output != NULL);
+    assert(data != NULL || size == 0);
+    if (stream == PI_SSH_COMMAND_STDOUT) {
+        destination = output->stdout_data;
+        destination_size = &output->stdout_size;
+        capacity = sizeof(output->stdout_data);
+    } else {
+        assert(stream == PI_SSH_COMMAND_STDERR);
+        destination = output->stderr_data;
+        destination_size = &output->stderr_size;
+        capacity = sizeof(output->stderr_data);
+    }
+    assert(size <= capacity - *destination_size);
+    memcpy(destination + *destination_size, data, size);
+    *destination_size += size;
+    output->callback_count += 1;
+    return 0;
+}
+
 static void verify_http_forward(uint16_t port)
 {
     test_socket socket_value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -258,6 +295,7 @@ int main(int argc, char **argv)
 
     {
         static const uint8_t command_input[] = {'a', 0, 'b', '\n'};
+        test_command_output streamed_output = {0};
         pi_ssh_command_config_init(&command_config);
         pi_ssh_command_result_init(&command_result);
         command_config.ssh_host = argv[1];
@@ -269,9 +307,11 @@ int main(int argc, char **argv)
         command_config.command = "cat; printf command-error >&2; exit 7";
         command_config.stdin_data = command_input;
         command_config.stdin_size = sizeof(command_input);
-        assert(pi_ssh_command_execute(&command_config,
-                                      &command_result,
-                                      &error) == 0);
+        assert(pi_ssh_command_execute_streaming(&command_config,
+                                                &command_result,
+                                                collect_command_output,
+                                                &streamed_output,
+                                                &error) == 0);
         assert(command_result.exit_status == 7);
         assert(command_result.stdout_size == sizeof(command_input));
         assert(memcmp(command_result.stdout_data,
@@ -279,6 +319,15 @@ int main(int argc, char **argv)
                       sizeof(command_input)) == 0);
         assert(command_result.stderr_size == strlen("command-error"));
         assert(memcmp(command_result.stderr_data,
+                      "command-error",
+                      strlen("command-error")) == 0);
+        assert(streamed_output.callback_count > 0);
+        assert(streamed_output.stdout_size == sizeof(command_input));
+        assert(memcmp(streamed_output.stdout_data,
+                      command_input,
+                      sizeof(command_input)) == 0);
+        assert(streamed_output.stderr_size == strlen("command-error"));
+        assert(memcmp(streamed_output.stderr_data,
                       "command-error",
                       strlen("command-error")) == 0);
         pi_ssh_command_result_free(&command_result);

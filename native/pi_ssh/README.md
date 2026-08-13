@@ -7,8 +7,10 @@ behavior in one implementation.
 
 The same ABI can execute one non-interactive remote command with binary-safe
 stdin, separate bounded stdout/stderr buffers, a remote exit status, and a
-deadline. The managed installer uses this path for OS probing, service control,
-and direct binary upload without adding SFTP or shell download dependencies.
+deadline. Callers can optionally receive each stdout/stderr chunk immediately
+while the ABI continues retaining the final bounded buffers. The managed
+installer uses this path for OS probing, service control, and live installation
+output without adding SFTP dependencies.
 
 The ABI also generates passphrase-protected Ed25519 key pairs entirely in
 memory. It returns an OpenSSH private key and an authorized_keys-form public

@@ -29,6 +29,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify managed installer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n scripts/install.sh
+          expected="$(sed -n '/internal const val UnixManagedInstallerSha256/{n;s/.*"\([0-9a-f]\{64\}\)".*/\1/p;}' \
+            app/shared/src/commonMain/kotlin/io/github/yearsyan/ohpi/net/ManagedGateway.kt)"
+          actual="$(shasum -a 256 scripts/install.sh | awk '{print $1}')"
+          test -n "$expected"
+          test "$actual" = "$expected"
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

@@ -5,7 +5,7 @@ package io.github.yearsyan.ohpi.ssh
 import cnames.structs.pi_ssh_tunnel
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_config
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_config_init
-import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_execute
+import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_execute_streaming
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_result
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_result_free
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_command_result_init
@@ -23,18 +23,55 @@ import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_local_port
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_start
 import io.github.yearsyan.ohpi.ssh.cinterop.pi_ssh_tunnel_state
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.MemScope
+import kotlinx.cinterop.StableRef
+import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSLock
+
+private class IosSshOutputContext(
+    val callback: (SshCommandOutput) -> Unit,
+    var failure: Throwable? = null,
+)
+
+private fun forwardSshCommandOutput(
+    opaqueContext: COpaquePointer?,
+    stream: Int,
+    data: CPointer<UByteVar>?,
+    size: ULong,
+): Int {
+    val context = opaqueContext?.asStableRef<IosSshOutputContext>()?.get() ?: return -1
+    return try {
+        check(size <= Int.MAX_VALUE.toULong()) { "SSH output chunk is too large" }
+        val bytes =
+            data
+                ?.reinterpret<ByteVar>()
+                ?.readBytes(size.toInt())
+                ?: byteArrayOf()
+        context.callback(
+            SshCommandOutput(
+                stream = SshCommandStream.fromNative(stream),
+                bytes = bytes,
+            ),
+        )
+        0
+    } catch (failure: Throwable) {
+        context.failure = failure
+        -1
+    }
+}
 
 internal actual object PlatformSsh {
     actual fun start(config: SshTunnelConfig): SshTunnelHandle =
@@ -87,6 +124,8 @@ internal actual object PlatformSsh {
             nativeConfig.connect_timeout_ms = config.connectTimeoutMillis.toUInt()
             nativeConfig.command_timeout_ms = config.commandTimeoutMillis.toUInt()
             nativeConfig.max_output_bytes = config.maxOutputBytes.toULong()
+            val outputContext = config.onOutput?.let(::IosSshOutputContext)
+            val outputContextRef = outputContext?.let { StableRef.create(it) }
 
             try {
                 val executeResult =
@@ -97,12 +136,19 @@ internal actual object PlatformSsh {
                             } else {
                                 pinned.addressOf(0).reinterpret()
                             }
-                        pi_ssh_command_execute(
+                        pi_ssh_command_execute_streaming(
                             nativeConfig.ptr,
                             nativeResult.ptr,
+                            if (outputContextRef == null) {
+                                null
+                            } else {
+                                staticCFunction(::forwardSshCommandOutput)
+                            },
+                            outputContextRef?.asCPointer(),
                             nativeError.ptr,
                         )
                     }
+                outputContext?.failure?.let { throw it }
                 if (executeResult != 0) {
                     throw SshTunnelException(nativeError.toSshError())
                 }
@@ -120,6 +166,7 @@ internal actual object PlatformSsh {
                             ?: byteArrayOf(),
                 )
             } finally {
+                outputContextRef?.dispose()
                 pi_ssh_command_result_free(nativeResult.ptr)
             }
         }

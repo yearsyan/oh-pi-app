@@ -1,8 +1,10 @@
 package io.github.yearsyan.ohpi.net
 
+import io.github.yearsyan.ohpi.appVersion
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshAuthentication
 import io.github.yearsyan.ohpi.ssh.SshCommandResult
+import io.github.yearsyan.ohpi.ssh.SshCommandOutput
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -25,6 +27,10 @@ private const val ManagedLaunchdLabel = "io.github.yearsyan.ohpi.gateway"
 private const val ManagedSystemdUnit = "ohpi-gateway.service"
 private const val ReleaseRepository = "yearsyan/oh-pi-app"
 private const val PiNpmPackage = "@earendil-works/pi-coding-agent"
+internal const val UnixManagedInstallerSha256 =
+    "1e71b6b56b20594aabc0ff175570ab33606152c7dfde56b76be017d6a14f577f"
+private const val UnixManagedInstallerFallbackUrl =
+    "https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh"
 private const val PowerShellStdin =
     "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -"
 internal const val GATEWAY_FEATURE_SESSION_PROCESS_STOP = "session_process_stop"
@@ -233,29 +239,46 @@ internal fun parseManagedGatewayChecksum(checksums: String, fileName: String): S
 internal class ManagedGatewayProvisioner(
     private val profile: ServerProfile,
     private val execute: suspend (command: String, stdin: ByteArray, timeoutMillis: Int) -> SshCommandResult,
+    private val executeStreaming: suspend (
+        command: String,
+        stdin: ByteArray,
+        timeoutMillis: Int,
+        onOutput: (SshCommandOutput) -> Unit,
+    ) -> SshCommandResult = { command, stdin, timeoutMillis, _ ->
+        execute(command, stdin, timeoutMillis)
+    },
     private val artifactSource: ManagedGatewayArtifactSource = GitHubManagedGatewayArtifactSource,
     private val onProgress: (ManagedInstallStep) -> Unit = {},
+    private val onOutput: (SshCommandOutput) -> Unit = {},
+    private val unixInstallerUrl: String? = null,
+    private val unixInstallerFallbackUrl: String = UnixManagedInstallerFallbackUrl,
+    private val unixInstallerSha256: String = UnixManagedInstallerSha256,
 ) {
     suspend fun ensureRunning(forceRestart: Boolean = false) {
         onProgress(ManagedInstallStep.DetectingSystem)
         var environment = probe()
         validateEnvironment(environment, requirePi = false)
-        if (environment.piPath.isBlank() || environment.piEnvironmentPath.isBlank()) {
+        var needsPi = environment.piPath.isBlank() || environment.piEnvironmentPath.isBlank()
+        if (needsPi && environment.os == ManagedHostOs.Windows) {
             onProgress(ManagedInstallStep.InstallingPi)
             runChecked(
-                piInstallCommand(environment),
-                piInstallScript(environment),
+                PowerShellStdin,
+                windowsPiInstallScript().encodeToByteArray(),
                 "install pi",
                 timeoutMillis = 600_000,
+                streamOutput = true,
             )
             onProgress(ManagedInstallStep.DetectingSystem)
             environment = probe()
+            needsPi = environment.piPath.isBlank() || environment.piEnvironmentPath.isBlank()
         }
-        validateEnvironment(environment)
+        // The remote Unix installer owns Node.js/Pi bootstrap. Windows keeps
+        // the native PowerShell path and must have Pi before provisioning.
+        validateEnvironment(environment, requirePi = environment.os == ManagedHostOs.Windows)
         val expectedTokenHash =
             (profile.token + "\n").encodeToByteArray().toByteString().sha256().hex()
 
-        if (!forceRestart && environment.managed && environment.running &&
+        if (!needsPi && !forceRestart && environment.managed && environment.running &&
             environment.tokenSha256.equals(expectedTokenHash, ignoreCase = true)
         ) {
             return
@@ -270,7 +293,8 @@ internal class ManagedGatewayProvisioner(
             environment = probe()
         }
 
-        if (!forceRestart && environment.installed && environment.managed &&
+        if (!needsPi && !forceRestart && environment.installed && environment.managed &&
+            environment.manager != "nohup" &&
             environment.tokenSha256.equals(expectedTokenHash, ignoreCase = true)
         ) {
             val startResult =
@@ -285,14 +309,30 @@ internal class ManagedGatewayProvisioner(
             // user-level definition below is safe and repairs those cases.
         }
 
+        val replaceUnixConfig =
+            needsPi || !environment.installed || !environment.managed ||
+                !environment.tokenSha256.equals(expectedTokenHash, ignoreCase = true)
         val artifact =
-            if (environment.installed) null
-            else {
+            if (environment.os == ManagedHostOs.Windows && !environment.installed) {
                 onProgress(ManagedInstallStep.DownloadingGateway)
                 artifactSource.download(environment.os, environment.architecture)
+            } else {
+                null
             }
-        onProgress(ManagedInstallStep.InstallingGateway)
-        provision(environment, artifact)
+        if (environment.os == ManagedHostOs.Windows) {
+            onProgress(ManagedInstallStep.InstallingGateway)
+            provision(environment, artifact, replaceUnixConfig = false)
+        } else {
+            // The canonical installer owns its internal Node/Pi, download,
+            // and service phases. Its output is forwarded while it runs.
+            onProgress(
+                if (needsPi) ManagedInstallStep.InstallingPi
+                else ManagedInstallStep.DownloadingGateway,
+            )
+            provision(environment, artifact = null, replaceUnixConfig)
+            onProgress(ManagedInstallStep.DownloadingGateway)
+            onProgress(ManagedInstallStep.InstallingGateway)
+        }
 
         onProgress(ManagedInstallStep.StartingGateway)
         repeat(5) { attempt ->
@@ -361,11 +401,11 @@ internal class ManagedGatewayProvisioner(
                 retryable = false,
             )
         }
-        if (environment.manager == "unavailable") {
+        if (environment.manager == "unavailable" && environment.os != ManagedHostOs.Linux) {
             val manager =
                 when (environment.os) {
                     ManagedHostOs.Macos -> "launchd user domain"
-                    ManagedHostOs.Linux -> "systemd user manager"
+                    ManagedHostOs.Linux -> error("Linux uses the remote installer's nohup fallback")
                     ManagedHostOs.Windows -> "Windows Task Scheduler"
                 }
             throw GatewayConnectionException(
@@ -378,34 +418,50 @@ internal class ManagedGatewayProvisioner(
     private suspend fun provision(
         environment: ManagedHostEnvironment,
         artifact: ManagedGatewayArtifact?,
+        replaceUnixConfig: Boolean,
     ) {
-        artifact?.let {
-            upload(environment, if (environment.os == ManagedHostOs.Windows) "gateway.new.exe" else "gateway.new", it.bytes)
+        if (environment.os != ManagedHostOs.Windows) {
+            check(artifact == null)
+            runChecked(
+                unixManagedInstallCommand(
+                    environment = environment,
+                    installerUrl = unixInstallerUrl ?: managedUnixInstallerUrl(),
+                    fallbackInstallerUrl = unixInstallerFallbackUrl,
+                    installerSha256 = unixInstallerSha256,
+                    replaceConfig = replaceUnixConfig,
+                    reuseGateway = environment.installed,
+                ),
+                (profile.token + "\n").encodeToByteArray(),
+                "run remote installer",
+                timeoutMillis = 600_000,
+                streamOutput = true,
+            )
+            return
         }
-        upload(environment, "config.json", gatewayConfig(environment))
-        upload(environment, "token", (profile.token + "\n").encodeToByteArray())
-        when (environment.os) {
-            ManagedHostOs.Macos -> upload(environment, "service.plist", launchdPlist(environment).encodeToByteArray())
-            ManagedHostOs.Linux -> upload(environment, "service.unit", systemdUnit.encodeToByteArray())
-            ManagedHostOs.Windows -> Unit
-        }
-        runChecked(installCommand(environment), installScript(environment), "install gateway")
+
+        artifact?.let { uploadWindows("gateway.new.exe", it.bytes) }
+        uploadWindows("config.json", gatewayConfig(environment))
+        uploadWindows("token", (profile.token + "\n").encodeToByteArray())
+        runChecked(
+            PowerShellStdin,
+            windowsInstallScript(
+                profile.ssh.password.takeIf {
+                    profile.ssh.authentication == SshAuthentication.Password
+                },
+            ).encodeToByteArray(),
+            "install gateway",
+            streamOutput = true,
+        )
     }
 
-    private suspend fun upload(
-        environment: ManagedHostEnvironment,
-        name: String,
-        contents: ByteArray,
-    ) {
+    private suspend fun uploadWindows(name: String, contents: ByteArray) {
         require(name.matches(Regex("[a-zA-Z0-9.]+")))
-        val command =
-            if (environment.os == ManagedHostOs.Windows) {
-                windowsUploadCommand(name)
-            } else {
-                "sh -c 'umask 077; mkdir -p \"\$HOME/.cache/oh-pi-app\"; " +
-                    "cat > \"\$HOME/.cache/oh-pi-app/$name\"'"
-            }
-        runChecked(command, contents, "upload $name", timeoutMillis = 180_000)
+        runChecked(
+            windowsUploadCommand(name),
+            contents,
+            "upload $name",
+            timeoutMillis = 180_000,
+        )
     }
 
     private suspend fun runChecked(
@@ -413,8 +469,14 @@ internal class ManagedGatewayProvisioner(
         stdin: ByteArray,
         operation: String,
         timeoutMillis: Int = 60_000,
+        streamOutput: Boolean = false,
     ): SshCommandResult {
-        val result = execute(command, stdin, timeoutMillis)
+        val result =
+            if (streamOutput) {
+                executeStreaming(command, stdin, timeoutMillis, onOutput)
+            } else {
+                execute(command, stdin, timeoutMillis)
+            }
         if (result.exitStatus != 0) throw commandFailure(operation, result)
         return result
     }
@@ -429,11 +491,8 @@ internal class ManagedGatewayProvisioner(
     }
 
     private fun gatewayConfig(environment: ManagedHostEnvironment): ByteArray {
-        val dataDir =
-            when (environment.os) {
-                ManagedHostOs.Macos, ManagedHostOs.Linux -> "${environment.home}/.local/state/oh-pi-app"
-                ManagedHostOs.Windows -> "${environment.home}\\data"
-            }
+        require(environment.os == ManagedHostOs.Windows)
+        val dataDir = "${environment.home}\\data"
         return buildJsonObject {
             put("OHPI_LISTEN", JsonPrimitive("127.0.0.1:$ManagedGatewayPort"))
             put("OHPI_DATA_DIR", JsonPrimitive(dataDir))
@@ -444,52 +503,6 @@ internal class ManagedGatewayProvisioner(
             put("OHPI_SCHEDULED_SESSION_RETENTION", JsonPrimitive("168h"))
         }.toString().encodeToByteArray()
     }
-
-    private fun launchdPlist(environment: ManagedHostEnvironment): String {
-        val home = environment.home
-        fun path(suffix: String) = xmlEscape("$home/$suffix")
-        return """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-              <key>Label</key><string>$ManagedLaunchdLabel</string>
-              <key>ProgramArguments</key>
-              <array>
-                <string>${path(".local/bin/ohpi-gateway")}</string>
-                <string>--config</string><string>${path(".config/oh-pi-app/config.json")}</string>
-                <string>--token-file</string><string>${path(".config/oh-pi-app/token")}</string>
-              </array>
-              <key>RunAtLoad</key><true/>
-              <key>KeepAlive</key><true/>
-              <key>ProcessType</key><string>Background</string>
-              <key>StandardOutPath</key><string>${path(".local/state/oh-pi-app/gateway.log")}</string>
-              <key>StandardErrorPath</key><string>${path(".local/state/oh-pi-app/gateway.err.log")}</string>
-            </dict>
-            </plist>
-        """.trimIndent() + "\n"
-    }
-
-    private fun installCommand(environment: ManagedHostEnvironment): String =
-        if (environment.os == ManagedHostOs.Windows) PowerShellStdin else "sh -s"
-
-    private fun piInstallCommand(environment: ManagedHostEnvironment): String =
-        if (environment.os == ManagedHostOs.Windows) PowerShellStdin else "sh -s"
-
-    private fun piInstallScript(environment: ManagedHostEnvironment): ByteArray =
-        when (environment.os) {
-            ManagedHostOs.Macos, ManagedHostOs.Linux -> unixPiInstallScript
-            ManagedHostOs.Windows -> windowsPiInstallScript()
-        }.encodeToByteArray()
-
-    private fun installScript(environment: ManagedHostEnvironment): ByteArray =
-        when (environment.os) {
-            ManagedHostOs.Macos -> macosInstallScript
-            ManagedHostOs.Linux -> linuxInstallScript
-            ManagedHostOs.Windows -> windowsInstallScript(profile.ssh.password.takeIf {
-                profile.ssh.authentication == SshAuthentication.Password
-            })
-        }.encodeToByteArray()
 
     private fun startCommand(environment: ManagedHostEnvironment): String =
         if (environment.os == ManagedHostOs.Windows) PowerShellStdin else "sh -s"
@@ -545,6 +558,72 @@ internal fun parseManagedHostEnvironment(output: String): ManagedHostEnvironment
     )
 }
 
+/** Version-pinned source for the canonical Unix installer shipped with this App. */
+internal fun managedUnixInstallerUrl(version: String = appVersion()): String {
+    val normalized = version.removePrefix("v")
+    if (!normalized.matches(Regex("[0-9]+(?:\\.[0-9]+){1,2}"))) {
+        throw GatewayConnectionException("Invalid App version for managed installer", false)
+    }
+    return "https://raw.githubusercontent.com/$ReleaseRepository/v$normalized/scripts/install.sh"
+}
+
+/**
+ * Downloads and verifies the canonical installer on the SSH host, then lets it
+ * own all Unix Node.js/Pi, gateway, and user-service installation. The gateway
+ * token is not included in the command or environment: install.sh reads one
+ * line from SSH stdin. curl is explicitly detached from that stdin.
+ */
+internal fun unixManagedInstallCommand(
+    environment: ManagedHostEnvironment,
+    installerUrl: String = managedUnixInstallerUrl(),
+    fallbackInstallerUrl: String = UnixManagedInstallerFallbackUrl,
+    installerSha256: String = UnixManagedInstallerSha256,
+    replaceConfig: Boolean = true,
+    reuseGateway: Boolean = false,
+): String {
+    require(environment.os == ManagedHostOs.Macos || environment.os == ManagedHostOs.Linux)
+    require(installerSha256.matches(Regex("[0-9a-f]{64}")))
+    val replaceConfigValue = if (replaceConfig) "1" else ""
+    val reuseGatewayValue = if (reuseGateway) "1" else ""
+    val body =
+        "set -eu; umask 077; directory=\"\$HOME/.cache/oh-pi-app\"; " +
+            "candidate=\"\$directory/install.sh.new\"; cached=\"\$directory/install.sh\"; " +
+            "expected=${posixShellQuote(installerSha256)}; mkdir -p \"\$directory\"; " +
+            "if command -v sha256sum >/dev/null 2>&1; then " +
+            "checksum() { sha256sum \"\$1\" | sed 's/[[:space:]].*//'; }; " +
+            "elif command -v shasum >/dev/null 2>&1; then " +
+            "checksum() { shasum -a 256 \"\$1\" | sed 's/[[:space:]].*//'; }; " +
+            "elif command -v openssl >/dev/null 2>&1; then " +
+            "checksum() { openssl dgst -sha256 \"\$1\" | sed 's/^.*= //'; }; " +
+            "else echo 'no SHA-256 tool found for managed installer' >&2; exit 41; fi; " +
+            "source=''; " +
+            "if curl </dev/null -fsSL ${posixShellQuote(installerUrl)} -o \"\$candidate\" 2>/dev/null && " +
+            "[ \"\$(checksum \"\$candidate\")\" = \"\$expected\" ]; then source=\"\$candidate\"; " +
+            "else rm -f \"\$candidate\"; fi; " +
+            "if [ -z \"\$source\" ] && curl </dev/null -fsSL " +
+            "${posixShellQuote(fallbackInstallerUrl)} -o \"\$candidate\" 2>/dev/null && " +
+            "[ \"\$(checksum \"\$candidate\")\" = \"\$expected\" ]; then source=\"\$candidate\"; " +
+            "else [ -n \"\$source\" ] || rm -f \"\$candidate\"; fi; " +
+            "if [ -z \"\$source\" ] && [ -f \"\$cached\" ] && " +
+            "[ \"\$(checksum \"\$cached\")\" = \"\$expected\" ]; then source=\"\$cached\"; fi; " +
+            "[ -n \"\$source\" ] || { echo 'managed installer download or checksum verification failed' >&2; exit 42; }; " +
+            "if [ \"\$source\" = \"\$candidate\" ]; then mv -f \"\$candidate\" \"\$cached\"; fi; " +
+            "OHPI_VERSION='' OHPI_REPO=${posixShellQuote(ReleaseRepository)} " +
+            "OHPI_LISTEN='127.0.0.1:$ManagedGatewayPort' " +
+            "OHPI_DATA_DIR=${posixShellQuote(environment.home + "/.local/state/oh-pi-app")} " +
+            "OHPI_WORK_DIR=${posixShellQuote(environment.workDir)} OHPI_TOKEN='' " +
+            "OHPI_NO_PI_INSTALL='' OHPI_HEALTH_URL='http://127.0.0.1:$ManagedGatewayPort/healthz' " +
+            "OHPI_NO_SERVICE='' OHPI_PI_COMMAND=${posixShellQuote(environment.piPath)} " +
+            "OHPI_PI_ENV_PATH=${posixShellQuote(environment.piEnvironmentPath)} " +
+            "OHPI_REPLACE_CONFIG=$replaceConfigValue " +
+            "OHPI_REUSE_GATEWAY=$reuseGatewayValue " +
+            "OHPI_TOKEN_STDIN=1 sh \"\$cached\""
+    return "sh -c ${posixShellQuote(body)}"
+}
+
+internal fun posixShellQuote(value: String): String =
+    "'" + value.replace("'", "'\"'\"'") + "'"
+
 private fun windowsUploadCommand(name: String): String =
     powershellInline(
         """
@@ -590,10 +669,6 @@ private fun base64Encode(bytes: ByteArray): String {
 
 private fun script(contents: String): String =
     contents.trimIndent().replace('§', '$') + "\n"
-
-private fun xmlEscape(value: String): String =
-    value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        .replace("\"", "&quot;").replace("'", "&apos;")
 
 private val unixProbeScript =
     script(
@@ -646,9 +721,21 @@ private val unixProbeScript =
           launchctl print "gui/§uid" >/dev/null 2>&1 && domain="gui/§uid"
           launchctl print "§domain/$ManagedLaunchdLabel" 2>/dev/null | grep -q 'state = running' && running=true
         elif [ "§os" = Linux ]; then
-          systemctl --user show-environment >/dev/null 2>&1 && manager=systemd
-          [ ! -f "§HOME/.config/systemd/user/$ManagedSystemdUnit" ] || managed=true
-          systemctl --user is-active --quiet $ManagedSystemdUnit >/dev/null 2>&1 && running=true
+          if systemctl --user show-environment >/dev/null 2>&1; then
+            manager=systemd
+            [ ! -f "§HOME/.config/systemd/user/$ManagedSystemdUnit" ] || managed=true
+            systemctl --user is-active --quiet $ManagedSystemdUnit >/dev/null 2>&1 && running=true
+          elif [ -x "§HOME/.local/libexec/oh-pi-app/ohpi-gateway-launch" ]; then
+            manager=nohup
+            managed=true
+            pid_file="§HOME/.local/state/oh-pi-app/gateway.pid"
+            if [ -f "§pid_file" ]; then
+              pid=§(sed -n '1p' "§pid_file")
+              if [ -n "§pid" ] && kill -0 "§pid" >/dev/null 2>&1; then
+                running=true
+              fi
+            fi
+          fi
         fi
         token_sha256=""
         if [ -f "§config/token" ]; then
@@ -705,86 +792,6 @@ private val windowsProbeScript =
         Write-Output "managed=§(§managed.ToString().ToLowerInvariant())"
         Write-Output "running=§(§running.ToString().ToLowerInvariant())"
         Write-Output "token_sha256=§tokenHash"
-        """,
-    )
-
-internal val unixPiInstallScript =
-    script(
-        """
-        set -eu
-        umask 077
-        pi="§HOME/.local/bin/pi"
-        managed_node_bin="§HOME/.local/share/oh-pi-app/node/current/bin"
-        if [ -x "§pi" ]; then
-          PATH="§managed_node_bin:§HOME/.local/bin:§PATH"
-          export PATH
-          "§pi" --version >/dev/null 2>&1 && exit 0
-        fi
-
-        node_bin=""
-        npm_command=""
-        if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
-          node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1)' >/dev/null 2>&1; then
-          node_bin=§(dirname "§(command -v node)")
-          npm_command=§(command -v npm)
-        else
-          command -v curl >/dev/null 2>&1 || { echo 'curl is required to install Pi' >&2; exit 30; }
-          command -v tar >/dev/null 2>&1 || { echo 'tar is required to install Pi' >&2; exit 31; }
-          case §(uname -s) in
-            Darwin) node_platform=darwin ;;
-            Linux) node_platform=linux ;;
-            *) echo 'unsupported operating system for Node.js' >&2; exit 32 ;;
-          esac
-          case §(uname -m) in
-            x86_64|amd64) node_arch=x64 ;;
-            arm64|aarch64) node_arch=arm64 ;;
-            *) echo 'unsupported architecture for Node.js' >&2; exit 33 ;;
-          esac
-          node_dist=https://nodejs.org/dist/latest-v22.x
-          node_root="§HOME/.local/share/oh-pi-app/node"
-          tmp=§(mktemp -d "§{TMPDIR:-/tmp}/ohpi-node.XXXXXX")
-          trap 'rm -rf "§tmp"' EXIT HUP INT TERM
-          curl -fsSL "§node_dist/SHASUMS256.txt" -o "§tmp/SHASUMS256.txt"
-          node_file=§(awk -v suffix="-§node_platform-§node_arch.tar.gz" '
-            index(§2, "node-v22.") == 1 && substr(§2, length(§2) - length(suffix) + 1) == suffix { print §2; exit }
-          ' "§tmp/SHASUMS256.txt")
-          case "§node_file" in
-            node-v22.*-§node_platform-§node_arch.tar.gz) ;;
-            *) echo 'could not resolve a compatible Node.js archive' >&2; exit 34 ;;
-          esac
-          expected=§(awk -v file="§node_file" '§2 == file { print §1; exit }' "§tmp/SHASUMS256.txt")
-          curl -fsSL "§node_dist/§node_file" -o "§tmp/§node_file"
-          if command -v sha256sum >/dev/null 2>&1; then
-            actual=§(sha256sum "§tmp/§node_file" | awk '{ print §1 }')
-          elif command -v shasum >/dev/null 2>&1; then
-            actual=§(shasum -a 256 "§tmp/§node_file" | awk '{ print §1 }')
-          else
-            echo 'a SHA-256 utility is required to install Node.js' >&2
-            exit 35
-          fi
-          [ -n "§expected" ] && [ "§actual" = "§expected" ] || {
-            echo 'Node.js checksum verification failed' >&2
-            exit 36
-          }
-          tar -xzf "§tmp/§node_file" -C "§tmp"
-          node_dir=§{node_file%.tar.gz}
-          case "§node_dir" in node-v22.*-§node_platform-§node_arch) ;; *) exit 37 ;; esac
-          mkdir -p "§node_root"
-          target="§node_root/§node_dir"
-          rm -rf "§target"
-          mv "§tmp/§node_dir" "§target"
-          rm -f "§node_root/current"
-          ln -s "§target" "§node_root/current"
-          node_bin="§node_root/current/bin"
-          npm_command="§node_bin/npm"
-        fi
-
-        PATH="§node_bin:§HOME/.local/bin:§PATH"
-        export PATH
-        mkdir -p "§HOME/.local"
-        "§npm_command" install -g --ignore-scripts --prefix "§HOME/.local" --no-fund --no-audit '$PiNpmPackage'
-        test -x "§pi"
-        "§pi" --version >/dev/null
         """,
     )
 
@@ -856,78 +863,6 @@ internal fun windowsPiInstallScript(): String =
         if (-not (Test-Path -LiteralPath §pi -PathType Leaf)) { throw 'Pi executable is missing after installation' }
         & §pi --version *>§null
         if (§LASTEXITCODE -ne 0) { throw 'Pi executable could not start after installation' }
-        """,
-    )
-
-private val systemdUnit =
-    """
-    [Unit]
-    Description=Oh Pi gateway
-    After=network-online.target
-
-    [Service]
-    Type=simple
-    ExecStart=%h/.local/bin/ohpi-gateway --config %h/.config/oh-pi-app/config.json --token-file %h/.config/oh-pi-app/token
-    Restart=on-failure
-    RestartSec=3
-    KillSignal=SIGTERM
-
-    [Install]
-    WantedBy=default.target
-    """.trimIndent() + "\n"
-
-private val macosInstallScript =
-    script(
-        """
-        set -eu
-        umask 077
-        cache="§HOME/.cache/oh-pi-app"
-        bin_dir="§HOME/.local/bin"
-        config_dir="§HOME/.config/oh-pi-app"
-        state_dir="§HOME/.local/state/oh-pi-app"
-        agents="§HOME/Library/LaunchAgents"
-        mkdir -p "§bin_dir" "§config_dir" "§state_dir" "§agents"
-        if [ -f "§cache/gateway.new" ]; then
-          chmod 700 "§cache/gateway.new"
-          mv -f "§cache/gateway.new" "§bin_dir/ohpi-gateway"
-        fi
-        test -x "§bin_dir/ohpi-gateway"
-        chmod 600 "§cache/config.json" "§cache/token" "§cache/service.plist"
-        mv -f "§cache/config.json" "§config_dir/config.json"
-        mv -f "§cache/token" "§config_dir/token"
-        uid=§(id -u)
-        domain="user/§uid"
-        launchctl print "gui/§uid" >/dev/null 2>&1 && domain="gui/§uid"
-        launchctl bootout "§domain/$ManagedLaunchdLabel" >/dev/null 2>&1 || true
-        mv -f "§cache/service.plist" "§agents/$ManagedLaunchdLabel.plist"
-        launchctl bootstrap "§domain" "§agents/$ManagedLaunchdLabel.plist"
-        launchctl enable "§domain/$ManagedLaunchdLabel"
-        launchctl kickstart -k "§domain/$ManagedLaunchdLabel"
-        """,
-    )
-
-private val linuxInstallScript =
-    script(
-        """
-        set -eu
-        umask 077
-        cache="§HOME/.cache/oh-pi-app"
-        bin_dir="§HOME/.local/bin"
-        config_dir="§HOME/.config/oh-pi-app"
-        state_dir="§HOME/.local/state/oh-pi-app"
-        units="§HOME/.config/systemd/user"
-        mkdir -p "§bin_dir" "§config_dir" "§state_dir" "§units"
-        if [ -f "§cache/gateway.new" ]; then
-          chmod 700 "§cache/gateway.new"
-          mv -f "§cache/gateway.new" "§bin_dir/ohpi-gateway"
-        fi
-        test -x "§bin_dir/ohpi-gateway"
-        chmod 600 "§cache/config.json" "§cache/token" "§cache/service.unit"
-        mv -f "§cache/config.json" "§config_dir/config.json"
-        mv -f "§cache/token" "§config_dir/token"
-        mv -f "§cache/service.unit" "§units/$ManagedSystemdUnit"
-        systemctl --user daemon-reload
-        systemctl --user enable --now $ManagedSystemdUnit
         """,
     )
 
@@ -1023,7 +958,22 @@ private val linuxStopScript =
     script(
         """
         set -eu
-        systemctl --user stop $ManagedSystemdUnit
+        if systemctl --user show-environment >/dev/null 2>&1; then
+          systemctl --user stop $ManagedSystemdUnit
+          exit 0
+        fi
+        pid_file="§HOME/.local/state/oh-pi-app/gateway.pid"
+        [ -f "§pid_file" ] || exit 0
+        pid=§(sed -n '1p' "§pid_file")
+        if [ -n "§pid" ] && kill -0 "§pid" >/dev/null 2>&1; then
+          kill "§pid" >/dev/null 2>&1 || true
+          attempt=0
+          while kill -0 "§pid" >/dev/null 2>&1 && [ "§attempt" -lt 20 ]; do
+            attempt=§((attempt + 1))
+            sleep 1
+          done
+        fi
+        rm -f "§pid_file"
         """,
     )
 

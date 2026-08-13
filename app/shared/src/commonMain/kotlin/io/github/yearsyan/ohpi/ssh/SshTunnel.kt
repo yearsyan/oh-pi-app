@@ -75,6 +75,24 @@ data class SshCommandConfig(
     val connectTimeoutMillis: Int = 15_000,
     val commandTimeoutMillis: Int = 120_000,
     val maxOutputBytes: Int = 1024 * 1024,
+    val onOutput: ((SshCommandOutput) -> Unit)? = null,
+)
+
+enum class SshCommandStream(internal val nativeValue: Int) {
+    Stdout(1),
+    Stderr(2),
+    ;
+
+    internal companion object {
+        fun fromNative(value: Int): SshCommandStream =
+            entries.firstOrNull { it.nativeValue == value }
+                ?: error("Unknown SSH command stream: $value")
+    }
+}
+
+data class SshCommandOutput(
+    val stream: SshCommandStream,
+    val bytes: ByteArray,
 )
 
 data class SshCommandResult(

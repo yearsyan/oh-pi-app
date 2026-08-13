@@ -3,12 +3,17 @@ package io.github.yearsyan.ohpi.net
 import io.github.yearsyan.ohpi.data.ServerConnectionMode
 import io.github.yearsyan.ohpi.data.ServerProfile
 import io.github.yearsyan.ohpi.data.SshServerProfile
+import io.github.yearsyan.ohpi.ssh.SshCommandOutput
 import io.github.yearsyan.ohpi.ssh.SshCommandResult
+import io.github.yearsyan.ohpi.ssh.SshCommandStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import okio.ByteString.Companion.toByteString
+
+private const val TestUnixInstallerUrl =
+    "https://raw.githubusercontent.com/yearsyan/oh-pi-app/v9.9.9/scripts/install.sh"
 
 class ManagedGatewayTest {
     @Test
@@ -63,6 +68,14 @@ class ManagedGatewayTest {
     }
 
     @Test
+    fun pinsUnixInstallerToAppReleaseTag() {
+        assertEquals(
+            "https://raw.githubusercontent.com/yearsyan/oh-pi-app/v2.4.1/scripts/install.sh",
+            managedUnixInstallerUrl("2.4.1"),
+        )
+    }
+
+    @Test
     fun resolvesReleaseFileAndChecksum() {
         val name = managedGatewayArtifactName("1.10.4", ManagedHostOs.Windows, "amd64")
         assertEquals("ohpi-gateway-1.10.4-windows-amd64.exe", name)
@@ -93,11 +106,36 @@ class ManagedGatewayTest {
     }
 
     @Test
-    fun piBootstrapsStayInsideUserDirectories() {
-        assertTrue(unixPiInstallScript.contains("nodejs.org/dist/latest-v22.x"))
-        assertTrue(unixPiInstallScript.contains("Node.js checksum verification failed"))
-        assertTrue(unixPiInstallScript.contains("--ignore-scripts"))
-        assertTrue(!unixPiInstallScript.contains("sudo"))
+    fun unixUsesCanonicalRemoteInstallerAndWindowsKeepsNativeBootstrap() {
+        val environment =
+            ManagedHostEnvironment(
+                os = ManagedHostOs.Linux,
+                architecture = "amd64",
+                home = "/home/user",
+                workDir = "/home/user",
+                piPath = "/home/user/pi's/bin/pi",
+                piEnvironmentPath = "/home/user/pi's/bin:/usr/bin:/bin",
+                manager = "systemd",
+                installedVersion = "",
+                managed = false,
+                running = false,
+                tokenSha256 = "",
+            )
+        val installerUrl = managedUnixInstallerUrl("9.9.9")
+        val unix = unixManagedInstallCommand(environment, installerUrl = installerUrl)
+        assertTrue(unix.contains(installerUrl))
+        assertTrue(unix.contains("main/scripts/install.sh"))
+        assertTrue(unix.contains("curl </dev/null -fsSL"))
+        assertTrue(unix.contains("managed installer download or checksum verification failed"))
+        assertTrue(unix.contains("OHPI_REPO="))
+        assertTrue(unix.contains("yearsyan/oh-pi-app"))
+        assertTrue(unix.contains("OHPI_LISTEN="))
+        assertTrue(unix.contains("127.0.0.1:18080"))
+        assertTrue(unix.contains("OHPI_NO_SERVICE="))
+        assertTrue(unix.contains("OHPI_REPLACE_CONFIG=1"))
+        assertTrue(unix.contains("OHPI_TOKEN_STDIN=1"))
+        assertEquals("'pi'\"'\"'s'", posixShellQuote("pi's"))
+        assertTrue(!unix.contains("nodejs.org"))
 
         val windows = windowsPiInstallScript()
         assertTrue(windows.contains("nodejs.org/dist/latest-v22.x"))
@@ -107,12 +145,39 @@ class ManagedGatewayTest {
     }
 
     @Test
-    fun installsMissingPiBeforeProvisioningGateway() = kotlinx.coroutines.test.runTest {
+    fun acceptsLinuxWithoutSystemdForRemoteInstallerFallback() {
+        val environment =
+            parseManagedHostEnvironment(
+                """
+                os=Linux
+                arch=x86_64
+                home=/home/user
+                work=/home/user
+                pi=/usr/bin/pi
+                pi_path=/usr/bin:/bin
+                manager=unavailable
+                installed=
+                managed=false
+                running=false
+                token_sha256=
+                """.trimIndent(),
+            )
+        assertNotNull(environment)
+        assertEquals("unavailable", environment.manager)
+        assertTrue(
+            unixManagedInstallCommand(environment, installerUrl = TestUnixInstallerUrl)
+                .contains(TestUnixInstallerUrl),
+        )
+    }
+
+    @Test
+    fun delegatesMissingPiAndGatewayInstallToRemoteScript() = kotlinx.coroutines.test.runTest {
         val token = "managed-bootstrap-token"
         val tokenHash = (token + "\n").encodeToByteArray().toByteString().sha256().hex()
-        var piInstalled = false
-        var gatewayInstalled = false
-        var piInstallRuns = 0
+        var installed = false
+        var remoteInstallRuns = 0
+        var artifactDownloads = 0
+        val streamedLines = mutableListOf<String>()
         val profile =
             ServerProfile(
                 id = "bootstrap",
@@ -126,24 +191,23 @@ class ManagedGatewayTest {
             val text = stdin.decodeToString()
             when {
                 command == "sh -s" && text.contains("token_sha256") -> {
-                    val pi = if (piInstalled) "/home/user/.local/bin/pi" else ""
-                    val version = if (gatewayInstalled) "ohpi-gateway 1.10.5" else ""
+                    val pi = if (installed) "/home/user/.local/bin/pi" else ""
+                    val version = if (installed) "ohpi-gateway 1.10.5" else ""
                     val output =
                         "os=Linux\narch=x86_64\nhome=/home/user\nwork=/home/user\n" +
                             "pi=$pi\npi_path=/home/user/.local/bin:/usr/bin:/bin\nmanager=systemd\n" +
-                            "installed=$version\nmanaged=$gatewayInstalled\nrunning=$gatewayInstalled\n" +
-                            "token_sha256=${if (gatewayInstalled) tokenHash else ""}\n"
+                            "installed=$version\nmanaged=$installed\nrunning=$installed\n" +
+                            "token_sha256=${if (installed) tokenHash else ""}\n"
                     SshCommandResult(0, output.encodeToByteArray(), byteArrayOf())
                 }
-                command == "sh -s" && text.contains("nodejs.org/dist/latest-v22.x") -> {
-                    piInstallRuns++
-                    piInstalled = true
-                    SshCommandResult(0, byteArrayOf(), byteArrayOf())
-                }
-                command.startsWith("sh -c") ->
-                    SshCommandResult(0, byteArrayOf(), byteArrayOf())
-                command == "sh -s" && text.contains("enable --now") -> {
-                    gatewayInstalled = true
+                command.startsWith("sh -c") && command.contains(TestUnixInstallerUrl) -> {
+                    assertTrue(!command.contains(token))
+                    assertTrue(command.contains("OHPI_REPLACE_CONFIG=1"))
+                    assertTrue(command.contains("OHPI_REUSE_GATEWAY="))
+                    assertTrue(!command.contains("OHPI_REUSE_GATEWAY=1"))
+                    assertEquals("$token\n", text)
+                    remoteInstallRuns++
+                    installed = true
                     SshCommandResult(0, byteArrayOf(), byteArrayOf())
                 }
                 else -> SshCommandResult(99, byteArrayOf(), "unexpected command".encodeToByteArray())
@@ -153,15 +217,78 @@ class ManagedGatewayTest {
             ManagedGatewayProvisioner(
                 profile = profile,
                 execute = executor,
+                executeStreaming = { command, stdin, timeout, onOutput ->
+                    if (command.contains(TestUnixInstallerUrl)) {
+                        onOutput(
+                            SshCommandOutput(
+                                SshCommandStream.Stdout,
+                                "==> Downloading gateway\n".encodeToByteArray(),
+                            ),
+                        )
+                    }
+                    executor(command, stdin, timeout)
+                },
                 artifactSource = ManagedGatewayArtifactSource { _, _ ->
+                    artifactDownloads++
                     ManagedGatewayArtifact("1.10.5", "gateway", byteArrayOf(1, 2, 3))
                 },
+                onOutput = { output -> streamedLines += output.bytes.decodeToString() },
+                unixInstallerUrl = TestUnixInstallerUrl,
             )
 
         provisioner.ensureRunning()
 
-        assertEquals(1, piInstallRuns)
-        assertTrue(gatewayInstalled)
+        assertEquals(1, remoteInstallRuns)
+        assertEquals(0, artifactDownloads)
+        assertEquals(listOf("==> Downloading gateway\n"), streamedLines)
+        assertTrue(installed)
+    }
+
+    @Test
+    fun adoptsExistingUnmanagedGatewayWithManagedConfig() = kotlinx.coroutines.test.runTest {
+        val token = "managed-adoption-token"
+        val tokenHash = (token + "\n").encodeToByteArray().toByteString().sha256().hex()
+        var managed = false
+        var installRuns = 0
+        val profile =
+            ServerProfile(
+                id = "adopt",
+                name = "Adopt",
+                url = "ws://127.0.0.1:18080",
+                token = token,
+                connectionMode = ServerConnectionMode.ManagedSsh,
+                ssh = SshServerProfile(host = "host", username = "user", password = "password"),
+            )
+        val executor: suspend (String, ByteArray, Int) -> SshCommandResult = { command, stdin, _ ->
+            when {
+                command == "sh -s" && stdin.decodeToString().contains("uname -s") -> {
+                    val output =
+                        "os=Linux\narch=x86_64\nhome=/home/user\nwork=/home/user\n" +
+                            "pi=/usr/bin/pi\npi_path=/usr/bin:/bin\nmanager=systemd\n" +
+                            "installed=ohpi-gateway 1.10.5\nmanaged=$managed\nrunning=$managed\n" +
+                            "token_sha256=$tokenHash\n"
+                    SshCommandResult(0, output.encodeToByteArray(), byteArrayOf())
+                }
+                command.startsWith("sh -c") && command.contains(TestUnixInstallerUrl) -> {
+                    assertTrue(command.contains("OHPI_REPLACE_CONFIG=1"))
+                    assertTrue(command.contains("OHPI_REUSE_GATEWAY=1"))
+                    assertEquals("$token\n", stdin.decodeToString())
+                    installRuns++
+                    managed = true
+                    SshCommandResult(0, byteArrayOf(), byteArrayOf())
+                }
+                else -> SshCommandResult(99, byteArrayOf(), "unexpected command".encodeToByteArray())
+            }
+        }
+
+        ManagedGatewayProvisioner(
+            profile = profile,
+            execute = executor,
+            unixInstallerUrl = TestUnixInstallerUrl,
+        ).ensureRunning()
+
+        assertEquals(1, installRuns)
+        assertTrue(managed)
     }
 
     @Test
@@ -190,11 +317,13 @@ class ManagedGatewayTest {
                             "managed=true\nrunning=$running\ntoken_sha256=$tokenHash\n"
                     SshCommandResult(0, output.encodeToByteArray(), byteArrayOf())
                 }
-                command.startsWith("sh -c") ->
-                    SshCommandResult(0, byteArrayOf(), byteArrayOf())
                 text.contains("systemctl --user start") ->
                     SshCommandResult(1, byteArrayOf(), "stale task".encodeToByteArray())
-                text.contains("enable --now") -> {
+                command.startsWith("sh -c") && command.contains(TestUnixInstallerUrl) -> {
+                    assertTrue(command.contains("OHPI_REUSE_GATEWAY=1"))
+                    assertTrue(command.contains("OHPI_REPLACE_CONFIG="))
+                    assertTrue(!command.contains("OHPI_REPLACE_CONFIG=1"))
+                    assertEquals("$token\n", text)
                     installRuns++
                     running = true
                     SshCommandResult(0, byteArrayOf(), byteArrayOf())
@@ -203,7 +332,11 @@ class ManagedGatewayTest {
             }
         }
 
-        ManagedGatewayProvisioner(profile, executor).ensureRunning()
+        ManagedGatewayProvisioner(
+            profile = profile,
+            execute = executor,
+            unixInstallerUrl = TestUnixInstallerUrl,
+        ).ensureRunning()
 
         assertEquals(1, installRuns)
     }
@@ -214,7 +347,7 @@ class ManagedGatewayTest {
         val tokenHash = (token + "\n").encodeToByteArray().toByteString().sha256().hex()
         var installed = false
         var artifactDownloads = 0
-        val uploads = mutableListOf<Pair<String, ByteArray>>()
+        val remoteInstallerInputs = mutableListOf<ByteArray>()
         val profile =
             ServerProfile(
                 id = "managed",
@@ -236,11 +369,8 @@ class ManagedGatewayTest {
                             "token_sha256=${if (installed) tokenHash else ""}\n"
                     SshCommandResult(0, output.encodeToByteArray(), byteArrayOf())
                 }
-                command.startsWith("sh -c") -> {
-                    uploads += command to stdin.copyOf()
-                    SshCommandResult(0, byteArrayOf(), byteArrayOf())
-                }
-                command == "sh -s" && text.contains("enable --now") -> {
+                command.startsWith("sh -c") && command.contains(TestUnixInstallerUrl) -> {
+                    remoteInstallerInputs += stdin.copyOf()
                     installed = true
                     SshCommandResult(0, byteArrayOf(), byteArrayOf())
                 }
@@ -255,13 +385,14 @@ class ManagedGatewayTest {
                     artifactDownloads++
                     ManagedGatewayArtifact("1.10.4", "gateway", byteArrayOf(1, 2, 3))
                 },
+                unixInstallerUrl = TestUnixInstallerUrl,
             )
 
         provisioner.ensureRunning()
         provisioner.ensureRunning()
 
-        assertEquals(1, artifactDownloads)
-        assertTrue(uploads.any { it.second.contentEquals(byteArrayOf(1, 2, 3)) })
-        assertTrue(uploads.any { it.second.decodeToString() == "$token\n" })
+        assertEquals(0, artifactDownloads)
+        assertEquals(1, remoteInstallerInputs.size)
+        assertEquals("$token\n", remoteInstallerInputs.single().decodeToString())
     }
 }

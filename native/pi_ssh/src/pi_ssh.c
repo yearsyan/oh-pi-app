@@ -1194,6 +1194,8 @@ static int pi_ssh_command_read_stream(ssh_channel channel,
                                       pi_ssh_command_output *output,
                                       size_t max_output_bytes,
                                       size_t *total_output_bytes,
+                                      pi_ssh_command_output_callback output_callback,
+                                      void *output_context,
                                       bool *made_progress,
                                       pi_ssh_error *error)
 {
@@ -1229,6 +1231,19 @@ static int pi_ssh_command_read_stream(ssh_channel channel,
                                        "Could not store SSH command output");
                 return -1;
             }
+            if (output_callback != NULL &&
+                output_callback(
+                    output_context,
+                    is_stderr ? PI_SSH_COMMAND_STDERR : PI_SSH_COMMAND_STDOUT,
+                    bytes,
+                    (size_t)read_count) != 0) {
+                pi_ssh_set_error_value(error,
+                                       PI_SSH_ERROR_INTERNAL,
+                                       0,
+                                       NULL,
+                                       "SSH command output callback aborted execution");
+                return -1;
+            }
             *made_progress = true;
             continue;
         }
@@ -1248,6 +1263,20 @@ static int pi_ssh_command_read_stream(ssh_channel channel,
 int pi_ssh_command_execute(const pi_ssh_command_config *config,
                            pi_ssh_command_result *result,
                            pi_ssh_error *error)
+{
+    return pi_ssh_command_execute_streaming(config,
+                                            result,
+                                            NULL,
+                                            NULL,
+                                            error);
+}
+
+int pi_ssh_command_execute_streaming(
+    const pi_ssh_command_config *config,
+    pi_ssh_command_result *result,
+    pi_ssh_command_output_callback output_callback,
+    void *output_context,
+    pi_ssh_error *error)
 {
     pi_ssh_tunnel_config connection_config;
     pi_ssh_command_output standard_output = {0};
@@ -1421,6 +1450,8 @@ int pi_ssh_command_execute(const pi_ssh_command_config *config,
                                        &standard_output,
                                        max_output_bytes,
                                        &total_output_bytes,
+                                       output_callback,
+                                       output_context,
                                        &made_progress,
                                        error) < 0 ||
             pi_ssh_command_read_stream(channel,
@@ -1428,6 +1459,8 @@ int pi_ssh_command_execute(const pi_ssh_command_config *config,
                                        &standard_error,
                                        max_output_bytes,
                                        &total_output_bytes,
+                                       output_callback,
+                                       output_context,
                                        &made_progress,
                                        error) < 0) {
             goto cleanup;

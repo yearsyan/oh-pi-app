@@ -30,9 +30,13 @@
 #   OHPI_WORK_DIR     默认工作空间目录（默认 $HOME）
 #   OHPI_TOKEN        指定 token（默认自动生成；已有 token 文件时保留）
 #   OHPI_PI_COMMAND   pi 可执行文件绝对路径（默认从 PATH 探测）
+#   OHPI_PI_ENV_PATH  运行 pi 所需的稳定 PATH（安装 Pi 时自动生成）
 #   OHPI_NO_PI_INSTALL 非空时跳过 pi 自动安装（缺 pi 直接报错）
 #   OHPI_HEALTH_URL   健康检查地址（默认由 OHPI_LISTEN 推导）
 #   OHPI_NO_SERVICE   非空时只安装二进制与配置，不注册/启动服务
+#   OHPI_REPLACE_CONFIG 非空时重写已有配置（App 托管安装使用）
+#   OHPI_REUSE_GATEWAY 非空且已有二进制可用时跳过 Gateway 下载（App 修复服务使用）
+#   OHPI_TOKEN_STDIN  非空时从标准输入读取一行 token，且完成时不回显 token
 
 set -eu
 
@@ -52,7 +56,7 @@ log_dir=$state_dir/log
 stdout_log=$log_dir/ohpi-gateway.stdout.log
 stderr_log=$log_dir/ohpi-gateway.stderr.log
 pid_file=$state_dir/gateway.pid
-pi_env_path=
+pi_env_path=${OHPI_PI_ENV_PATH-}
 launch_agents_dir=$home/Library/LaunchAgents
 plist_path=$launch_agents_dir/$label.plist
 units_dir=$home/.config/systemd/user
@@ -73,6 +77,10 @@ require_command() {
 
 json_escape() {
 	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+xml_escape() {
+	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
 }
 
 detect_platform() {
@@ -165,7 +173,7 @@ resolve_pi_command() {
 	fi
 }
 
-# 检测不到 pi 时自动安装；逻辑与 App SSH 自动安装模式（unixPiInstallScript）保持一致。
+# 检测不到 pi 时自动安装；App SSH 自动安装模式也在远端调用本脚本。
 install_pi() {
 	require_command curl
 	require_command tar
@@ -176,8 +184,9 @@ install_pi() {
 	# 系统已有兼容 Node（>= 22.19）时直接复用，否则下载托管 Node。
 	if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
 		node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1)' >/dev/null 2>&1; then
-		node_bin=$(dirname -- "$(command -v node)")
+		node_bin=$(dirname "$(command -v node)")
 		npm_command=$(command -v npm)
+		pi_env_path=$node_bin:$home/.local/bin${pi_env_path:+:$pi_env_path}
 	else
 		case $os in
 			darwin) node_platform=darwin ;;
@@ -217,8 +226,8 @@ install_pi() {
 		ln -s "$target" "$node_root/current"
 		node_bin=$node_root/current/bin
 		npm_command=$node_bin/npm
-		# 托管 Node 不在系统 PATH 中；pi 的 npm wrapper 运行时需要找到 node。
-		pi_env_path=$node_bin:$home/.local/bin
+		# 托管 Node 不在系统 PATH 中；保留原 PATH 供 pi 调用系统工具。
+		pi_env_path=$node_bin:$home/.local/bin${pi_env_path:+:$pi_env_path}
 	fi
 
 	PATH="$node_bin:$home/.local/bin:$PATH"
@@ -273,7 +282,13 @@ download_and_verify() {
 }
 
 install_token() {
-	if [ -n "${OHPI_TOKEN-}" ]; then
+	if [ -n "${OHPI_TOKEN_STDIN-}" ]; then
+		umask 077
+		printf '%s\n' "$ohpi_stdin_token" >"$token_file"
+		chmod 600 "$token_file"
+		ohpi_stdin_token=
+		note "Wrote provided token to $token_file"
+	elif [ -n "${OHPI_TOKEN-}" ]; then
 		nl='
 '
 		case $OHPI_TOKEN in
@@ -294,7 +309,7 @@ install_token() {
 }
 
 install_config() {
-	if [ -f "$config_file" ]; then
+	if [ -f "$config_file" ] && [ -z "${OHPI_REPLACE_CONFIG-}" ]; then
 		note "Keeping existing config: $config_file"
 		return
 	fi
@@ -305,10 +320,10 @@ install_config() {
 		printf '  "OHPI_WORK_DIR": "%s",\n' "$(printf '%s' "$work_dir" | json_escape)"
 		printf '  "OHPI_PI_COMMAND": "%s"' "$(printf '%s' "$pi_command" | json_escape)"
 		if [ -n "$pi_env_path" ]; then
-			printf ',\n  "OHPI_PI_ENV_PATH": "%s"\n' "$(printf '%s' "$pi_env_path" | json_escape)"
-		else
-			printf '\n'
+			printf ',\n  "OHPI_PI_ENV_PATH": "%s"' "$(printf '%s' "$pi_env_path" | json_escape)"
 		fi
+		printf ',\n  "OHPI_TITLE_MODEL": "auto",\n'
+		printf '  "OHPI_SCHEDULED_SESSION_RETENTION": "168h"\n'
 		printf '}\n'
 	} >"$tmp/config.json"
 	umask 077
@@ -356,11 +371,21 @@ EOF
 
 render_plist() {
 	if [ -n "$pi_command" ]; then
-		pi_dir=$(dirname -- "$pi_command")
+		pi_dir=$(dirname "$pi_command")
 	else
 		pi_dir=
 	fi
 	launch_path=$binary_dir${pi_dir:+:$pi_dir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+	plist_label=$(printf '%s' "$label" | xml_escape)
+	plist_launcher_path=$(printf '%s' "$launcher_path" | xml_escape)
+	plist_launch_path=$(printf '%s' "$launch_path" | xml_escape)
+	plist_binary_path=$(printf '%s' "$binary_path" | xml_escape)
+	plist_config_file=$(printf '%s' "$config_file" | xml_escape)
+	plist_pi_command=$(printf '%s' "$pi_command" | xml_escape)
+	plist_token_file=$(printf '%s' "$token_file" | xml_escape)
+	plist_work_dir=$(printf '%s' "$work_dir" | xml_escape)
+	plist_stdout_log=$(printf '%s' "$stdout_log" | xml_escape)
+	plist_stderr_log=$(printf '%s' "$stderr_log" | xml_escape)
 	umask 077
 	cat >"$tmp/$label.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -368,26 +393,26 @@ render_plist() {
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>$label</string>
+	<string>$plist_label</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>$launcher_path</string>
+		<string>$plist_launcher_path</string>
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>$launch_path</string>
+		<string>$plist_launch_path</string>
 		<key>OHPI_BINARY</key>
-		<string>$binary_path</string>
+		<string>$plist_binary_path</string>
 		<key>OHPI_CONFIG_FILE</key>
-		<string>$config_file</string>
+		<string>$plist_config_file</string>
 		<key>OHPI_PI_COMMAND</key>
-		<string>$pi_command</string>
+		<string>$plist_pi_command</string>
 		<key>OHPI_TOKEN_FILE</key>
-		<string>$token_file</string>
+		<string>$plist_token_file</string>
 	</dict>
 	<key>WorkingDirectory</key>
-	<string>$work_dir</string>
+	<string>$plist_work_dir</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -399,9 +424,9 @@ render_plist() {
 	<key>Umask</key>
 	<integer>63</integer>
 	<key>StandardOutPath</key>
-	<string>$stdout_log</string>
+	<string>$plist_stdout_log</string>
 	<key>StandardErrorPath</key>
-	<string>$stderr_log</string>
+	<string>$plist_stderr_log</string>
 </dict>
 </plist>
 EOF
@@ -530,7 +555,7 @@ cmd_install() {
 
 	detect_platform
 	resolve_listen
-	resolve_version
+	repo=${OHPI_REPO:-yearsyan/oh-pi-app}
 	resolve_pi_command
 
 	work_dir=${OHPI_WORK_DIR:-$home}
@@ -541,11 +566,17 @@ cmd_install() {
 	cleanup() {
 		rm -rf "$tmp"
 	}
-	trap cleanup EXIT HUP INT TERM
+	trap cleanup 0 HUP INT TERM
 
 	ensure_pi
 
-	download_and_verify "$tmp"
+	if [ -n "${OHPI_REUSE_GATEWAY-}" ] && [ -x "$binary_path" ] &&
+		"$binary_path" --version >/dev/null 2>&1; then
+		note "Reusing installed gateway binary"
+	else
+		resolve_version
+		download_and_verify "$tmp"
+	fi
 
 	note "Preparing installation directories"
 	mkdir -p "$binary_dir" "$libexec_dir" "$config_dir" "$data_dir" "$log_dir"
@@ -556,8 +587,10 @@ cmd_install() {
 	render_plist
 	render_systemd_unit
 
-	note "Installing gateway binary"
-	install -m 0755 "$tmp/ohpi-gateway" "$binary_path"
+	if [ -f "$tmp/ohpi-gateway" ]; then
+		note "Installing gateway binary"
+		install -m 0755 "$tmp/ohpi-gateway" "$binary_path"
+	fi
 	version_output=$("$binary_path" --version)
 	note "Installed $version_output"
 
@@ -578,7 +611,9 @@ cmd_install() {
 	printf '\n'
 	printf '  Gateway : %s (%s, %s)\n' "http://127.0.0.1:$port" "$version_output" "$service_kind"
 	printf '  Token   : %s\n' "$token_file"
-	printf '            %s\n' "$(sed -n '1p' "$token_file")"
+	if [ -z "${OHPI_TOKEN_STDIN-}" ]; then
+		printf '            %s\n' "$(sed -n '1p' "$token_file")"
+	fi
 	printf '  Work dir: %s\n' "$work_dir"
 	printf '  Data dir: %s\n' "$data_dir"
 	printf '\n'
@@ -665,6 +700,18 @@ usage() {
 	printf 'usage: %s [install|status|uninstall]\n' "${0##*/}" >&2
 	exit 2
 }
+
+ohpi_stdin_token=
+if [ -n "${OHPI_TOKEN_STDIN-}" ]; then
+	IFS= read -r ohpi_stdin_token || die "OHPI_TOKEN_STDIN requires one token line on standard input"
+	[ -n "$ohpi_stdin_token" ] || die "OHPI_TOKEN_STDIN received an empty token"
+	if IFS= read -r extra_token_line; then
+		die "OHPI_TOKEN_STDIN accepts exactly one token line"
+	fi
+	# The SSH wrapper supplies an empty OHPI_TOKEN only to neutralize the remote
+	# environment. Remove its export attribute before any downloader is started.
+	unset OHPI_TOKEN
+fi
 
 cmd=${1:-install}
 case $cmd in

@@ -13,9 +13,13 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -60,6 +65,7 @@ import io.github.yearsyan.ohpi.net.GatewayTransport
 import io.github.yearsyan.ohpi.net.ManagedInstallStep
 import io.github.yearsyan.ohpi.net.SshHostKeyPrompt
 import io.github.yearsyan.ohpi.secureRandomHex
+import io.github.yearsyan.ohpi.ssh.SshCommandStream
 import io.github.yearsyan.ohpi.ui.components.SshHostKeyDialog
 import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
@@ -80,15 +86,26 @@ internal class OnboardingInstallController {
     var failedMessage by mutableStateOf<String?>(null); private set
     var hostKeyPrompt by mutableStateOf<SshHostKeyPrompt?>(null); private set
     var resultProfile by mutableStateOf<ServerProfile?>(null); private set
+    var logLines by mutableStateOf<List<ManagedInstallLogLine>>(emptyList()); private set
 
     private var profile: ServerProfile? = null
     private var trustedHostKey = ""
     private var hostKeyDecision: CompletableDeferred<Boolean>? = null
+    private var logBuffer = ManagedInstallLogBuffer()
 
     fun prepare(profile: ServerProfile, labels: List<String>, trustedHostKey: String = "") {
         this.profile = profile
         stepLabels = labels
         this.trustedHostKey = trustedHostKey
+        logBuffer =
+            ManagedInstallLogBuffer(
+                redactedValues =
+                    listOf(
+                        profile.token,
+                        profile.ssh.password.takeIf { it.length >= 8 }.orEmpty(),
+                        profile.ssh.privateKeyPassphrase.takeIf { it.length >= 8 }.orEmpty(),
+                    ),
+            )
         reset()
     }
 
@@ -97,6 +114,8 @@ internal class OnboardingInstallController {
         completedSteps = 0
         failedMessage = null
         resultProfile = null
+        logBuffer.clear()
+        logLines = emptyList()
         hostKeyPrompt = null
         hostKeyDecision?.complete(false)
         hostKeyDecision = null
@@ -131,9 +150,11 @@ internal class OnboardingInstallController {
                         activeStep = index
                     }
                 },
+                installOutput = { output -> logLines = logBuffer.append(output) },
             )
         try {
             transport.resolveGateway()
+            logLines = logBuffer.flush()
             completedSteps = stepLabels.size
             resultProfile =
                 base.copy(
@@ -148,6 +169,7 @@ internal class OnboardingInstallController {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
+            logLines = logBuffer.flush()
             failedMessage = failure.message ?: "unknown error"
         } finally {
             transport.close()
@@ -651,6 +673,11 @@ internal fun InstallProgressContent(
         }
     }
 
+    if (install.logLines.isNotEmpty()) {
+        Spacer(Modifier.height(16.dp))
+        InstallLogPanel(install.logLines)
+    }
+
     install.failedMessage?.let { message ->
         Spacer(Modifier.height(16.dp))
         Text(
@@ -669,6 +696,49 @@ internal fun InstallProgressContent(
     } ?: run {
         Spacer(Modifier.height(20.dp))
         TextButton(onClick = onCancel) { Text(S.installCancel) }
+    }
+}
+
+@Composable
+private fun InstallLogPanel(lines: List<ManagedInstallLogLine>) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines.size, lines.lastOrNull()?.text) {
+        if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex)
+    }
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                S.installLogTitle,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().height(180.dp),
+                ) {
+                    itemsIndexed(lines) { _, line ->
+                        Text(
+                            text = line.text.ifEmpty { " " },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color =
+                                if (line.stream == SshCommandStream.Stderr) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

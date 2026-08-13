@@ -60,6 +60,7 @@ internal actual object PlatformSsh {
                 connectTimeoutMillis = config.connectTimeoutMillis,
                 commandTimeoutMillis = config.commandTimeoutMillis,
                 maxOutputBytes = config.maxOutputBytes,
+                outputListener = config.onOutput?.let(::NativeSshOutputListener),
                 exitStatus = exitStatus,
                 errorCode = errorCode,
                 errorStrings = errorStrings,
@@ -90,6 +91,15 @@ internal actual object PlatformSsh {
     actual fun libraryVersion(): String {
         NativeSshBridge.ensureLoaded()
         return NativeSshBridge.nativeVersion()
+    }
+}
+
+internal class NativeSshOutputListener(
+    private val callback: (SshCommandOutput) -> Unit,
+) {
+    @Suppress("unused") // Called by native/pi_ssh/src/pi_ssh_jni.c.
+    fun onOutput(stream: Int, bytes: ByteArray) {
+        callback(SshCommandOutput(SshCommandStream.fromNative(stream), bytes))
     }
 }
 
@@ -184,6 +194,7 @@ internal object NativeSshBridge {
         connectTimeoutMillis: Int,
         commandTimeoutMillis: Int,
         maxOutputBytes: Int,
+        outputListener: NativeSshOutputListener?,
         exitStatus: IntArray,
         errorCode: IntArray,
         errorStrings: Array<String?>,

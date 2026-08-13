@@ -16,6 +16,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Verify managed installer contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n scripts/install.sh
+          expected="$(sed -n '/internal const val UnixManagedInstallerSha256/{n;s/.*"\([0-9a-f]\{64\}\)".*/\1/p;}' \
+            app/shared/src/commonMain/kotlin/io/github/yearsyan/ohpi/net/ManagedGateway.kt)"
+          actual="$(sha256sum scripts/install.sh | awk '{print $1}')"
+          test -n "$expected"
+          test "$actual" = "$expected"
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:

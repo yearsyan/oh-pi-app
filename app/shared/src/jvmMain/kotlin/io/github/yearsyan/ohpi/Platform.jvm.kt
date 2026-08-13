@@ -7,7 +7,7 @@ class JVMPlatform: Platform {
 
 actual fun getPlatform(): Platform = JVMPlatform()
 
-private const val DEFAULT_DESKTOP_APP_VERSION = "2.3.0"
+private const val DEFAULT_DESKTOP_APP_VERSION = "2.3.2"
 
 actual fun appVersion(): String =
     System.getProperty("ohpi.app.version")

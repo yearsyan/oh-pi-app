@@ -40,9 +40,11 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
   公钥可从密钥的长按菜单查看与复制。一份私钥可被多台机器引用；服务器配置
   只保存密钥 id，不保存私钥内容。iOS 上私钥列表整体存入系统 Keychain（不随
   iCloud 同步、不迁移到新设备），其他平台保存在应用私有设置中。
-- **SSH 自动安装**：只填写普通用户 SSH 凭据，App 即可识别 macOS / Linux / Windows，
-  在缺少 Pi 时无 sudo 引导用户级 Node.js/Pi，校验并上传 Release 网关二进制，使用
-  launchd / systemd user / 当前用户计划任务托管，在连接前自动拉起，并可从设置页停止。完整平台限制见
+- **SSH 自动安装**：只填写普通用户 SSH 凭据，App 即可识别 macOS / Linux / Windows。
+  macOS/Linux 由远端拉取并校验与 App 版本一致的 `scripts/install.sh`，在远端下载、校验
+  Release 网关并按需引导用户级 Node.js/Pi；Windows 保留 App 下载校验后经 SSH 上传的 PowerShell
+  安装路径。三平台分别由 launchd / systemd user / 当前用户计划任务托管，在连接前自动拉起，
+  安装过程中会实时显示远端脚本的 stdout/stderr，并可从设置页停止。完整平台限制见
   [`../docs/managed-install.md`](../docs/managed-install.md)。
 - **扩展 UI 对话框**：支持 pi 扩展的 select / confirm / input / editor 请求。
 
@@ -83,7 +85,9 @@ SSH 模式下网关地址必须使用 `http://` 或 `ws://`。SSH 已加密整�
 以后指纹不一致会显示高风险变更提示。
 
 选择「自动安装」时无需填写网关地址和 token；App 固定使用远端回环地址，自动生成
-token，并在每次建立连接前确认用户级服务正在运行。此模式不要求管理员密码。Windows
+token，并在每次建立连接前确认用户级服务正在运行。macOS/Linux 首次安装或修复时要求
+SSH 主机能够访问 `raw.githubusercontent.com`、GitHub Release，以及缺少 Pi 时所需的
+`nodejs.org` 和 npm registry。此模式不要求管理员密码。Windows
 使用密码 SSH 登录时可在无桌面会话下运行；私钥登录受 Task Scheduler 限制，需要当前
 用户已有桌面会话。Linux 是否在最后一个登录会话退出后继续运行取决于 linger 设置。
 

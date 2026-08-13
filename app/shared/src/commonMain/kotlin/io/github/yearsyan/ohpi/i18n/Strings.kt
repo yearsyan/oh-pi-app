@@ -69,6 +69,7 @@ interface Strings {
     val installStepDownload: String
     val installStepService: String
     val installStepStart: String
+    val installLogTitle: String
     val installRetry: String
     val installCancel: String
     val installBackToForm: String
@@ -654,6 +655,7 @@ object EnStrings : Strings {
     override val installStepDownload = "Downloading gateway"
     override val installStepService = "Installing gateway service"
     override val installStepStart = "Starting & verifying"
+    override val installLogTitle = "Installation output"
     override val installRetry = "Retry"
     override val installCancel = "Cancel"
     override val installBackToForm = "Back"
@@ -1294,6 +1296,7 @@ object ZhStrings : Strings {
     override val installStepDownload = "下载网关"
     override val installStepService = "安装网关服务"
     override val installStepStart = "启动并验证"
+    override val installLogTitle = "安装输出"
     override val installRetry = "重试"
     override val installCancel = "取消"
     override val installBackToForm = "返回"

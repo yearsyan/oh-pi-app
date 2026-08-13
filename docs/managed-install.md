@@ -1,15 +1,19 @@
 # SSH 自动安装模式
 
-App 的「自动安装」连接方式只需要远端普通用户的 SSH 登录凭据。首次连接时，App 会识别操作系统与 CPU 架构，下载对应的 `ohpi-gateway` Release 产物并校验 `SHA256SUMS.txt`，再通过 SSH 的标准输入直接写入远端；网关安装不依赖远端访问 GitHub，也不需要管理员权限。
+App 的「自动安装」连接方式只需要远端普通用户的 SSH 登录凭据。首次连接时，App 会识别操作系统与 CPU 架构：macOS/Linux 通过 SSH 在远端拉取并执行仓库的 `scripts/install.sh`，由该脚本下载对应的 `ohpi-gateway` Release 产物并校验 `SHA256SUMS.txt`；Windows 仍由 App 下载、校验后通过 SSH 上传二进制。两条路径都不需要管理员权限。
 
-如果 SSH 用户还没有可运行的 `pi`，App 会先在用户目录自动安装 Node.js 22 和 `@earendil-works/pi-coding-agent`。Node.js 归档根据官方 `SHASUMS256.txt` 做 SHA-256 校验，Pi 使用官方推荐的 `npm --ignore-scripts` 方式安装；不会调用 `sudo`，也不会修改 shell 启动文件。已有 Pi 时保持原安装不变。
+macOS/Linux 的 Node.js/Pi、Gateway 配置与 launchd/systemd 服务安装均以 `scripts/install.sh` 为唯一实现；Kotlin 只负责探测、快路径、远端脚本启动和最终健康校验。如果 SSH 用户没有可运行的 `pi`，远端脚本会在用户目录安装 Node.js 22 和 `@earendil-works/pi-coding-agent`。Node.js 归档根据官方 `SHASUMS256.txt` 做 SHA-256 校验，Pi 使用官方推荐的 `npm --ignore-scripts` 方式安装；不会调用 `sudo`，也不会修改 shell 启动文件。Windows 继续使用内置 PowerShell 引导逻辑。
+
+App 生成的 token 作为 SSH 命令的标准输入交给脚本，不放入远端命令行或环境；下载命令也与该标准输入断开。脚本写入权限受限的 token 文件，App 调用模式下不会把 token 回显到标准输出。App 优先从与自身版本一致的 `v*` tag 拉取脚本；尚无 tag 的开发构建可回退到 `main`，但两者都必须匹配 App 内固定的 SHA-256，下载失败时也只允许复用校验一致的缓存 `~/.cache/oh-pi-app/install.sh`。首次安装会重写托管配置以固定远端 `127.0.0.1:18080`；使用同一 token 且 Pi 仍可用时，修复已有服务会保留运行配置并复用已安装的 Gateway 二进制。
+
+安装页会在远端命令仍运行时逐行显示脚本 stdout/stderr。日志仅保留最近 300 行，移除 ANSI 控制序列并对当前连接 token 与较长 SSH 密码做防御性脱敏；命令结束后的完整有界输出仍用于错误诊断。
 
 之后每次连接都会检查网关健康状态。服务未运行时，App 会先通过系统的用户级服务管理器拉起它，再建立 SSH 隧道；设置页的电源按钮可以关闭远端网关。关闭只停止服务，不删除二进制、配置、token、会话或服务定义，下一次连接仍会自动拉起。
 
 ## 前提条件
 
 - 已有 Pi 时，App 会先检查 SSH 用户的 `PATH`，再检查 fnm、nvm、Volta、pnpm、npm 与 Bun 的常见用户目录，并把稳定化后的绝对路径及 Node 运行 `PATH` 写入网关配置。
-- 没有 Pi 时，远端需要能通过 HTTPS 访问 `nodejs.org` 和 npm registry；macOS / Linux 还需要系统自带的 `curl`、`tar` 与 SHA-256 工具。Windows 使用 PowerShell 自带的下载、解压和哈希能力。
+- macOS/Linux 需要能通过 HTTPS 访问 `raw.githubusercontent.com` 和 GitHub Release；没有 Pi 时还需访问 `nodejs.org` 和 npm registry，并具备系统自带的 `curl`、`tar` 与 SHA-256 工具。Windows 使用 PowerShell 自带的下载、解压和哈希能力，Gateway 下载发生在 App 侧。
 - 远端为 macOS、Linux 或 Windows，CPU 为 `amd64` 或 `arm64`。
 - GitHub Release 包含对应的网关二进制和 `SHA256SUMS.txt`。`v*` tag 的 Release workflow 会构建 macOS、Linux、Windows 的 amd64/arm64 二进制以及 Android APK。
 - 首次连接时必须人工核对并确认 SSH 主机的 `SHA256:` 指纹。指纹变化会再次要求确认。
@@ -21,7 +25,7 @@ App 为每个托管服务器生成 32 字节随机 token。SSH 私钥不会写�
 | 平台 | 用户级托管器 | 安装位置 | 无管理员运行条件 |
 |---|---|---|---|
 | macOS | `launchd` LaunchAgent | `~/.local/bin/ohpi-gateway` | 当前用户的 `gui/$UID` 或 `user/$UID` launchd domain 可用 |
-| Linux | `systemd --user` | `~/.local/bin/ohpi-gateway` | SSH 登录启动了 systemd user manager |
+| Linux | 优先 `systemd --user`，否则 nohup | `~/.local/bin/ohpi-gateway` | systemd user manager 不可用时退化为当前用户后台进程 |
 | Windows | Task Scheduler 当前用户任务 `OhPi Gateway` | `%LOCALAPPDATA%\OhPi\bin\ohpi-gateway.exe` | 见下方 Windows 说明 |
 
 自动安装的 Pi 位于 macOS / Linux 的 `~/.local/bin/pi`，其托管 Node.js 位于 `~/.local/share/oh-pi-app/node/`；Windows 分别位于 `%LOCALAPPDATA%\OhPi\pi` 与 `%LOCALAPPDATA%\OhPi\node`。
@@ -54,10 +58,10 @@ Windows 不使用需要管理员权限的系统 Service，而是注册 `RunLevel
 
 ## macOS 签名
 
-Release workflow 在 macOS runner 上构建 Darwin 二进制，使用 Team `2XX5KZ6X3G` 的 Developer ID Application、固定代码标识 `io.github.yearsyan.ohpi.gateway`、Hardened Runtime 与可信时间戳签名，并将两个架构一起提交 Apple notarization。固定 designated requirement 让 macOS TCC 在升级后仍把网关识别为同一程序，从而保留用户授予的 Documents、Desktop 与 Downloads 访问。架构独立的已签名裸二进制继续供 SSH 自动安装下载，同时 Release 还提供已公证的 Darwin ZIP 供直接分发。完整凭据与轮换要求见[发布与签名](releasing.md)。
+Release workflow 在 macOS runner 上构建 Darwin 二进制，使用 Team `2XX5KZ6X3G` 的 Developer ID Application、固定代码标识 `io.github.yearsyan.ohpi.gateway`、Hardened Runtime 与可信时间戳签名，并将两个架构一起提交 Apple notarization。固定 designated requirement 让 macOS TCC 在升级后仍把网关识别为同一程序，从而保留用户授予的 Documents、Desktop 与 Downloads 访问。架构独立的已签名裸二进制由远端 `install.sh` 下载，同时 Release 还提供已公证的 Darwin ZIP 供直接分发。完整凭据与轮换要求见[发布与签名](releasing.md)。
 
-SSH 直接写入远端的路径通常不会附带浏览器下载产生的 quarantine 属性，但正式签名仍可满足 Gatekeeper、MDM 和企业安全策略的校验要求。命令行裸二进制不能附加 stapled ticket；Apple 公证服务会在线发布与代码签名对应的 ticket。
+`curl` 写入远端临时目录的路径通常不会附带浏览器下载产生的 quarantine 属性，但正式签名仍可满足 Gatekeeper、MDM 和企业安全策略的校验要求。命令行裸二进制不能附加 stapled ticket；Apple 公证服务会在线发布与代码签名对应的 ticket。
 
 ## 发布兼容性
 
-自动安装依赖新版网关的 `--version`、`--token-file`、配置文件中的 `OHPI_PI_COMMAND` / `OHPI_PI_ENV_PATH`，以及带 `service` / `version` / `protocol` 字段的 `/healthz`。实现这些能力后必须再发布一个新的 `v*` tag；旧 Release 不能用于验证完整安装流程。
+macOS/Linux 自动安装依赖与 App 版本相同的 `v*` tag 中 `scripts/install.sh` 的 `OHPI_TOKEN_STDIN` / `OHPI_REUSE_GATEWAY` 接口；App 同时内置该脚本的 SHA-256，因此修改脚本后必须同步更新校验值并发布新 App tag。脚本负责选择最新 Gateway Release。Windows 路径依赖网关的 `--version`、`--token-file`、配置文件中的 `OHPI_PI_COMMAND` / `OHPI_PI_ENV_PATH`。两条路径都要求 `/healthz` 返回 `service` / `version` / `protocol` 字段。

@@ -24,3 +24,8 @@
 -keep class io.github.yearsyan.ohpi.ssh.NativeSshBridge {
     native <methods>;
 }
+
+# Native command streaming invokes this method by name for each output chunk.
+-keep class io.github.yearsyan.ohpi.ssh.NativeSshOutputListener {
+    public void onOutput(int, byte[]);
+}

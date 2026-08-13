@@ -61,6 +61,22 @@ typedef enum pi_ssh_error_code {
     PI_SSH_ERROR_KEY_GENERATION = 17,
 } pi_ssh_error_code;
 
+typedef enum pi_ssh_command_stream {
+    PI_SSH_COMMAND_STDOUT = 1,
+    PI_SSH_COMMAND_STDERR = 2,
+} pi_ssh_command_stream;
+
+/*
+ * Receives each command-output chunk on the thread calling
+ * pi_ssh_command_execute_streaming(). The byte pointer is borrowed only for
+ * the duration of the callback. Return zero to continue or non-zero to abort.
+ */
+typedef int (*pi_ssh_command_output_callback)(
+    void *context,
+    int32_t stream,
+    const uint8_t *data,
+    size_t size);
+
 /*
  * All string pointers are borrowed for the duration of pi_ssh_tunnel_start().
  * The returned tunnel owns copies of values needed by its worker thread.
@@ -187,6 +203,14 @@ PI_SSH_API int pi_ssh_key_pair_generate_ed25519(
 PI_SSH_API int pi_ssh_command_execute(
     const pi_ssh_command_config *config,
     pi_ssh_command_result *result,
+    pi_ssh_error *error);
+
+/* Executes one command while forwarding stdout/stderr chunks as they arrive. */
+PI_SSH_API int pi_ssh_command_execute_streaming(
+    const pi_ssh_command_config *config,
+    pi_ssh_command_result *result,
+    pi_ssh_command_output_callback output_callback,
+    void *output_context,
     pi_ssh_error *error);
 
 /*

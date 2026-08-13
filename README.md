@@ -23,7 +23,7 @@ WebSocket D ─── session 2 ── pi --mode rpc
 - 稳定历史与活动 turn WAL 持久化，重连时可无缝衔接 replay 和实时事件。
 - 支持工作区能力探测、目录浏览与创建，以及远程文件读取与下载。
 - App 可在独立设置页登录、重新登录和登出 pi 内置 Provider，并查看各 Provider 的模型。
-- App 可仅凭普通用户 SSH 凭据自动引导 Node.js/Pi、安装并托管网关：macOS 使用 LaunchAgent、Linux 使用 systemd user、Windows 使用当前用户计划任务。
+- App 可仅凭普通用户 SSH 凭据自动引导 Node.js/Pi、安装并托管网关：macOS/Linux 在远端复用 `scripts/install.sh`，Windows 使用 PowerShell；三平台分别由 LaunchAgent、systemd user、当前用户计划任务托管。
 - 用户提交首条请求后立即并行调用可配置的轻量模型生成会话标题，并同步到所有客户端。
 - 提供 token 鉴权、Origin 校验、消息大小限制、慢客户端隔离和优雅退出。
 

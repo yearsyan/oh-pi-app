@@ -12,6 +12,12 @@ typedef struct pi_ssh_jni_bytes {
     size_t length;
 } pi_ssh_jni_bytes;
 
+typedef struct pi_ssh_jni_output_context {
+    JNIEnv *environment;
+    jobject listener;
+    jmethodID method;
+} pi_ssh_jni_output_context;
+
 static void pi_ssh_jni_zero(void *value, size_t length)
 {
     volatile unsigned char *bytes = (volatile unsigned char *)value;
@@ -69,6 +75,43 @@ static void pi_ssh_jni_free_bytes(pi_ssh_jni_bytes *value)
         free(value->value);
     }
     memset(value, 0, sizeof(*value));
+}
+
+static int pi_ssh_jni_forward_command_output(void *opaque_context,
+                                             int32_t stream,
+                                             const uint8_t *data,
+                                             size_t size)
+{
+    pi_ssh_jni_output_context *context =
+        (pi_ssh_jni_output_context *)opaque_context;
+    jbyteArray chunk;
+
+    if (context == NULL || context->environment == NULL ||
+        context->listener == NULL || context->method == NULL || size > INT_MAX) {
+        return -1;
+    }
+    chunk = (*context->environment)->NewByteArray(context->environment,
+                                                  (jsize)size);
+    if (chunk == NULL) {
+        return -1;
+    }
+    if (size > 0) {
+        (*context->environment)->SetByteArrayRegion(
+            context->environment,
+            chunk,
+            0,
+            (jsize)size,
+            (const jbyte *)data);
+    }
+    if (!(*context->environment)->ExceptionCheck(context->environment)) {
+        (*context->environment)->CallVoidMethod(context->environment,
+                                                context->listener,
+                                                context->method,
+                                                (jint)stream,
+                                                chunk);
+    }
+    (*context->environment)->DeleteLocalRef(context->environment, chunk);
+    return (*context->environment)->ExceptionCheck(context->environment) ? -1 : 0;
 }
 
 static void pi_ssh_jni_write_error(JNIEnv *environment,
@@ -349,6 +392,7 @@ Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute(
     jint connect_timeout_ms,
     jint command_timeout_ms,
     jint max_output_bytes,
+    jobject output_listener,
     jintArray exit_status,
     jintArray error_code,
     jobjectArray error_strings)
@@ -357,12 +401,15 @@ Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute(
     pi_ssh_command_config config;
     pi_ssh_command_result result;
     pi_ssh_error error;
+    pi_ssh_jni_output_context output_context;
     jobjectArray output = NULL;
+    jclass output_listener_class = NULL;
     bool copied;
     size_t index;
 
     (void)receiver;
     memset(values, 0, sizeof(values));
+    memset(&output_context, 0, sizeof(output_context));
     pi_ssh_command_result_init(&result);
     copied = pi_ssh_jni_copy_bytes(environment, ssh_host, true, &values[0]) &&
              pi_ssh_jni_copy_bytes(environment, username, true, &values[1]) &&
@@ -407,11 +454,38 @@ Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute(
                                   ? (size_t)max_output_bytes
                                   : PI_SSH_DEFAULT_MAX_OUTPUT_BYTES;
 
-    if (pi_ssh_command_execute(&config, &result, &error) != 0) {
-        pi_ssh_jni_write_error(environment,
-                               &error,
-                               error_code,
-                               error_strings);
+    if (output_listener != NULL) {
+        output_listener_class =
+            (*environment)->GetObjectClass(environment, output_listener);
+        if (output_listener_class == NULL) {
+            goto cleanup;
+        }
+        output_context.method =
+            (*environment)->GetMethodID(environment,
+                                        output_listener_class,
+                                        "onOutput",
+                                        "(I[B)V");
+        (*environment)->DeleteLocalRef(environment, output_listener_class);
+        output_listener_class = NULL;
+        if (output_context.method == NULL) {
+            goto cleanup;
+        }
+        output_context.environment = environment;
+        output_context.listener = output_listener;
+    }
+
+    if (pi_ssh_command_execute_streaming(
+            &config,
+            &result,
+            output_listener == NULL ? NULL : pi_ssh_jni_forward_command_output,
+            output_listener == NULL ? NULL : &output_context,
+            &error) != 0) {
+        if (!(*environment)->ExceptionCheck(environment)) {
+            pi_ssh_jni_write_error(environment,
+                                   &error,
+                                   error_code,
+                                   error_strings);
+        }
         goto cleanup;
     }
     if (exit_status != NULL &&
@@ -428,6 +502,9 @@ Java_io_github_yearsyan_ohpi_ssh_NativeSshBridge_nativeExecute(
     }
 
 cleanup:
+    if (output_listener_class != NULL) {
+        (*environment)->DeleteLocalRef(environment, output_listener_class);
+    }
     pi_ssh_command_result_free(&result);
     for (index = 0; index < sizeof(values) / sizeof(values[0]); ++index) {
         pi_ssh_jni_free_bytes(&values[index]);

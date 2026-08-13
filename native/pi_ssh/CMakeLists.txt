@@ -187,6 +187,7 @@ if(PI_SSH_BUILD_SHARED)
             pi_ssh_key_pair_free
             pi_ssh_key_pair_generate_ed25519
             pi_ssh_command_execute
+            pi_ssh_command_execute_streaming
             pi_ssh_tunnel_start
             pi_ssh_tunnel_local_port
             pi_ssh_tunnel_state

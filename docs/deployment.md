@@ -44,9 +44,13 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 | `OHPI_WORK_DIR` | `$HOME` | 默认工作空间目录（仅首次写入配置） |
 | `OHPI_TOKEN` | 自动生成 | 显式指定 token（覆盖已有 token 文件）；否则保留已有文件，缺失时自动生成 |
 | `OHPI_PI_COMMAND` | 从 PATH 探测 | pi 可执行文件绝对路径 |
+| `OHPI_PI_ENV_PATH` | 空；安装 Pi 时生成 | 服务运行 pi 时使用的稳定 `PATH` |
 | `OHPI_NO_PI_INSTALL` | 空 | 非空时跳过 pi 自动安装（缺 pi 直接报错） |
 | `OHPI_HEALTH_URL` | 由 `OHPI_LISTEN` 推导 | 健康检查地址 |
 | `OHPI_NO_SERVICE` | 空 | 非空时只安装二进制与配置，不注册/启动服务 |
+| `OHPI_REPLACE_CONFIG` | 空 | 非空时重写已有配置；App 首次托管安装用它固定回环监听和运行路径 |
+| `OHPI_REUSE_GATEWAY` | 空 | 非空且已有二进制可用时跳过 Gateway 下载，供 App 离线修复服务定义 |
+| `OHPI_TOKEN_STDIN` | 空 | 从标准输入读取且只接受一行 token；成功输出不回显 token，供 App SSH 自动安装调用 |
 
 ### 与签名部署脚本的区别
 
@@ -55,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 ### Linux 注意
 
 - systemd user manager 未运行时（部分 WSL、容器、无桌面会话的机器），脚本回退为 `nohup` 后台进程，不会随登录自动拉起；需要用户退出后仍全天候运行时，由管理员执行 `loginctl enable-linger <username>`。
-- 日志位于 `~/.local/state/oh-pi-app/log/`（systemd 模式下也可用 `journalctl --user -u ohpi-gateway`）。
+- launchd/nohup 日志位于 `~/.local/state/oh-pi-app/log/`；systemd 模式使用 `journalctl --user -u ohpi-gateway`。
 - 容器内安装建议配合 `OHPI_NO_SERVICE=1` 安装后由容器编排自行管理进程生命周期。
 
 ## macOS LaunchAgent 部署
