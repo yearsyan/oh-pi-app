@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -634,5 +635,52 @@ class MessageListEntryTest {
             "the completed expansion must keep a process in the tail run anchored: " +
                 "collapsed=$collapsedBounds expanded=$expandedBounds",
         )
+    }
+
+    @Test
+    fun longPressOnTallSelectableMarkdownDoesNotRelocateList() = runComposeUiTest {
+        val controller = testController(CoroutineScope(Dispatchers.Default))
+        val firstParagraph = "selectable paragraph 1"
+        val longMarkdown =
+            (1..80).joinToString("\n\n") { index -> "selectable paragraph $index" }
+        controller.items.add(
+            TimelineItem.AssistantItem(key = 1, streaming = false, ts = 1L).also {
+                it.blocks.add(AssistantBlock(BlockKind.Text, text = longMarkdown))
+            },
+        )
+        lateinit var listState: LazyListState
+        setContent {
+            listState = rememberLazyListState()
+            MessageList(
+                controller = controller,
+                bottomPadding = 0.dp,
+                scrollToBottomTick = 0,
+                listStateOverride = listState,
+            )
+        }
+        waitForIdle()
+
+        // Mark the list as user-detached, then place the oversized selectable block at its start.
+        // Without the pointer-contact BringIntoViewSpec, SelectionContainer focus moves this anchor.
+        onRoot().performTouchInput { swipeDown() }
+        waitForIdle()
+        runBlocking { listState.scrollToItem(0) }
+        waitForIdle()
+        onNodeWithText(firstParagraph).assertIsDisplayed()
+
+        var indexBefore = 0
+        var offsetBefore = 0
+        runOnIdle {
+            indexBefore = listState.firstVisibleItemIndex
+            offsetBefore = listState.firstVisibleItemScrollOffset
+        }
+
+        onNodeWithText(firstParagraph).performTouchInput { longClick() }
+        waitForIdle()
+
+        runOnIdle {
+            assertEquals(indexBefore, listState.firstVisibleItemIndex)
+            assertEquals(offsetBefore, listState.firstVisibleItemScrollOffset)
+        }
     }
 }

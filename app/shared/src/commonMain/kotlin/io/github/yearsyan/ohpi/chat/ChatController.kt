@@ -1865,25 +1865,47 @@ class ChatController(
             "start" -> delta.obj("partial")?.arr("content")?.forEachIndexed { i, el ->
                 (el as? JsonObject)?.let { b ->
                     when (b.str("type")) {
-                        "thinking" -> b.str("thinking")?.let { blockAt(item, i, BlockKind.Thinking).text += it }
-                        "text" -> b.str("text")?.let { blockAt(item, i, BlockKind.Text).text += it }
+                        "thinking" -> b.str("thinking")?.let {
+                            blockAt(item, i, BlockKind.Thinking).apply {
+                                text += it
+                                textStreaming = true
+                            }
+                        }
+                        "text" -> b.str("text")?.let {
+                            blockAt(item, i, BlockKind.Text).apply {
+                                text += it
+                                textStreaming = true
+                            }
+                        }
                     }
                 }
             }
-            "text_start" -> blockAt(item, index, BlockKind.Text)
+            "text_start" -> blockAt(item, index, BlockKind.Text).textStreaming = true
             "text_delta" -> {
                 val chunk = delta.strOrEmpty("delta")
-                blockAt(item, index, BlockKind.Text).text += chunk
+                blockAt(item, index, BlockKind.Text).apply {
+                    text += chunk
+                    textStreaming = true
+                }
                 recordOutputChars(chunk.length)
             }
-            "text_end" -> blockAt(item, index, BlockKind.Text).text = delta.strOrEmpty("content")
-            "thinking_start" -> blockAt(item, index, BlockKind.Thinking)
+            "text_end" -> blockAt(item, index, BlockKind.Text).apply {
+                text = delta.strOrEmpty("content")
+                textStreaming = false
+            }
+            "thinking_start" -> blockAt(item, index, BlockKind.Thinking).textStreaming = true
             "thinking_delta" -> {
                 val chunk = delta.strOrEmpty("delta")
-                blockAt(item, index, BlockKind.Thinking).text += chunk
+                blockAt(item, index, BlockKind.Thinking).apply {
+                    text += chunk
+                    textStreaming = true
+                }
                 recordOutputChars(chunk.length)
             }
-            "thinking_end" -> blockAt(item, index, BlockKind.Thinking).text = delta.strOrEmpty("content")
+            "thinking_end" -> blockAt(item, index, BlockKind.Thinking).apply {
+                text = delta.strOrEmpty("content")
+                textStreaming = false
+            }
             "toolcall_start" -> blockAt(item, index, BlockKind.ToolCall)
             "toolcall_delta" -> blockAt(item, index, BlockKind.ToolCall).tool?.let { it.args += delta.strOrEmpty("delta") }
             "toolcall_end" -> blockAt(item, index, BlockKind.ToolCall).tool?.let { t ->
@@ -1904,8 +1926,14 @@ class ChatController(
         (message["content"] as? JsonArray)?.forEachIndexed { i, el ->
             (el as? JsonObject)?.let { b ->
                 when (b.str("type")) {
-                    "thinking" -> blockAt(item, i, BlockKind.Thinking).text = b.strOrEmpty("thinking")
-                    "text" -> blockAt(item, i, BlockKind.Text).text = b.strOrEmpty("text")
+                    "thinking" -> blockAt(item, i, BlockKind.Thinking).apply {
+                        text = b.strOrEmpty("thinking")
+                        textStreaming = false
+                    }
+                    "text" -> blockAt(item, i, BlockKind.Text).apply {
+                        text = b.strOrEmpty("text")
+                        textStreaming = false
+                    }
                     "toolCall" -> {
                         val blk = blockAt(item, i, BlockKind.ToolCall)
                         blk.tool?.let { t ->
@@ -1921,6 +1949,7 @@ class ChatController(
             }
         }
         for (blk in item.blocks) {
+            blk.textStreaming = false
             if (blk.kind == BlockKind.ToolCall && blk.tool?.state == ToolState.Streaming) {
                 blk.tool?.state = ToolState.Done
                 blk.tool?.outputDone = true

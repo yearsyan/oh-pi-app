@@ -79,10 +79,12 @@ class AssistantBlock(
     kind: BlockKind,
     text: String = "",
     tool: ToolCallView? = null,
+    textStreaming: Boolean = false,
 ) {
     var kind by mutableStateOf(kind)
     var text by mutableStateOf(text)
     var tool by mutableStateOf(tool)
+    var textStreaming by mutableStateOf(textStreaming)
 }
 
 sealed class TimelineItem {

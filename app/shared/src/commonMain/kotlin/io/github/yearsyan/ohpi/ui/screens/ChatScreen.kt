@@ -8,7 +8,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -383,7 +387,7 @@ private fun LoadingBar(
     )
 }
 
-@OptIn(FlowPreview::class)
+@OptIn(ExperimentalFoundationApi::class, FlowPreview::class)
 @Composable
 internal fun MessageList(
     controller: ChatController,
@@ -477,6 +481,31 @@ internal fun MessageList(
     // actively streaming, so auto-scrolls are paused during contact and the
     // list catches up once the finger lifts.
     var pointerInContact by remember(controller) { mutableStateOf(false) }
+    val currentPointerInContact = rememberUpdatedState(pointerInContact)
+    val platformBringIntoViewSpec = LocalBringIntoViewSpec.current
+    val messageListBringIntoViewSpec =
+        remember(platformBringIntoViewSpec) {
+            object : BringIntoViewSpec {
+                override fun calculateScrollDistance(
+                    offset: Float,
+                    size: Float,
+                    containerSize: Float,
+                ): Float =
+                    if (currentPointerInContact.value) {
+                        // SelectionContainer requests focus on long-press, and FocusableNode then
+                        // asks the nearest scrollable to bring the entire selectable block into
+                        // view. A Markdown block can be taller than the viewport, so honoring that
+                        // request relocates the conversation even when the pointer never moved.
+                        0f
+                    } else {
+                        platformBringIntoViewSpec.calculateScrollDistance(
+                            offset = offset,
+                            size = size,
+                            containerSize = containerSize,
+                        )
+                    }
+            }
+        }
     var pointerReleaseTick by remember(controller) { mutableIntStateOf(0) }
     // Streaming deltas arrive far more often than one scroll is worth doing:
     // the pacer spaces tail-follow scrolls to at most one per window while
@@ -653,88 +682,90 @@ internal fun MessageList(
             } else {
                 null
             }
-        LazyColumn(
-            state = listState,
-            overscrollEffect = overscrollEffect,
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .nestedScroll(dismissKeyboardOnScroll)
-                    .pointerInput(controller) {
-                        awaitEachGesture {
-                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                            pointerInContact = true
-                            gestureState.keyboardDismissRequested = false
-                            gestureState.tailSignatureAtDown = currentTailSignature
-                            try {
-                                do {
-                                    val event = awaitPointerEvent(PointerEventPass.Initial)
-                                } while (event.changes.fastAny { it.pressed })
-                            } finally {
-                                pointerInContact = false
+        CompositionLocalProvider(LocalBringIntoViewSpec provides messageListBringIntoViewSpec) {
+            LazyColumn(
+                state = listState,
+                overscrollEffect = overscrollEffect,
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .nestedScroll(dismissKeyboardOnScroll)
+                        .pointerInput(controller) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                pointerInContact = true
                                 gestureState.keyboardDismissRequested = false
-                                pointerReleaseTick++
+                                gestureState.tailSignatureAtDown = currentTailSignature
+                                try {
+                                    do {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    } while (event.changes.fastAny { it.pressed })
+                                } finally {
+                                    pointerInContact = false
+                                    gestureState.keyboardDismissRequested = false
+                                    pointerReleaseTick++
+                                }
                             }
-                        }
-                    },
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-            contentPadding =
-                PaddingValues(
-                    start = horizontalInset,
-                    top = 10.dp,
-                    end = horizontalInset,
-                    bottom = bottomPadding + 10.dp,
-                ),
-        ) {
-            items(renderGroups, key = { it.key }) { group ->
-                when (group) {
-                    is TimelineRenderGroup.AssistantRun ->
-                        AssistantRunRow(
-                            items = group.items,
-                            isStreaming =
-                                group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
-                                    (caretUnderLastGroup && group.key == lastGroupKey),
-                            isTailRun = group.key == lastGroupKey,
-                            onProcessDetailsToggled = { expanding, isTailRunProcess ->
-                                val anchorBottom =
-                                    expanding &&
-                                        isTailRunProcess &&
-                                        listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
-                                tailProcessBottomAnchored = anchorBottom
-                                if (anchorBottom) {
-                                    // Close the at-most-16dp gap before the first
-                                    // expansion frame. Later frames use the same
-                                    // bounded compensation from the current anchor.
-                                    listState.compensateVisibleTailToBottom()
+                        },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                contentPadding =
+                    PaddingValues(
+                        start = horizontalInset,
+                        top = 10.dp,
+                        end = horizontalInset,
+                        bottom = bottomPadding + 10.dp,
+                    ),
+            ) {
+                items(renderGroups, key = { it.key }) { group ->
+                    when (group) {
+                        is TimelineRenderGroup.AssistantRun ->
+                            AssistantRunRow(
+                                items = group.items,
+                                isStreaming =
+                                    group.items.any { it is TimelineItem.AssistantItem && it.streaming } ||
+                                        (caretUnderLastGroup && group.key == lastGroupKey),
+                                isTailRun = group.key == lastGroupKey,
+                                onProcessDetailsToggled = { expanding, isTailRunProcess ->
+                                    val anchorBottom =
+                                        expanding &&
+                                            isTailRunProcess &&
+                                            listState.isWithinBottomThreshold(bottomAttachmentThresholdPx)
+                                    tailProcessBottomAnchored = anchorBottom
+                                    if (anchorBottom) {
+                                        // Close the at-most-16dp gap before the first
+                                        // expansion frame. Later frames use the same
+                                        // bounded compensation from the current anchor.
+                                        listState.compensateVisibleTailToBottom()
+                                    }
+                                    // Only an expansion decides whether tail following
+                                    // should continue. Collapsing a bottom-anchored block
+                                    // must preserve the existing follow state; otherwise
+                                    // the next expansion grows down and only snaps back
+                                    // to the bottom after its animation completes.
+                                    if (expanding) userScrolledAway = !anchorBottom
+                                },
+                                onProcessDetailsExpanded = { isTailRunProcess ->
+                                    if (isTailRunProcess && tailProcessBottomAnchored) {
+                                        // Finish on the exact bottom even if the last
+                                        // animation frame and its layout notification race.
+                                        listState.compensateVisibleTailToBottom()
+                                        tailProcessBottomAnchored = false
+                                    }
+                                },
+                                onLoadToolImage = onLoadToolImage,
+                            )
+                        is TimelineRenderGroup.Single -> {
+                            when (val item = group.item) {
+                                is TimelineItem.UserItem -> UserMessageRow(item)
+                                is TimelineItem.StatusItem -> StatusLine(item)
+                                is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> Unit
+                            }
+                            if (caretUnderLastGroup && group.key == lastGroupKey) {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                ) {
+                                    StreamingCaret()
                                 }
-                                // Only an expansion decides whether tail following
-                                // should continue. Collapsing a bottom-anchored block
-                                // must preserve the existing follow state; otherwise
-                                // the next expansion grows down and only snaps back
-                                // to the bottom after its animation completes.
-                                if (expanding) userScrolledAway = !anchorBottom
-                            },
-                            onProcessDetailsExpanded = { isTailRunProcess ->
-                                if (isTailRunProcess && tailProcessBottomAnchored) {
-                                    // Finish on the exact bottom even if the last
-                                    // animation frame and its layout notification race.
-                                    listState.compensateVisibleTailToBottom()
-                                    tailProcessBottomAnchored = false
-                                }
-                            },
-                            onLoadToolImage = onLoadToolImage,
-                        )
-                    is TimelineRenderGroup.Single -> {
-                        when (val item = group.item) {
-                            is TimelineItem.UserItem -> UserMessageRow(item)
-                            is TimelineItem.StatusItem -> StatusLine(item)
-                            is TimelineItem.AssistantItem, is TimelineItem.ToolItem -> Unit
-                        }
-                        if (caretUnderLastGroup && group.key == lastGroupKey) {
-                            Box(
-                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                            ) {
-                                StreamingCaret()
                             }
                         }
                     }

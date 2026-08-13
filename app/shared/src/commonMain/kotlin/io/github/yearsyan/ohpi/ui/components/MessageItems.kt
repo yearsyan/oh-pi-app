@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -117,8 +118,10 @@ import androidx.compose.material.icons.outlined.Terminal
 
 internal const val AGENT_PROCESS_BLOCK_TEST_TAG = "agent-process-block"
 internal const val THINKING_TITLE_MAX_CHARACTERS = 120
+internal const val STREAMING_THINKING_TEXT_TEST_TAG = "streaming-thinking-text"
 
 private const val THINKING_TITLE_ELLIPSIS = '\u2026'
+private const val STREAMING_THINKING_REFRESH_MILLIS = 100L
 
 /**
  * Italic style for process-block chrome (summary header, thinking preview,
@@ -230,7 +233,10 @@ private fun AgentProcessBlock(
                         when {
                             singleSheetDetail is AssistantProcessDetail.Thinking ->
                                 sheetContent =
-                                    ProcessSheetContent.Thinking(singleSheetDetail.block)
+                                    ProcessSheetContent.Thinking(
+                                        block = singleSheetDetail.block,
+                                        textAtOpen = singleSheetDetail.block.text,
+                                    )
                             singleSheetDetail is AssistantProcessDetail.Tool ->
                                 sheetContent =
                                     ProcessSheetContent.Tool(singleSheetDetail.tool)
@@ -290,7 +296,10 @@ private fun AgentProcessBlock(
                                 detail.block,
                                 onClick = {
                                     sheetContent =
-                                        ProcessSheetContent.Thinking(detail.block)
+                                        ProcessSheetContent.Thinking(
+                                            block = detail.block,
+                                            textAtOpen = detail.block.text,
+                                        )
                                 },
                             )
                         is AssistantProcessDetail.Tool ->
@@ -308,7 +317,6 @@ private fun AgentProcessBlock(
     sheetContent?.let { content ->
         ProcessDetailSheet(
             content = content,
-            cacheMarkdown = !isStreaming,
             onDismiss = { sheetContent = null },
             onLoadToolImage = onLoadToolImage,
         )
@@ -317,7 +325,10 @@ private fun AgentProcessBlock(
 
 /** Payload of the process-detail bottom sheet: full thinking text or a full tool call. */
 private sealed interface ProcessSheetContent {
-    data class Thinking(val block: AssistantBlock) : ProcessSheetContent
+    data class Thinking(
+        val block: AssistantBlock,
+        val textAtOpen: String,
+    ) : ProcessSheetContent
 
     data class Tool(val tool: ToolCallView) : ProcessSheetContent
 }
@@ -327,7 +338,6 @@ private sealed interface ProcessSheetContent {
 @Composable
 private fun ProcessDetailSheet(
     content: ProcessSheetContent,
-    cacheMarkdown: Boolean,
     onDismiss: () -> Unit,
     onLoadToolImage: (suspend (String) -> ByteArray)? = null,
 ) {
@@ -340,18 +350,31 @@ private fun ProcessDetailSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = windowHeight * 0.8f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 32.dp),
+        val scrollState = rememberScrollState()
+        Box(
+            Modifier.fillMaxWidth().heightIn(max = windowHeight * 0.8f),
         ) {
-            when (content) {
-                is ProcessSheetContent.Thinking -> ThinkingDetail(content.block, cacheMarkdown)
-                is ProcessSheetContent.Tool -> ToolDetail(content.tool, onLoadToolImage)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 32.dp),
+            ) {
+                when (content) {
+                    is ProcessSheetContent.Thinking ->
+                        ThinkingDetail(
+                            block = content.block,
+                            textAtOpen = content.textAtOpen,
+                            isStreaming = content.block.textStreaming,
+                        )
+                    is ProcessSheetContent.Tool -> ToolDetail(content.tool, onLoadToolImage)
+                }
             }
+            PlatformVerticalScrollbar(
+                scrollState = scrollState,
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            )
         }
     }
 }
@@ -557,20 +580,60 @@ private fun ToolRow(
     }
 }
 
-/** Full thinking content shown in the bottom sheet; thinking is markdown, like visible text. */
+/**
+ * Full thinking content shown in the bottom sheet.
+ *
+ * Streaming deltas can arrive much faster than the display can usefully update. While the block
+ * is live, poll its latest snapshot at a bounded rate and render plain selectable text. This keeps
+ * the composition from observing every delta and avoids reparsing a growing Markdown document for
+ * each token. Once streaming settles, publish the authoritative final text immediately and render
+ * it as cacheable Markdown.
+ */
 @Composable
-private fun ThinkingDetail(block: AssistantBlock, cacheMarkdown: Boolean) {
+internal fun ThinkingDetail(
+    block: AssistantBlock,
+    textAtOpen: String,
+    isStreaming: Boolean,
+) {
+    val throttledText by
+        produceState(
+            initialValue = textAtOpen,
+            key1 = block,
+            key2 = isStreaming,
+        ) {
+            if (!isStreaming) return@produceState
+            while (true) {
+                delay(STREAMING_THINKING_REFRESH_MILLIS)
+                val latest = block.text
+                if (latest != value) value = latest
+            }
+        }
+    // Read the authoritative block state in composition only after it has stopped changing. This
+    // makes the thinking_end transition display the final payload in the same recomposition while
+    // keeping streaming deltas out of the composition's observed snapshot set.
+    val displayedText = if (isStreaming) throttledText else block.text
     Text(
         S.thinking,
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (block.text.isNotBlank()) {
-        MarkdownView(
-            block.text,
-            modifier = Modifier.padding(top = 4.dp),
-            cacheable = cacheMarkdown,
-        )
+    if (displayedText.isNotBlank()) {
+        if (isStreaming) {
+            SelectionContainer(Modifier.padding(top = 4.dp)) {
+                Text(
+                    text = displayedText,
+                    modifier = Modifier.fillMaxWidth().testTag(STREAMING_THINKING_TEXT_TEST_TAG),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                )
+            }
+        } else {
+            MarkdownView(
+                displayedText,
+                modifier = Modifier.padding(top = 4.dp),
+                cacheable = true,
+            )
+        }
     }
 }
 
