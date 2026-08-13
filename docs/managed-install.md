@@ -2,9 +2,11 @@
 
 App 的「自动安装」连接方式只需要远端普通用户的 SSH 登录凭据。首次连接时，App 会识别操作系统与 CPU 架构：macOS/Linux 通过 SSH 在远端拉取并执行仓库的 `scripts/install.sh`，由该脚本下载对应的 `ohpi-gateway` Release 产物并校验 `SHA256SUMS.txt`；Windows 仍由 App 下载、校验后通过 SSH 上传二进制。两条路径都不需要管理员权限。
 
-macOS/Linux 的 Node.js/Pi、Gateway 配置与 launchd/systemd 服务安装均以 `scripts/install.sh` 为唯一实现；Kotlin 只负责探测、快路径、远端脚本启动和最终健康校验。如果 SSH 用户没有可运行的 `pi`，远端脚本会在用户目录安装 Node.js 22 和 `@earendil-works/pi-coding-agent`。Node.js 归档根据官方 `SHASUMS256.txt` 做 SHA-256 校验，Pi 使用官方推荐的 `npm --ignore-scripts` 方式安装；不会调用 `sudo`，也不会修改 shell 启动文件。Windows 继续使用内置 PowerShell 引导逻辑。
+macOS/Linux 的 Node.js/Pi、Gateway 配置与 launchd/systemd 服务安装均以 `scripts/install.sh` 为唯一实现；Kotlin 只负责探测、快路径、远端脚本启动和最终健康校验。如果 SSH 用户没有可运行的 `pi`，远端脚本会在用户目录安装 Node.js 22 和 `@earendil-works/pi-coding-agent`。Node.js 先以官方 `SHASUMS256.txt` 确定版本与 SHA-256，再对官方源与 npmmirror 做短时测速；Pi/npm 也只在镜像版本与官方一致且至少快 20% 时使用镜像。所有镜像都是候选源，失败会回退，也不会改写 `.npmrc`。Pi 仍以 `npm --ignore-scripts` 方式安装；不会调用 `sudo`，也不会修改 shell 启动文件。Windows 继续使用内置 PowerShell 引导逻辑。
 
 App 生成的 token 作为 SSH 命令的标准输入交给脚本，不放入远端命令行或环境；下载命令也与该标准输入断开。脚本写入权限受限的 token 文件，App 调用模式下不会把 token 回显到标准输出。App 优先从与自身版本一致的 `v*` tag 拉取脚本；尚无 tag 的开发构建可回退到 `main`，但两者都必须匹配 App 内固定的 SHA-256，下载失败时也只允许复用校验一致的缓存 `~/.cache/oh-pi-app/install.sh`。首次安装会重写托管配置以固定远端 `127.0.0.1:18080`；使用同一 token 且 Pi 仍可用时，修复已有服务会保留运行配置并复用已安装的 Gateway 二进制。
+
+App 会在执行脚本时开启专用进度协议。脚本仅在这个模式下输出独立的机器可读事件行，分别表示安装 Pi、下载 Gateway、写入 Gateway 与启动服务。App 对 SSH stdout 做跨分片按行解码，把事件转为进度状态，其他 stdout 及全部 stderr 仍原样实时显示；普通 `curl | sh` 不会输出协议标记。
 
 安装页会在远端命令仍运行时逐行显示脚本 stdout/stderr。日志仅保留最近 300 行，移除 ANSI 控制序列并对当前连接 token 与较长 SSH 密码做防御性脱敏；命令结束后的完整有界输出仍用于错误诊断。
 

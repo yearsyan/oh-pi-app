@@ -18,7 +18,9 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 4. 注册用户级服务并启动：macOS 使用 LaunchAgent（`~/Library/LaunchAgents/io.github.yearsyan.ohpi.gateway.plist`），Linux 优先使用 systemd user unit（`~/.config/systemd/user/ohpi-gateway.service`），systemd user manager 不可用时回退为 `nohup` 后台进程（PID 文件 `~/.local/state/oh-pi-app/gateway.pid`）；
 5. 轮询 `http://127.0.0.1:18080/healthz` 确认服务可用后打印 token、监听地址与目录。
 
-前提是 `pi` 已安装且在 `PATH` 中（脚本会解析其绝对路径，fnm 安装会优先稳定路径）。网关启动阶段就需要定位 pi，因此未检测到 `pi` 时脚本会自动安装（与 App SSH 自动安装模式同一套方案）：优先复用系统已兼容的 Node（≥ 22.19）；否则按官方 `SHASUMS256.txt` 校验后下载托管 Node.js 22 到 `~/.local/share/oh-pi-app/node/`，再以 `npm install -g --ignore-scripts --prefix ~/.local` 安装 `pi`（`~/.local/bin/pi`）。全程不调用 sudo，也不修改 shell 启动文件；托管 Node 场景会把 `OHPI_PI_ENV_PATH` 写入配置，保证 pi 子进程能找到 node。设置 `OHPI_NO_PI_INSTALL=1` 可跳过自动安装（缺 pi 时直接报错）。网关只监听回环地址，不涉及 TLS。
+前提是 `pi` 已安装且在 `PATH` 中（脚本会解析其绝对路径，fnm 安装会优先稳定路径）。网关启动阶段就需要定位 pi，因此未检测到 `pi` 时脚本会自动安装（与 App SSH 自动安装模式同一套方案）：优先复用系统已兼容的 Node（≥ 22.19）；否则以官方 `SHASUMS256.txt` 解析精确版本，确认 npmmirror 的同版本 SHA-256 与官方一致，再对两个 Node 归档做短时小流量测速。只有镜像吞吐量至少高 20% 才优先使用，下载或校验失败会回退到另一个源。npm/pi 会比较官方 registry 与 npmmirror 上同一 `latest` 版本的元数据响应时间，仅在镜像至少快 20% 时对当次 npm 命令使用 `--registry`，不修改用户的 `.npmrc`。
+
+托管 Node.js 安装在 `~/.local/share/oh-pi-app/node/`，`pi` 通过 `npm install -g --ignore-scripts --prefix ~/.local` 安装到 `~/.local/bin/pi`。全程不调用 sudo，也不修改 shell 启动文件；托管 Node 场景会把 `OHPI_PI_ENV_PATH` 写入配置，保证 pi 子进程能找到 node。设置 `OHPI_NO_PI_INSTALL=1` 可跳过自动安装（缺 pi 时直接报错）。网关只监听回环地址，不涉及 TLS。
 
 重复执行同一命令即升级：下载新版本、替换二进制并重启服务，token、配置与 session 数据全部保留。
 
@@ -46,6 +48,9 @@ curl -fsSL https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/ins
 | `OHPI_PI_COMMAND` | 从 PATH 探测 | pi 可执行文件绝对路径 |
 | `OHPI_PI_ENV_PATH` | 空；安装 Pi 时生成 | 服务运行 pi 时使用的稳定 `PATH` |
 | `OHPI_NO_PI_INSTALL` | 空 | 非空时跳过 pi 自动安装（缺 pi 直接报错） |
+| `OHPI_DISABLE_CHINA_MIRRORS` | 空 | 非空时跳过镜像测速，Node/npm 只使用原始或用户已配置的源 |
+| `OHPI_NODE_MIRROR` | `https://npmmirror.com/mirrors/node` | 候选 Node.js 镜像根地址；仍需同版本校验一致并通过测速 |
+| `OHPI_NPM_REGISTRY_MIRROR` | `https://registry.npmmirror.com` | 候选 npm registry；仍需 `latest` 版本一致并通过测速 |
 | `OHPI_HEALTH_URL` | 由 `OHPI_LISTEN` 推导 | 健康检查地址 |
 | `OHPI_NO_SERVICE` | 空 | 非空时只安装二进制与配置，不注册/启动服务 |
 | `OHPI_REPLACE_CONFIG` | 空 | 非空时重写已有配置；App 首次托管安装用它固定回环监听和运行路径 |

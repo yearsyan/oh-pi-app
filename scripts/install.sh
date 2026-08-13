@@ -13,7 +13,8 @@
 #   5. 轮询 /healthz 验证服务可用。
 #
 # 未检测到 pi 时自动安装 Node.js 22 与 pi（~/.local/bin/pi）：优先复用系统已兼容的
-# Node，否则按官方 SHASUMS256.txt 校验后下载托管 Node 到 ~/.local/share/oh-pi-app/node/，
+# Node，否则对官方源与 npmmirror 做短时测速，只有镜像至少快 20% 且其同版本
+# SHA-256 与官方一致时才使用镜像。npm/pi 同样先比较同一 latest 版本的响应时间。
 # 再以 npm --ignore-scripts 安装；全程不调用 sudo，也不修改 shell 启动文件。
 # 设置 OHPI_NO_PI_INSTALL=1 可跳过自动安装（缺 pi 时直接报错）。
 #
@@ -32,6 +33,9 @@
 #   OHPI_PI_COMMAND   pi 可执行文件绝对路径（默认从 PATH 探测）
 #   OHPI_PI_ENV_PATH  运行 pi 所需的稳定 PATH（安装 Pi 时自动生成）
 #   OHPI_NO_PI_INSTALL 非空时跳过 pi 自动安装（缺 pi 直接报错）
+#   OHPI_DISABLE_CHINA_MIRRORS 非空时跳过中国镜像测速，只使用原始下载源
+#   OHPI_NODE_MIRROR Node.js 镜像根地址（默认 https://npmmirror.com/mirrors/node）
+#   OHPI_NPM_REGISTRY_MIRROR npm 镜像地址（默认 https://registry.npmmirror.com）
 #   OHPI_HEALTH_URL   健康检查地址（默认由 OHPI_LISTEN 推导）
 #   OHPI_NO_SERVICE   非空时只安装二进制与配置，不注册/启动服务
 #   OHPI_REPLACE_CONFIG 非空时重写已有配置（App 托管安装使用）
@@ -64,6 +68,16 @@ unit_path=$units_dir/$systemd_unit
 
 note() {
 	printf '==> %s\n' "$*"
+}
+
+# App 托管安装使用的机器可读事件。普通 curl | sh 安装不会输出这些标记。
+progress_event() {
+	[ "${OHPI_PROGRESS_PROTOCOL-}" = 1 ] || return 0
+	case $1 in
+		installing_pi | downloading_gateway | installing_gateway | starting_gateway) ;;
+		*) die "unknown installation progress event: $1" ;;
+	esac
+	printf '@@OHPI_PROGRESS:%s@@\n' "$1"
 }
 
 die() {
@@ -126,6 +140,84 @@ compute_sha256() {
 	fi
 }
 
+format_download_rate() {
+	awk -v bytes="$1" 'BEGIN {
+		if (bytes >= 1048576) printf "%.1f MiB/s", bytes / 1048576
+		else printf "%.0f KiB/s", bytes / 1024
+	}'
+}
+
+format_latency() {
+	awk -v micros="$1" 'BEGIN { printf "%.0f ms", micros / 1000 }'
+}
+
+# Downloads at most a short sample window. Some CDNs ignore Range, so the
+# time and rate caps also bound probe traffic. A timed-out request still yields
+# a useful speed when it transferred at least 32 KiB.
+probe_download_speed() {
+	probe_url=$1
+	probe_result=
+	probe_result=$(curl -sSL --range 0-524287 --connect-timeout 4 --max-time 3 \
+		--limit-rate 2M -o /dev/null \
+		-w '%{http_code} %{size_download} %{speed_download}' "$probe_url" 2>/dev/null) || true
+	set -- $probe_result
+	[ "$#" -eq 3 ] || return 1
+	case $1 in 200 | 206) ;; *) return 1 ;; esac
+	probe_size=$(awk -v value="$2" 'BEGIN { printf "%.0f", value }')
+	probe_speed=$(awk -v value="$3" 'BEGIN { printf "%.0f", value }')
+	case $probe_size:$probe_speed in
+		*[!0-9:]* | :* | *:) return 1 ;;
+	esac
+	[ "$probe_size" -ge 32768 ] && [ "$probe_speed" -gt 0 ] || return 1
+	printf '%s\n' "$probe_speed"
+}
+
+fetch_registry_metadata() {
+	registry=$1
+	destination=$2
+	registry_url=${registry%/}/@earendil-works%2Fpi-coding-agent/latest
+	registry_result=
+	registry_result=$(curl -sSL --connect-timeout 4 --max-time 8 -o "$destination" \
+		-w '%{http_code} %{time_total}' "$registry_url" 2>/dev/null) || return 1
+	set -- $registry_result
+	[ "$#" -eq 2 ] && [ "$1" = 200 ] || return 1
+	registry_latency=$(awk -v value="$2" 'BEGIN { printf "%.0f", value * 1000000 }')
+	case $registry_latency in '' | *[!0-9]*) return 1 ;; esac
+	[ "$registry_latency" -gt 0 ] || return 1
+	printf '%s\n' "$registry_latency"
+}
+
+registry_package_version() {
+	metadata=$1
+	"$node_bin/node" -e '
+		const fs = require("fs");
+		const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version;
+		if (typeof value !== "string" || !value) process.exit(1);
+		process.stdout.write(value);
+	' "$metadata"
+}
+
+download_verified_node() {
+	download_base=$1
+	download_label=$2
+	download_file=$3
+	download_destination=$4
+	download_expected=$5
+	note "Downloading Node.js $node_version from $download_label"
+	rm -f "$download_destination"
+	if ! curl -fsSL "$download_base/$download_file" -o "$download_destination"; then
+		rm -f "$download_destination"
+		return 1
+	fi
+	download_actual=$(compute_sha256 "$download_destination")
+	if [ "$download_actual" != "$download_expected" ]; then
+		printf 'warning: Node.js checksum verification failed for %s; trying another source\n' \
+			"$download_label" >&2
+		rm -f "$download_destination"
+		return 1
+	fi
+}
+
 generate_token() {
 	if command -v openssl >/dev/null 2>&1; then
 		openssl rand -hex 32
@@ -181,6 +273,8 @@ install_pi() {
 
 	node_bin=
 	npm_command=
+	tmp_node=$tmp/pi-node
+	mkdir -p "$tmp_node"
 	# 系统已有兼容 Node（>= 22.19）时直接复用，否则下载托管 Node。
 	if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
 		node -e 'const [major, minor, patch] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1)' >/dev/null 2>&1; then
@@ -196,22 +290,87 @@ install_pi() {
 			amd64) node_arch=x64 ;;
 			arm64) node_arch=arm64 ;;
 		esac
-		node_dist=https://nodejs.org/dist/latest-v22.x
+		node_official_root=https://nodejs.org/dist
+		node_mirror_root=${OHPI_NODE_MIRROR:-https://npmmirror.com/mirrors/node}
+		node_latest=latest-v22.x
 		node_root=$home/.local/share/oh-pi-app/node
-		tmp_node=$tmp/pi-node
-		mkdir -p "$tmp_node"
-		curl -fsSL "$node_dist/SHASUMS256.txt" -o "$tmp_node/SHASUMS256.txt"
+		note "Resolving the latest compatible Node.js 22 release"
+		if curl -fsSL --connect-timeout 5 --max-time 20 \
+			"$node_official_root/$node_latest/SHASUMS256.txt" -o "$tmp_node/SHASUMS256.txt"; then
+			node_metadata_source="official Node.js"
+		elif [ -z "${OHPI_DISABLE_CHINA_MIRRORS-}" ] && \
+			curl -fsSL --connect-timeout 5 --max-time 20 \
+				"$node_mirror_root/$node_latest/SHASUMS256.txt" -o "$tmp_node/SHASUMS256.txt"; then
+			node_metadata_source=npmmirror
+			note "Official Node.js metadata was unavailable; using npmmirror metadata"
+		else
+			die "could not download Node.js 22 release metadata"
+		fi
 		node_file=$(awk -v suffix="-$node_platform-$node_arch.tar.gz" '
 			index($2, "node-v22.") == 1 && substr($2, length($2) - length(suffix) + 1) == suffix { print $2; exit }
 		' "$tmp_node/SHASUMS256.txt")
 		case $node_file in
 			node-v22.*-$node_platform-$node_arch.tar.gz) ;;
-			*) die "could not resolve a compatible Node.js archive from $node_dist/SHASUMS256.txt" ;;
+			*) die "could not resolve a compatible Node.js archive from $node_metadata_source metadata" ;;
 		esac
 		expected=$(awk -v file="$node_file" '$2 == file { print $1; exit }' "$tmp_node/SHASUMS256.txt")
-		curl -fsSL "$node_dist/$node_file" -o "$tmp_node/$node_file"
-		actual=$(compute_sha256 "$tmp_node/$node_file")
-		[ -n "$expected" ] && [ "$actual" = "$expected" ] || die "Node.js checksum verification failed"
+		case $expected in '' | *[!0-9a-f]*) die "Node.js metadata did not contain a valid SHA-256 checksum" ;; esac
+		[ "${#expected}" -eq 64 ] || die "Node.js metadata did not contain a valid SHA-256 checksum"
+		node_version=${node_file#node-}
+		node_version=${node_version%-$node_platform-$node_arch.tar.gz}
+		case $node_version in v22.*) ;; *) die "unexpected Node.js version: $node_version" ;; esac
+		node_official_base=$node_official_root/$node_version
+		node_mirror_base=$node_mirror_root/$node_version
+		node_mirror_available=false
+		if [ -z "${OHPI_DISABLE_CHINA_MIRRORS-}" ] && \
+			curl -fsSL --connect-timeout 4 --max-time 12 \
+				"$node_mirror_base/SHASUMS256.txt" -o "$tmp_node/SHASUMS256.mirror.txt"; then
+			mirror_expected=$(awk -v file="$node_file" '$2 == file { print $1; exit }' \
+				"$tmp_node/SHASUMS256.mirror.txt")
+			if [ "$mirror_expected" = "$expected" ]; then
+				node_mirror_available=true
+			else
+				note "npmmirror has not synchronized the verified Node.js $node_version archive"
+			fi
+		fi
+
+		node_primary_base=$node_official_base
+		node_primary_label="official Node.js"
+		node_secondary_base=
+		node_secondary_label=
+		if [ "$node_mirror_available" = true ]; then
+			official_speed=
+			mirror_speed=
+			if measured=$(probe_download_speed "$node_official_base/$node_file"); then
+				official_speed=$measured
+			fi
+			if measured=$(probe_download_speed "$node_mirror_base/$node_file"); then
+				mirror_speed=$measured
+			fi
+			if [ -n "$official_speed" ] && [ -n "$mirror_speed" ]; then
+				note "Node.js speed test: official $(format_download_rate "$official_speed"), npmmirror $(format_download_rate "$mirror_speed")"
+			fi
+			if [ -z "$official_speed" ] && [ -n "$mirror_speed" ] || \
+				{ [ -n "$official_speed" ] && [ -n "$mirror_speed" ] && \
+					awk -v mirror="$mirror_speed" -v official="$official_speed" \
+						'BEGIN { exit !(mirror >= official * 1.2) }'; }; then
+				node_primary_base=$node_mirror_base
+				node_primary_label=npmmirror
+				node_secondary_base=$node_official_base
+				node_secondary_label="official Node.js"
+			else
+				node_secondary_base=$node_mirror_base
+				node_secondary_label=npmmirror
+			fi
+		fi
+		if ! download_verified_node "$node_primary_base" "$node_primary_label" "$node_file" \
+			"$tmp_node/$node_file" "$expected"; then
+			[ -n "$node_secondary_base" ] || die "could not download the verified Node.js $node_version archive"
+			note "$node_primary_label failed; falling back to $node_secondary_label"
+			download_verified_node "$node_secondary_base" "$node_secondary_label" "$node_file" \
+				"$tmp_node/$node_file" "$expected" || \
+				die "could not download the verified Node.js $node_version archive"
+		fi
 		tar -xzf "$tmp_node/$node_file" -C "$tmp_node"
 		node_dir=${node_file%.tar.gz}
 		case $node_dir in
@@ -233,21 +392,102 @@ install_pi() {
 	PATH="$node_bin:$home/.local/bin:$PATH"
 	export PATH
 	mkdir -p "$home/.local"
-	note "Installing pi via npm (this can take a minute)"
-	"$npm_command" install -g --ignore-scripts --prefix "$home/.local" --no-fund --no-audit '@earendil-works/pi-coding-agent'
+	pi_package='@earendil-works/pi-coding-agent'
+	npm_official_registry=https://registry.npmjs.org
+	npm_mirror_registry=${OHPI_NPM_REGISTRY_MIRROR:-https://registry.npmmirror.com}
+	npm_mirror_registry=${npm_mirror_registry%/}
+	npm_configured_registry=$("$npm_command" config get registry 2>/dev/null || true)
+	npm_configured_registry=${npm_configured_registry%/}
+	case $npm_configured_registry in '' | undefined | null) npm_configured_registry=$npm_official_registry ;; esac
+	npm_primary_registry=$npm_configured_registry
+	npm_primary_label="configured npm registry"
+	npm_secondary_registry=
+	npm_secondary_label=
+	pi_spec=$pi_package
+
+	case $npm_configured_registry in
+		https://registry.npmjs.org | http://registry.npmjs.org)
+			npm_primary_label="official npm registry"
+			if [ -z "${OHPI_DISABLE_CHINA_MIRRORS-}" ]; then
+				official_latency=
+				mirror_latency=
+				official_pi_version=
+				mirror_pi_version=
+				if measured=$(fetch_registry_metadata "$npm_official_registry" "$tmp_node/npm-official.json"); then
+					official_latency=$measured
+					official_pi_version=$(registry_package_version "$tmp_node/npm-official.json" 2>/dev/null || true)
+				fi
+				if measured=$(fetch_registry_metadata "$npm_mirror_registry" "$tmp_node/npm-mirror.json"); then
+					mirror_latency=$measured
+					mirror_pi_version=$(registry_package_version "$tmp_node/npm-mirror.json" 2>/dev/null || true)
+				fi
+				if [ -n "$official_latency" ] && [ -n "$mirror_latency" ]; then
+					note "npm registry speed test: official $(format_latency "$official_latency"), npmmirror $(format_latency "$mirror_latency")"
+				fi
+				if [ -n "$official_pi_version" ]; then
+					pi_spec=$pi_package@$official_pi_version
+				fi
+				if [ -n "$mirror_pi_version" ] && \
+					{ [ -z "$official_pi_version" ] || [ "$mirror_pi_version" = "$official_pi_version" ]; }; then
+					npm_secondary_registry=$npm_mirror_registry
+					npm_secondary_label=npmmirror
+					if [ -z "$official_latency" ] && [ -n "$mirror_latency" ] || \
+						{ [ -n "$official_latency" ] && [ -n "$mirror_latency" ] && \
+							awk -v mirror="$mirror_latency" -v official="$official_latency" \
+								'BEGIN { exit !(mirror * 1.2 <= official) }'; }; then
+						npm_primary_registry=$npm_mirror_registry
+						npm_primary_label=npmmirror
+						npm_secondary_registry=$npm_official_registry
+						npm_secondary_label="official npm registry"
+						[ -n "$official_pi_version" ] || pi_spec=$pi_package@$mirror_pi_version
+					fi
+				elif [ -n "$official_pi_version" ] && [ -n "$mirror_pi_version" ]; then
+					note "npmmirror pi version $mirror_pi_version differs from official $official_pi_version; using official npm registry"
+				fi
+			fi
+			;;
+		"$npm_mirror_registry")
+			npm_primary_label=npmmirror
+			npm_secondary_registry=$npm_official_registry
+			npm_secondary_label="official npm registry"
+			;;
+	esac
+
+	note "Installing pi via npm from $npm_primary_label (this can take a minute)"
+	if "$npm_command" install -g --ignore-scripts --prefix "$home/.local" --no-fund --no-audit \
+		--registry="$npm_primary_registry" "$pi_spec"; then
+		:
+	elif [ -n "$npm_secondary_registry" ]; then
+		note "$npm_primary_label failed; falling back to $npm_secondary_label"
+		"$npm_command" install -g --ignore-scripts --prefix "$home/.local" --no-fund --no-audit \
+			--registry="$npm_secondary_registry" "$pi_spec"
+	else
+		die "pi installation failed from $npm_primary_label"
+	fi
 }
 
 ensure_pi() {
 	[ -n "$pi_command" ] && return
 	# 上次自动安装的托管 pi 已存在（不在 PATH 中）时直接复用。
-	if [ -x "$home/.local/bin/pi" ] && "$home/.local/bin/pi" --version >/dev/null 2>&1; then
-		pi_command=$home/.local/bin/pi
-		note "Using pi: $pi_command"
-		return
+	local_pi=$home/.local/bin/pi
+	managed_node_bin=$home/.local/share/oh-pi-app/node/current/bin
+	if [ -x "$local_pi" ]; then
+		if [ -x "$managed_node_bin/node" ] &&
+			PATH="$managed_node_bin:$home/.local/bin:$PATH" "$local_pi" --version >/dev/null 2>&1; then
+			pi_command=$local_pi
+			pi_env_path=$managed_node_bin:$home/.local/bin${pi_env_path:+:$pi_env_path}
+			note "Using managed pi: $pi_command"
+			return
+		elif "$local_pi" --version >/dev/null 2>&1; then
+			pi_command=$local_pi
+			note "Using pi: $pi_command"
+			return
+		fi
 	fi
 	if [ -n "${OHPI_NO_PI_INSTALL-}" ]; then
 		die "pi was not found in PATH; install it (npm i -g @earendil-works/pi-coding-agent) or set OHPI_PI_COMMAND to its absolute path"
 	fi
+	progress_event installing_pi
 	note "pi was not found; installing Node.js 22 and pi (no sudo, no shell profile changes)"
 	install_pi
 	pi_command=$home/.local/bin/pi
@@ -574,10 +814,12 @@ cmd_install() {
 		"$binary_path" --version >/dev/null 2>&1; then
 		note "Reusing installed gateway binary"
 	else
+		progress_event downloading_gateway
 		resolve_version
 		download_and_verify "$tmp"
 	fi
 
+	progress_event installing_gateway
 	note "Preparing installation directories"
 	mkdir -p "$binary_dir" "$libexec_dir" "$config_dir" "$data_dir" "$log_dir"
 
@@ -600,6 +842,7 @@ cmd_install() {
 		return
 	fi
 
+	progress_event starting_gateway
 	case $os in
 		darwin) start_macos_service ;;
 		linux) start_linux_service ;;

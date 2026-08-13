@@ -133,6 +133,7 @@ class ManagedGatewayTest {
         assertTrue(unix.contains("127.0.0.1:18080"))
         assertTrue(unix.contains("OHPI_NO_SERVICE="))
         assertTrue(unix.contains("OHPI_REPLACE_CONFIG=1"))
+        assertTrue(unix.contains("OHPI_PROGRESS_PROTOCOL=1"))
         assertTrue(unix.contains("OHPI_TOKEN_STDIN=1"))
         assertEquals("'pi'\"'\"'s'", posixShellQuote("pi's"))
         assertTrue(!unix.contains("nodejs.org"))
@@ -178,6 +179,7 @@ class ManagedGatewayTest {
         var remoteInstallRuns = 0
         var artifactDownloads = 0
         val streamedLines = mutableListOf<String>()
+        val progress = mutableListOf<ManagedInstallStep>()
         val profile =
             ServerProfile(
                 id = "bootstrap",
@@ -222,7 +224,23 @@ class ManagedGatewayTest {
                         onOutput(
                             SshCommandOutput(
                                 SshCommandStream.Stdout,
-                                "==> Downloading gateway\n".encodeToByteArray(),
+                                "@@OHPI_PROGRESS:installing_pi@@\n".encodeToByteArray(),
+                            ),
+                        )
+                        onOutput(
+                            SshCommandOutput(
+                                SshCommandStream.Stdout,
+                                "@@OHPI_PROGRESS:downloading_".encodeToByteArray(),
+                            ),
+                        )
+                        onOutput(
+                            SshCommandOutput(
+                                SshCommandStream.Stdout,
+                                (
+                                    "gateway@@\n==> Downloading gateway\n" +
+                                        "@@OHPI_PROGRESS:installing_gateway@@\n" +
+                                        "@@OHPI_PROGRESS:starting_gateway@@\n"
+                                ).encodeToByteArray(),
                             ),
                         )
                     }
@@ -233,6 +251,7 @@ class ManagedGatewayTest {
                     ManagedGatewayArtifact("1.10.5", "gateway", byteArrayOf(1, 2, 3))
                 },
                 onOutput = { output -> streamedLines += output.bytes.decodeToString() },
+                onProgress = progress::add,
                 unixInstallerUrl = TestUnixInstallerUrl,
             )
 
@@ -241,6 +260,16 @@ class ManagedGatewayTest {
         assertEquals(1, remoteInstallRuns)
         assertEquals(0, artifactDownloads)
         assertEquals(listOf("==> Downloading gateway\n"), streamedLines)
+        assertEquals(
+            listOf(
+                ManagedInstallStep.DetectingSystem,
+                ManagedInstallStep.InstallingPi,
+                ManagedInstallStep.DownloadingGateway,
+                ManagedInstallStep.InstallingGateway,
+                ManagedInstallStep.StartingGateway,
+            ),
+            progress.distinct(),
+        )
         assertTrue(installed)
     }
 

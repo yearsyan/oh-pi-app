@@ -28,7 +28,7 @@ private const val ManagedSystemdUnit = "ohpi-gateway.service"
 private const val ReleaseRepository = "yearsyan/oh-pi-app"
 private const val PiNpmPackage = "@earendil-works/pi-coding-agent"
 internal const val UnixManagedInstallerSha256 =
-    "1e71b6b56b20594aabc0ff175570ab33606152c7dfde56b76be017d6a14f577f"
+    "f3a98be625088f81fc12d96759e842cd5fa00f2aab83fdb5de0d725957371ca4"
 private const val UnixManagedInstallerFallbackUrl =
     "https://raw.githubusercontent.com/yearsyan/oh-pi-app/main/scripts/install.sh"
 private const val PowerShellStdin =
@@ -324,14 +324,13 @@ internal class ManagedGatewayProvisioner(
             provision(environment, artifact, replaceUnixConfig = false)
         } else {
             // The canonical installer owns its internal Node/Pi, download,
-            // and service phases. Its output is forwarded while it runs.
+            // and service phases. Structured events from its streamed output
+            // advance the UI at the exact phase boundaries.
             onProgress(
                 if (needsPi) ManagedInstallStep.InstallingPi
                 else ManagedInstallStep.DownloadingGateway,
             )
             provision(environment, artifact = null, replaceUnixConfig)
-            onProgress(ManagedInstallStep.DownloadingGateway)
-            onProgress(ManagedInstallStep.InstallingGateway)
         }
 
         onProgress(ManagedInstallStep.StartingGateway)
@@ -422,20 +421,26 @@ internal class ManagedGatewayProvisioner(
     ) {
         if (environment.os != ManagedHostOs.Windows) {
             check(artifact == null)
-            runChecked(
-                unixManagedInstallCommand(
-                    environment = environment,
-                    installerUrl = unixInstallerUrl ?: managedUnixInstallerUrl(),
-                    fallbackInstallerUrl = unixInstallerFallbackUrl,
-                    installerSha256 = unixInstallerSha256,
-                    replaceConfig = replaceUnixConfig,
-                    reuseGateway = environment.installed,
-                ),
-                (profile.token + "\n").encodeToByteArray(),
-                "run remote installer",
-                timeoutMillis = 600_000,
-                streamOutput = true,
-            )
+            val progressDecoder = ManagedInstallProgressDecoder(onProgress, onOutput)
+            try {
+                runChecked(
+                    unixManagedInstallCommand(
+                        environment = environment,
+                        installerUrl = unixInstallerUrl ?: managedUnixInstallerUrl(),
+                        fallbackInstallerUrl = unixInstallerFallbackUrl,
+                        installerSha256 = unixInstallerSha256,
+                        replaceConfig = replaceUnixConfig,
+                        reuseGateway = environment.installed,
+                    ),
+                    (profile.token + "\n").encodeToByteArray(),
+                    "run remote installer",
+                    timeoutMillis = 600_000,
+                    streamOutput = true,
+                    onStreamOutput = progressDecoder::append,
+                )
+            } finally {
+                progressDecoder.flush()
+            }
             return
         }
 
@@ -470,10 +475,11 @@ internal class ManagedGatewayProvisioner(
         operation: String,
         timeoutMillis: Int = 60_000,
         streamOutput: Boolean = false,
+        onStreamOutput: ((SshCommandOutput) -> Unit)? = null,
     ): SshCommandResult {
         val result =
             if (streamOutput) {
-                executeStreaming(command, stdin, timeoutMillis, onOutput)
+                executeStreaming(command, stdin, timeoutMillis, onStreamOutput ?: onOutput)
             } else {
                 execute(command, stdin, timeoutMillis)
             }
@@ -617,6 +623,7 @@ internal fun unixManagedInstallCommand(
             "OHPI_PI_ENV_PATH=${posixShellQuote(environment.piEnvironmentPath)} " +
             "OHPI_REPLACE_CONFIG=$replaceConfigValue " +
             "OHPI_REUSE_GATEWAY=$reuseGatewayValue " +
+            "OHPI_PROGRESS_PROTOCOL=1 " +
             "OHPI_TOKEN_STDIN=1 sh \"\$cached\""
     return "sh -c ${posixShellQuote(body)}"
 }
