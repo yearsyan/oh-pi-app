@@ -5,7 +5,9 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yearsyan/oh-pi-app/internal/scheduledtask"
 )
@@ -13,6 +15,7 @@ import (
 const (
 	scheduledTaskRequestLimit      = 256 << 10
 	scheduledTaskEventRequestLimit = 256 << 10
+	scheduledTaskEventMaximumDelay = 24 * time.Hour
 )
 
 type scheduledTaskListResponse struct {
@@ -169,11 +172,15 @@ func (g *Gateway) handleScheduledTaskEvent(writer http.ResponseWriter, request *
 		writeHTTPError(writer, http.StatusNotFound, "scheduled_task_event_not_found", "event trigger does not exist")
 		return
 	}
+	delay, ok := decodeScheduledTaskEventDelay(writer, request)
+	if !ok {
+		return
+	}
 	eventData, ok := decodeScheduledTaskEvent(writer, request)
 	if !ok {
 		return
 	}
-	_, run, err := g.scheduledTasks.TriggerEvent(eventKey, eventData)
+	_, run, err := g.scheduledTasks.TriggerEvent(eventKey, eventData, delay)
 	switch {
 	case err == nil:
 		writer.Header().Set("Cache-Control", "no-store")
@@ -197,6 +204,34 @@ func (g *Gateway) handleScheduledTaskEvent(writer http.ResponseWriter, request *
 			"could not trigger scheduled task",
 		)
 	}
+}
+
+func decodeScheduledTaskEventDelay(writer http.ResponseWriter, request *http.Request) (time.Duration, bool) {
+	values, present := request.URL.Query()["delay"]
+	if !present {
+		return 0, true
+	}
+	maximumMilliseconds := int64(scheduledTaskEventMaximumDelay / time.Millisecond)
+	if len(values) != 1 || values[0] == "" {
+		writeHTTPError(
+			writer,
+			http.StatusBadRequest,
+			"invalid_event_delay",
+			"delay must be an integer between 0 and "+strconv.FormatInt(maximumMilliseconds, 10)+" milliseconds",
+		)
+		return 0, false
+	}
+	milliseconds, err := strconv.ParseInt(values[0], 10, 64)
+	if err != nil || milliseconds < 0 || milliseconds > maximumMilliseconds {
+		writeHTTPError(
+			writer,
+			http.StatusBadRequest,
+			"invalid_event_delay",
+			"delay must be an integer between 0 and "+strconv.FormatInt(maximumMilliseconds, 10)+" milliseconds",
+		)
+		return 0, false
+	}
+	return time.Duration(milliseconds) * time.Millisecond, true
 }
 
 func decodeScheduledTaskEvent(writer http.ResponseWriter, request *http.Request) (string, bool) {

@@ -190,9 +190,10 @@ func (engine *Engine) RunNow(id string) (Task, Run, error) {
 
 // TriggerEvent claims one HTTP-triggered occurrence by its secret event key.
 // The canonical JSON event data is passed only to the in-memory runner and is
-// deliberately excluded from persisted task state.
-func (engine *Engine) TriggerEvent(eventKey, eventData string) (Task, Run, error) {
-	task, run, err := engine.store.claimEvent(eventKey, eventData)
+// deliberately excluded from persisted task state. A positive delay makes the
+// occurrence wait until its scheduled time without occupying a worker slot.
+func (engine *Engine) TriggerEvent(eventKey, eventData string, delay time.Duration) (Task, Run, error) {
+	task, run, err := engine.store.claimEvent(eventKey, eventData, delay)
 	if err != nil {
 		return Task{}, Run{}, err
 	}
@@ -302,6 +303,21 @@ func (engine *Engine) dispatch(task Task, run Run) error {
 
 func (engine *Engine) execute(ctx context.Context, task Task, run Run) {
 	defer engine.wg.Done()
+	if delay := time.Until(run.ScheduledFor); delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = engine.store.complete(task.ID, run.ID, RunInterrupted, "gateway is shutting down")
+			return
+		}
+	}
 	select {
 	case engine.limit <- struct{}{}:
 		defer func() { <-engine.limit }()

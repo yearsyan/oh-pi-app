@@ -105,9 +105,18 @@ func TestEngineExecutesHTTPTriggeredTaskWithEventData(t *testing.T) {
 		}
 	})
 
-	_, claimed, err := engine.TriggerEvent(task.EventKey, `{"ref":"main"}`)
+	triggeredAt := time.Now()
+	_, claimed, err := engine.TriggerEvent(task.EventKey, `{"ref":"main"}`, 200*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if claimed.ScheduledFor.Before(triggeredAt.Add(190 * time.Millisecond)) {
+		t.Fatalf("scheduled_for = %s, want at least 190ms after %s", claimed.ScheduledFor, triggeredAt)
+	}
+	select {
+	case run := <-runs:
+		t.Fatalf("HTTP-triggered task ran before its delay: %#v", run)
+	case <-time.After(100 * time.Millisecond):
 	}
 	select {
 	case run := <-runs:

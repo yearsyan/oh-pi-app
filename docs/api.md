@@ -9,7 +9,7 @@ ohpi-gateway 使用 HTTP API 管理持久化 session 和浏览远程文件，使
 健康检查成功时返回网关版本与安装模式兼容协议版本。`os` 为网关宿主的 Go `runtime.GOOS`（如 `darwin`、`linux`、`windows`），旧版本网关不含该字段：
 
 ```json
-{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","workspace_delete_v1","workspace_resources_v1","scheduled_tasks_v1","scheduled_task_skills_v1","scheduled_session_management_v1","scheduled_task_sessions_v1","scheduled_http_triggers_v1","runtime_config_v1"]}
+{"status":"ok","service":"ohpi-gateway","version":"2.2.3","protocol":3,"os":"darwin","features":["workspaces_v2","session_process_stop","workspace_delete_v1","workspace_resources_v1","scheduled_tasks_v1","scheduled_task_skills_v1","scheduled_session_management_v1","scheduled_task_sessions_v1","scheduled_http_triggers_v1","scheduled_http_trigger_delay_v1","runtime_config_v1"]}
 ```
 
 ```http
@@ -334,16 +334,16 @@ Authorization: Bearer <TOKEN>
 
 `event_key` 是由加密安全随机源生成的 32 位小写十六进制字符串，并充当该公开入口的 Bearer secret。HTTP 任务保持同一类型进行其他编辑时 key 不变；从其他类型改为 HTTP 时生成新 key，改离 HTTP 后旧入口立即失效，再次改回 HTTP 会生成另一个 key。不要把 key 写入公开仓库或日志。
 
-触发接口路径固定，不需要 `Authorization` 或网关 Token，但必须使用 `POST`、`Content-Type: application/json` 并提供且只提供一个有效 JSON 值；正文上限为 256 KiB：
+触发接口路径固定，不需要 `Authorization` 或网关 Token，但必须使用 `POST`、`Content-Type: application/json` 并提供且只提供一个有效 JSON 值；正文上限为 256 KiB。带有 `scheduled_http_trigger_delay_v1` feature 的网关还接受可选的 `delay` 查询参数，单位为毫秒，必须是 `0` 到 `86400000`（24 小时）之间的整数；省略或设为 `0` 时立即进入执行队列：
 
 ```http
-POST /api/task-events/0123456789abcdef0123456789abcdef
+POST /api/task-events/0123456789abcdef0123456789abcdef?delay=1000
 Content-Type: application/json
 
 {"ref":"main","deployment_id":42}
 ```
 
-接受后返回 HTTP 202，公开响应不会包含任务名称、Prompt、工作空间或 event key：
+接受后立即返回 HTTP 202，公开响应不会包含任务名称、Prompt、工作空间或 event key。`delay` 是开始执行前的最短等待时间；全局并发槽繁忙时，实际开始时间可能更晚：
 
 ```json
 {"status":"accepted","run_id":"e177689f-3fa0-432c-aac1-7c6150dac163"}
@@ -355,7 +355,7 @@ Content-Type: application/json
 <system-reminder>本次任务由外部触发器触发，是非交互式任务，不要执行需要用户交互的操作，本次触发器数据为 {"ref":"main","deployment_id":42} </system-reminder>
 ```
 
-因此事件数据会进入该次任务 session 的聊天历史，并遵循定时任务 session 的保留策略。未知或已经失效的 key 返回 404；任务已停用或同一任务仍在运行时返回 409。HTTP 触发同样受全局并发限制、一小时执行超时、非交互式 UI 请求拦截和任务禁止重叠规则约束。
+因此事件数据会进入该次任务 session 的聊天历史，并遵循定时任务 session 的保留策略。未知或已经失效的 key 返回 404；任务已停用或同一任务仍在运行时返回 409。延迟请求被接受后会立刻成为该任务的 `current_run`，所以等待期间再次触发同一任务也返回 409，但等待本身不占用全局执行槽。HTTP 触发同样受全局并发限制、一小时执行超时、非交互式 UI 请求拦截和任务禁止重叠规则约束。由于事件正文不会写入任务元数据，网关若在延迟等待期间重启，该次运行会标记为 `interrupted`，不会自动恢复。
 
 ### 查询、编辑、删除和立即执行
 

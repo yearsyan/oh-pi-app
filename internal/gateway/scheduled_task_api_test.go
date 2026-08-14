@@ -290,6 +290,38 @@ func TestScheduledTaskHTTPEventRequiresJSON(t *testing.T) {
 	}
 }
 
+func TestScheduledTaskHTTPEventDelayValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		wantDelay time.Duration
+		wantOK    bool
+	}{
+		{name: "omitted", target: "/api/task-events/key", wantOK: true},
+		{name: "zero", target: "/api/task-events/key?delay=0", wantOK: true},
+		{name: "milliseconds", target: "/api/task-events/key?delay=1000", wantDelay: time.Second, wantOK: true},
+		{name: "maximum", target: "/api/task-events/key?delay=86400000", wantDelay: 24 * time.Hour, wantOK: true},
+		{name: "empty", target: "/api/task-events/key?delay=", wantOK: false},
+		{name: "negative", target: "/api/task-events/key?delay=-1", wantOK: false},
+		{name: "fractional", target: "/api/task-events/key?delay=1.5", wantOK: false},
+		{name: "too large", target: "/api/task-events/key?delay=86400001", wantOK: false},
+		{name: "repeated", target: "/api/task-events/key?delay=1&delay=2", wantOK: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.target, nil)
+			response := httptest.NewRecorder()
+			delay, ok := decodeScheduledTaskEventDelay(response, request)
+			if ok != test.wantOK || delay != test.wantDelay {
+				t.Fatalf("delay=%s ok=%v, want delay=%s ok=%v", delay, ok, test.wantDelay, test.wantOK)
+			}
+			if !test.wantOK && response.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestScheduledTaskAPIRejectsClientSuppliedEventKey(t *testing.T) {
 	app := newScheduledTaskTestGateway(t)
 	workspaces, err := app.workspaces.list()

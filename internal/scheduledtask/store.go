@@ -343,9 +343,12 @@ func (store *Store) claimManual(id string) (Task, Run, error) {
 	return cloneTask(task), run, nil
 }
 
-func (store *Store) claimEvent(eventKey, eventData string) (Task, Run, error) {
+func (store *Store) claimEvent(eventKey, eventData string, delay time.Duration) (Task, Run, error) {
 	if eventData == "" {
 		return Task{}, Run{}, errors.New("HTTP trigger event data is required")
+	}
+	if delay < 0 {
+		return Task{}, Run{}, errors.New("HTTP trigger delay must not be negative")
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -366,7 +369,7 @@ func (store *Store) claimEvent(eventKey, eventData string) (Task, Run, error) {
 	}
 	run := Run{
 		ID:           runID,
-		ScheduledFor: now,
+		ScheduledFor: now.Add(delay),
 		StartedAt:    now,
 		Status:       RunRunning,
 		EventData:    eventData,

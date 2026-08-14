@@ -44,6 +44,7 @@ const gatewayFeatureScheduledTaskSkills = "scheduled_task_skills_v1"
 const gatewayFeatureScheduledSessionManagement = "scheduled_session_management_v1"
 const gatewayFeatureScheduledTaskSessions = "scheduled_task_sessions_v1"
 const gatewayFeatureScheduledHTTPTriggers = "scheduled_http_triggers_v1"
+const gatewayFeatureScheduledHTTPTriggerDelay = "scheduled_http_trigger_delay_v1"
 
 // Gateway owns the HTTP handlers and every pi process created through them.
 type Gateway struct {
@@ -184,6 +185,7 @@ func (g *Gateway) handleHealth(writer http.ResponseWriter, request *http.Request
 		gatewayFeatureScheduledSessionManagement,
 		gatewayFeatureScheduledTaskSessions,
 		gatewayFeatureScheduledHTTPTriggers,
+		gatewayFeatureScheduledHTTPTriggerDelay,
 	}
 	if g.runtimeConfig != nil {
 		features = append(features, gatewayFeatureRuntimeConfig)

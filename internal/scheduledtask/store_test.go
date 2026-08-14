@@ -240,11 +240,12 @@ func TestStoreCreatesAndClaimsHTTPTriggeredTask(t *testing.T) {
 		t.Fatalf("HTTP task = %#v", task)
 	}
 
-	claimed, run, err := store.claimEvent(task.EventKey, `{"ref":"main"}`)
+	claimed, run, err := store.claimEvent(task.EventKey, `{"ref":"main"}`, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.CurrentRun == nil || claimed.CurrentRun.ID != run.ID || run.EventData != `{"ref":"main"}` {
+	if claimed.CurrentRun == nil || claimed.CurrentRun.ID != run.ID || run.EventData != `{"ref":"main"}` ||
+		!run.ScheduledFor.Equal(now.Add(time.Second)) {
 		t.Fatalf("claimed task=%#v run=%#v", claimed, run)
 	}
 	persisted, err := store.Get(task.ID)
@@ -254,7 +255,7 @@ func TestStoreCreatesAndClaimsHTTPTriggeredTask(t *testing.T) {
 	if persisted.CurrentRun == nil || persisted.CurrentRun.EventData != "" {
 		t.Fatalf("persisted event data = %#v", persisted.CurrentRun)
 	}
-	if _, _, err := store.claimEvent(task.EventKey, `{}`); !errors.Is(err, ErrRunning) {
+	if _, _, err := store.claimEvent(task.EventKey, `{}`, 0); !errors.Is(err, ErrRunning) {
 		t.Fatalf("overlapping event error = %v", err)
 	}
 	if err := store.complete(task.ID, run.ID, RunSucceeded, ""); err != nil {
@@ -272,7 +273,7 @@ func TestStoreCreatesAndClaimsHTTPTriggeredTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.claimEvent(updated.EventKey, `{}`); !errors.Is(err, ErrDisabled) {
+	if _, _, err := store.claimEvent(updated.EventKey, `{}`, 0); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("disabled event error = %v", err)
 	}
 }

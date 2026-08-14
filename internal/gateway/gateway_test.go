@@ -1792,7 +1792,7 @@ func TestHealthIdentifiesGatewayVersion(t *testing.T) {
 	if response.StatusCode != http.StatusOK || health.Status != "ok" ||
 		health.Service != "ohpi-gateway" || health.Version != "1.2.3" ||
 		health.Protocol != gatewayProtocolVersion || health.OS != runtime.GOOS ||
-		len(health.Features) != 9 ||
+		len(health.Features) != 10 ||
 		health.Features[0] != gatewayFeatureWorkspaces ||
 		health.Features[1] != gatewayFeatureSessionProcessStop ||
 		health.Features[2] != gatewayFeatureWorkspaceDelete ||
@@ -1801,7 +1801,8 @@ func TestHealthIdentifiesGatewayVersion(t *testing.T) {
 		health.Features[5] != gatewayFeatureScheduledTaskSkills ||
 		health.Features[6] != gatewayFeatureScheduledSessionManagement ||
 		health.Features[7] != gatewayFeatureScheduledTaskSessions ||
-		health.Features[8] != gatewayFeatureScheduledHTTPTriggers {
+		health.Features[8] != gatewayFeatureScheduledHTTPTriggers ||
+		health.Features[9] != gatewayFeatureScheduledHTTPTriggerDelay {
 		t.Fatalf("unexpected health response: status=%d body=%+v", response.StatusCode, health)
 	}
 }
