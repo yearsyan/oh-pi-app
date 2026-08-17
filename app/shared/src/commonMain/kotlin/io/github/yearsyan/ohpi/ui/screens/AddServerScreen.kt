@@ -207,6 +207,7 @@ fun AddServerScreen(
     var pendingNewKey by remember { mutableStateOf<SshPrivateKey?>(null) }
     var sshBaseProfile by remember { mutableStateOf<ServerProfile?>(null) }
     var tokenInput by remember { mutableStateOf("") }
+    var manualBackStep by remember { mutableStateOf(AddServerStep.SshMissing) }
 
     val sshTarget =
         sshForm.sshHost.trim().let { host ->
@@ -340,6 +341,11 @@ fun AddServerScreen(
                         token = tokenInput,
                         onTokenChange = { tokenInput = it },
                         onBack = { step = AddServerStep.Ssh },
+                        onUseOtherGateway = {
+                            manualBackStep = AddServerStep.SshToken
+                            manualForm.token = tokenInput
+                            step = AddServerStep.Manual
+                        },
                         onSave = {
                             trustedSshProfile()?.let { profile ->
                                 onSave(profile.copy(token = tokenInput.trim()), pendingNewKey)
@@ -351,7 +357,10 @@ fun AddServerScreen(
                     SshMissingContent(
                         onBack = { step = AddServerStep.Ssh },
                         onInstall = ::startInstall,
-                        onManual = { step = AddServerStep.Manual },
+                        onManual = {
+                            manualBackStep = AddServerStep.SshMissing
+                            step = AddServerStep.Manual
+                        },
                     )
 
                 AddServerStep.Install ->
@@ -366,7 +375,12 @@ fun AddServerScreen(
                 AddServerStep.Manual ->
                     ManualGatewayContent(
                         form = manualForm,
-                        onBack = { step = AddServerStep.SshMissing },
+                        onBack = {
+                            if (manualBackStep == AddServerStep.SshToken) {
+                                tokenInput = manualForm.token
+                            }
+                            step = manualBackStep
+                        },
                         onSave = {
                             val base = trustedSshProfile() ?: return@ManualGatewayContent
                             manualForm.build(strings, base)?.let { profile ->
@@ -677,6 +691,7 @@ private fun SshTokenContent(
     token: String,
     onTokenChange: (String) -> Unit,
     onBack: () -> Unit,
+    onUseOtherGateway: () -> Unit,
     onSave: () -> Unit,
 ) {
     FormTopBar(S.addServerGatewayFoundTitle, onBack)
@@ -705,6 +720,15 @@ private fun SshTokenContent(
         Icon(Icons.Filled.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(S.connectAndSave, fontWeight = FontWeight.SemiBold)
+    }
+    Spacer(Modifier.height(8.dp))
+    TextButton(
+        onClick = onUseOtherGateway,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(if (getPlatform().isIos) S.addServerUseOtherPort else S.addServerUseOtherGateway)
     }
 }
 

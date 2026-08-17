@@ -85,6 +85,8 @@ interface Strings {
     val addServerStepDetectGateway: String
     val addServerGatewayFoundTitle: String
     val addServerGatewayFoundBody: (Int) -> String
+    val addServerUseOtherGateway: String
+    val addServerUseOtherPort: String
     val addServerGatewayMissingTitle: String
     val addServerGatewayMissingBody: (Int) -> String
     val addServerInstallTitle: String
@@ -674,6 +676,8 @@ object EnStrings : Strings {
     override val addServerGatewayFoundBody = { port: Int ->
         "A healthy ohpi gateway answered on port $port. Enter its token to finish."
     }
+    override val addServerUseOtherGateway = "Use another IP or machine"
+    override val addServerUseOtherPort = "Use another port"
     override val addServerGatewayMissingTitle = "No gateway on the default port"
     override val addServerGatewayMissingBody = { port: Int ->
         "The SSH connection works, but no healthy gateway answered on port $port. Choose how to continue."
@@ -1313,6 +1317,8 @@ object ZhStrings : Strings {
     override val addServerGatewayFoundBody = { port: Int ->
         "端口 $port 上有健康的 ohpi 网关响应。请输入其令牌完成连接。"
     }
+    override val addServerUseOtherGateway = "改用其他 IP/机器"
+    override val addServerUseOtherPort = "改用其他端口"
     override val addServerGatewayMissingTitle = "默认端口上没有网关"
     override val addServerGatewayMissingBody = { port: Int ->
         "SSH 连接正常，但端口 $port 上没有健康的网关响应。请选择如何继续。"
