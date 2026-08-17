@@ -25,6 +25,7 @@ internal expect val platformSupportsComposerBackdropBlur: Boolean
 internal expect fun PlatformComposerSurface(
     backdropState: HazeState?,
     modifier: Modifier = Modifier,
+    glassAlpha: Float = 1f,
     content: @Composable () -> Unit,
 )
 

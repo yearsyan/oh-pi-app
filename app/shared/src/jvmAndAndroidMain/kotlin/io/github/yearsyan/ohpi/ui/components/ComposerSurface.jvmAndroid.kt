@@ -8,6 +8,7 @@ import dev.chrisbanes.haze.HazeState
 internal actual fun PlatformComposerSurface(
     backdropState: HazeState?,
     modifier: Modifier,
+    glassAlpha: Float,
     content: @Composable () -> Unit,
 ) {
     if (platformSupportsComposerBackdropBlur && backdropState != null) {

@@ -35,6 +35,7 @@ internal actual fun PlatformScrollToBottomButton(
     visible: Boolean,
     onClick: () -> Unit,
     modifier: Modifier,
+    glassAlpha: Float,
 ) {
     if (!isScrollButtonLiquidGlassAvailable()) {
         LegacyScrollToBottomButton(visible = visible, onClick = onClick, modifier = modifier)
@@ -47,11 +48,13 @@ internal actual fun PlatformScrollToBottomButton(
     val accessibilityLabel = S.scrollToBottom
 
     // Overlay interop views ignore the caller's AnimatedVisibility, so the
-    // legacy fade/scale is reproduced on the native view itself.
+    // legacy fade/scale is reproduced on the native view itself. glassAlpha
+    // replays navigation fades that the Compose scene cannot apply to it.
     val progress = remember { Animatable(if (visible) 1f else 0f) }
     LaunchedEffect(visible) {
         progress.animateTo(if (visible) 1f else 0f, animationSpec = tween(150))
     }
+    val effectiveProgress = progress.value * glassAlpha
 
     UIKitView(
         factory = {
@@ -71,7 +74,7 @@ internal actual fun PlatformScrollToBottomButton(
                 iconTint.toUIColor(),
                 accessibilityLabel,
             )
-            OhPiLiquidGlassSetScrollButtonProgress(view, progress.value.toDouble())
+            OhPiLiquidGlassSetScrollButtonProgress(view, effectiveProgress.toDouble())
             view
         },
         update = { view ->
@@ -81,7 +84,7 @@ internal actual fun PlatformScrollToBottomButton(
                 iconTint.toUIColor(),
                 accessibilityLabel,
             )
-            OhPiLiquidGlassSetScrollButtonProgress(view, progress.value.toDouble())
+            OhPiLiquidGlassSetScrollButtonProgress(view, effectiveProgress.toDouble())
         },
         modifier = modifier.size(38.dp),
         properties =

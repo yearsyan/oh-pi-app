@@ -8,6 +8,7 @@ internal actual fun PlatformScrollToBottomButton(
     visible: Boolean,
     onClick: () -> Unit,
     modifier: Modifier,
+    glassAlpha: Float,
 ) {
     LegacyScrollToBottomButton(visible = visible, onClick = onClick, modifier = modifier)
 }

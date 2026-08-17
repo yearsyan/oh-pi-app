@@ -28,6 +28,7 @@ internal expect fun PlatformScrollToBottomButton(
     visible: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    glassAlpha: Float = 1f,
 )
 
 /** Existing Material button retained on Android, desktop, and pre-iOS 26. */

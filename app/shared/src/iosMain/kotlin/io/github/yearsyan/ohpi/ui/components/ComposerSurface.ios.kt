@@ -43,6 +43,7 @@ import io.github.yearsyan.ohpi.theme.LocalPiExtras
 internal actual fun PlatformComposerSurface(
     backdropState: HazeState?,
     modifier: Modifier,
+    glassAlpha: Float,
     content: @Composable () -> Unit,
 ) {
     if (!isLiquidGlassAvailable()) {
@@ -109,7 +110,13 @@ internal actual fun PlatformComposerSurface(
             OhPiLiquidGlassUpdateComposerAppearance(glassView, darkAppearance)
             glassView
         },
-        update = { view -> OhPiLiquidGlassUpdateComposerAppearance(view, darkAppearance) },
+        // Overlay interop views ignore the Compose scene alpha, so page exit
+        // fades are replayed on the native glass view itself.
+        update = { view ->
+            OhPiLiquidGlassUpdateComposerAppearance(view, darkAppearance)
+            view.alpha = glassAlpha.toDouble()
+            view.hidden = glassAlpha <= 0.01f
+        },
         // ComposeUIView has no Auto Layout intrinsic height. Keep UIKitView on
         // an explicit Compose-owned height so its first measurement cannot be 0.
         modifier = modifier.height(contentHeight),

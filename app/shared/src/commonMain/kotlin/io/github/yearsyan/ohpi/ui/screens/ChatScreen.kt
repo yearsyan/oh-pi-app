@@ -96,6 +96,7 @@ import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.ExtensionDialog
 import io.github.yearsyan.ohpi.ui.components.FollowScrollPacer
 import io.github.yearsyan.ohpi.ui.components.KeepScreenOn
+import io.github.yearsyan.ohpi.ui.components.LocalGlassChromeAlpha
 import io.github.yearsyan.ohpi.ui.components.PlatformScrollToBottomButton
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.StatusLine
@@ -816,6 +817,7 @@ internal fun MessageList(
                         end = if (wideConversationLayout) horizontalInset + 18.dp else 18.dp,
                         bottom = bottomPadding + 16.dp,
                     ),
+            glassAlpha = LocalGlassChromeAlpha.current,
         )
     }
 

@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,10 +68,13 @@ import io.github.yearsyan.ohpi.filebrowser.rememberApkOpener
 import io.github.yearsyan.ohpi.i18n.S
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.GatewayHostOs
+import io.github.yearsyan.ohpi.ui.components.LocalGlassChromeAlpha
 import io.github.yearsyan.ohpi.ui.components.RenameDialog
 import io.github.yearsyan.ohpi.ui.components.SessionListPane
+import io.github.yearsyan.ohpi.ui.components.SyncGlassWithBackGesture
 import io.github.yearsyan.ohpi.ui.components.WorkspaceDialog
 import io.github.yearsyan.ohpi.ui.components.WorkspaceMetadataDialog
+import io.github.yearsyan.ohpi.ui.components.rememberGlassExitController
 import kotlinx.serialization.Serializable
 
 private val WideBreakpoint = 840.dp
@@ -223,25 +227,38 @@ fun HomeScreen(vm: AppViewModel) {
                     if (vm.activeChatId == null) vm.openChat(route.sessionId)
                 }
                 SafeDrawingHost {
-                    MainDestination(
-                        vm = vm,
-                        wide = wide,
-                        compactChatId = vm.activeChatId ?: route.sessionId,
-                        onNavigateBack = { navController.popBackStack() },
-                        onOpenSettings = { navController.navigate(SettingsRoute) },
-                        onSelectServer = ::selectServer,
-                        onOpenCompactChat = ::openCompactChat,
-                        onDeleteSession = ::deleteSession,
-                        onRenameSession = { renaming = it },
-                        onEditWorkspace = { editingWorkspace = it },
-                        onArchiveWorkspace = ::archiveWorkspace,
-                        onDeleteWorkspace = ::deleteWorkspace,
-                        onRequestNewChat = { newChatWide = it },
-                        onBrowseFiles = ::openFileBrowser,
-                        onOpenProviders = ::openProviders,
-                        onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
-                        onOpenScheduledTasks = { navController.navigate(ScheduledTasksRoute) },
-                    )
+                    // Native glass chrome cannot follow the pop transition, so
+                    // fade it out first and only then pop the destination.
+                    val glassExit = rememberGlassExitController()
+                    CompositionLocalProvider(LocalGlassChromeAlpha provides glassExit.glassAlpha) {
+                        // Edge-swipe back bypasses onNavigateBack, so the glass
+                        // chrome tracks the gesture recognizer directly.
+                        SyncGlassWithBackGesture(
+                            controller = glassExit,
+                            isActive = { navController.currentBackStackEntry == backStackEntry },
+                        )
+                        MainDestination(
+                            vm = vm,
+                            wide = wide,
+                            compactChatId = vm.activeChatId ?: route.sessionId,
+                            onNavigateBack = {
+                                glassExit.fadeOutThen { navController.popBackStack() }
+                            },
+                            onOpenSettings = { navController.navigate(SettingsRoute) },
+                            onSelectServer = ::selectServer,
+                            onOpenCompactChat = ::openCompactChat,
+                            onDeleteSession = { id -> glassExit.fadeOutThen { deleteSession(id) } },
+                            onRenameSession = { renaming = it },
+                            onEditWorkspace = { editingWorkspace = it },
+                            onArchiveWorkspace = ::archiveWorkspace,
+                            onDeleteWorkspace = ::deleteWorkspace,
+                            onRequestNewChat = { newChatWide = it },
+                            onBrowseFiles = ::openFileBrowser,
+                            onOpenProviders = ::openProviders,
+                            onOpenPortForwards = { navController.navigate(PortForwardsRoute) },
+                            onOpenScheduledTasks = { navController.navigate(ScheduledTasksRoute) },
+                        )
+                    }
                 }
             }
 

@@ -196,6 +196,7 @@ fun Composer(
         PlatformComposerSurface(
             backdropState = backdropState,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            glassAlpha = LocalGlassChromeAlpha.current,
         ) {
             ComposerKeyboardDismissEffect(keyboardDismissTick)
             Column(

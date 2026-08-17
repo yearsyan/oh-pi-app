@@ -4,3 +4,5 @@ import android.os.Build
 
 internal actual val platformSupportsComposerBackdropBlur: Boolean
     get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+internal actual val platformNeedsGlassExitFade: Boolean = false
