@@ -19,7 +19,7 @@ type technologyDetection struct {
 func detectWorkspaceTechnology(directory string) technologyDetection {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return technologyDetection{Primary: "generic"}
+		return technologyDetection{Primary: "generic", Technologies: []string{}}
 	}
 	files := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {

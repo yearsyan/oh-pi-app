@@ -82,6 +82,13 @@ func TestDetectWorkspaceTechnologyReturnsEmptyListForGenericDirectory(t *testing
 	}
 }
 
+func TestDetectWorkspaceTechnologyReturnsEmptyListForMissingDirectory(t *testing.T) {
+	detected := detectWorkspaceTechnology(filepath.Join(t.TempDir(), "missing"))
+	if detected.Primary != "generic" || detected.Technologies == nil || len(detected.Technologies) != 0 {
+		t.Fatalf("missing directory detection = %#v", detected)
+	}
+}
+
 func writeTechnologyMarker(t *testing.T, directory, name, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(directory, name), []byte(contents), 0o600); err != nil {
