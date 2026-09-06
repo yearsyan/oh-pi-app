@@ -58,6 +58,7 @@ import io.github.yearsyan.ohpi.i18n.Strings
 import io.github.yearsyan.ohpi.net.GatewayScheduledTask
 import io.github.yearsyan.ohpi.net.GatewayScheduledTaskMutation
 import io.github.yearsyan.ohpi.net.ScheduledTaskKinds
+import io.github.yearsyan.ohpi.ui.privacy.rememberScheduledTaskConsent
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.components.ConfirmDialog
 import io.github.yearsyan.ohpi.ui.components.SheetAction
@@ -76,6 +77,7 @@ fun ScheduledTasksScreen(
 ) {
     val scope = rememberCoroutineScope()
     val strings = S
+    val requestTaskConsent = rememberScheduledTaskConsent(vm)
     var tasks by remember(vm.activeServerId) { mutableStateOf<List<GatewayScheduledTask>>(emptyList()) }
     var loading by remember(vm.activeServerId) { mutableStateOf(true) }
     var refreshing by remember(vm.activeServerId) { mutableStateOf(false) }
@@ -192,33 +194,44 @@ fun ScheduledTasksScreen(
                         onSessions = { onSessions(task) },
                         sessionsSupported = vm.activeGatewayInfo?.supportsScheduledTaskSessions == true,
                         onToggle = { enabled ->
-                            mutate(task) {
-                                vm.updateScheduledTask(task.id, task.toMutation(enabled = enabled))
+                            if (enabled) {
+                                requestTaskConsent(task.workspaceId, task.model) { approvedModel ->
+                                    mutate(task) {
+                                        vm.updateScheduledTask(task.id, task.toMutation(enabled = true).copy(model = approvedModel))
+                                    }
+                                }
+                            } else {
+                                mutate(task) { vm.updateScheduledTask(task.id, task.toMutation(enabled = false)) }
                             }
                         },
                         onRun = {
-                            if (mutatingTaskId == null) {
-                                mutatingTaskId = task.id
-                                scope.launch {
-                                    try {
-                                        var updated = vm.runScheduledTaskNow(task.id)
-                                        tasks = tasks.map { if (it.id == task.id) updated else it }
-                                        vm.toast(strings.scheduledTaskRunStarted, Toast.Kind.Success)
-                                        for (attempt in 0 until 60) {
-                                            if (updated.currentRun == null) break
-                                            delay(2_000)
-                                            updated = vm.loadScheduledTask(task.id)
+                            requestTaskConsent(task.workspaceId, task.model) { approvedModel ->
+                                if (mutatingTaskId == null) {
+                                    mutatingTaskId = task.id
+                                    scope.launch {
+                                        try {
+                                            if (approvedModel != task.model) {
+                                                vm.updateScheduledTask(task.id, task.toMutation().copy(model = approvedModel))
+                                            }
+                                            var updated = vm.runScheduledTaskNow(task.id)
                                             tasks = tasks.map { if (it.id == task.id) updated else it }
+                                            vm.toast(strings.scheduledTaskRunStarted, Toast.Kind.Success)
+                                            for (attempt in 0 until 60) {
+                                                if (updated.currentRun == null) break
+                                                delay(2_000)
+                                                updated = vm.loadScheduledTask(task.id)
+                                                tasks = tasks.map { if (it.id == task.id) updated else it }
+                                            }
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Throwable) {
+                                            vm.toast(
+                                                strings.scheduledTaskRunFailed(failure.message ?: strings.unknownError),
+                                                Toast.Kind.Error,
+                                            )
+                                        } finally {
+                                            if (mutatingTaskId == task.id) mutatingTaskId = null
                                         }
-                                    } catch (cancelled: CancellationException) {
-                                        throw cancelled
-                                    } catch (failure: Throwable) {
-                                        vm.toast(
-                                            strings.scheduledTaskRunFailed(failure.message ?: strings.unknownError),
-                                            Toast.Kind.Error,
-                                        )
-                                    } finally {
-                                        if (mutatingTaskId == task.id) mutatingTaskId = null
                                     }
                                 }
                             }

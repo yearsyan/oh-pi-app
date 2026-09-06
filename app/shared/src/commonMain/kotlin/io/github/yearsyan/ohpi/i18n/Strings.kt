@@ -239,6 +239,9 @@ interface Strings {
     val send: String
     val aiDataConsentTitle: (String) -> String
     val aiDataConsentMessage: (String, String) -> String
+    val scheduledTaskConsentMessage: (String, String) -> String
+    val scheduledTaskConsentAgree: String
+    val scheduledTaskConsentModelRequired: String
     val aiDataConsentAgreeAndSend: String
     val aiDataConsentUnknownProvider: String
     val aiDataPermissions: String
@@ -857,13 +860,18 @@ object EnStrings : Strings {
     override val aiDataConsentMessage = { provider: String, model: String ->
         "Selected model: $model\n\nTo generate a response, Oh Pi will send your message, conversation context, selected images or files, and tool results through your configured server to $provider. $provider handles this data under its own terms and privacy policy. The Oh Pi developer does not receive this content."
     }
+    override val scheduledTaskConsentMessage = { provider: String, model: String ->
+        "Task model: $model\n\nThis task sends its prompt, conversation context, workspace files read by tools, and tool results through your server to $provider. The provider processes this data under its own terms and privacy policy; the Oh Pi developer does not receive it.\n\nWhen enabled, the task can run automatically on its schedule or HTTP trigger, even when this app is closed. This model will be saved for the task. Pause or delete the task to stop future automatic runs; resetting chat permissions does not stop server tasks."
+    }
+    override val scheduledTaskConsentAgree = "Allow task"
+    override val scheduledTaskConsentModelRequired = "Select an available model before authorizing this task."
     override val aiDataConsentAgreeAndSend = "Agree & Send"
     override val aiDataConsentUnknownProvider = "the selected AI provider"
     override val aiDataPermissions = "AI data permissions"
     override val aiDataPermissionsDescription = "Reset provider sharing approvals"
     override val aiDataPermissionsResetTitle = "Reset AI data permissions?"
     override val aiDataPermissionsResetBody =
-        "Oh Pi will ask for permission again before the next prompt is sent to each AI provider."
+        "Oh Pi will ask for permission again before the next chat prompt is sent to each AI provider. Scheduled tasks run independently on your server; pause or delete them in Scheduled Tasks to stop future automatic runs."
     override val reset = "Reset"
     override val stop = "Stop"
     override val scrollToBottom = "Scroll to bottom"
@@ -1477,13 +1485,18 @@ object ZhStrings : Strings {
     override val aiDataConsentMessage = { provider: String, model: String ->
         "当前模型：$model\n\n为了生成回复，Oh Pi 会经由你配置的服务器，将你的消息、对话上下文、选中的图片或文件以及工具结果发送给 $provider。$provider 会依照其自己的条款和隐私政策处理这些数据；Oh Pi 开发者不会收到这些内容。"
     }
+    override val scheduledTaskConsentMessage = { provider: String, model: String ->
+        "任务模型：$model\n\n任务会经由你的服务器，将提示词、对话上下文、工具读取的工作区文件和工具结果发送给 $provider。该提供商依照自己的条款和隐私政策处理数据，Oh Pi 开发者不会收到这些内容。\n\n启用后，即使 App 已关闭，任务也会按计划或 HTTP 触发器自动运行。此模型将保存到任务。请暂停或删除任务来停止后续自动运行；重置聊天授权不会停止服务器上的任务。"
+    }
+    override val scheduledTaskConsentAgree = "允许此任务"
+    override val scheduledTaskConsentModelRequired = "请先为任务选择可用模型，再授权运行。"
     override val aiDataConsentAgreeAndSend = "同意并发送"
     override val aiDataConsentUnknownProvider = "所选 AI Provider"
     override val aiDataPermissions = "AI 数据授权"
     override val aiDataPermissionsDescription = "重置向 Provider 共享数据的授权"
     override val aiDataPermissionsResetTitle = "重置 AI 数据授权？"
     override val aiDataPermissionsResetBody =
-        "下次向每个 AI Provider 发送提示词前，Oh Pi 都会重新请求授权。"
+        "下次向每个 AI Provider 发送聊天提示词前，Oh Pi 都会重新请求授权。定时任务独立运行在服务器上；如需停止后续自动运行，请在定时任务页暂停或删除任务。"
     override val reset = "重置"
     override val stop = "停止"
     override val scrollToBottom = "滚动到底部"

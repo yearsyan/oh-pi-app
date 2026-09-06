@@ -75,6 +75,7 @@ import io.github.yearsyan.ohpi.net.GatewayCapabilities
 import io.github.yearsyan.ohpi.net.GatewayScheduledTaskMutation
 import io.github.yearsyan.ohpi.net.GatewayTaskSchedule
 import io.github.yearsyan.ohpi.net.ScheduledTaskKinds
+import io.github.yearsyan.ohpi.ui.privacy.rememberScheduledTaskConsent
 import io.github.yearsyan.ohpi.ui.AppViewModel
 import io.github.yearsyan.ohpi.ui.components.AppDropdownMenu
 import io.github.yearsyan.ohpi.ui.components.AppMenuItem
@@ -118,6 +119,7 @@ fun ScheduledTaskEditorScreen(
 ) {
     val scope = rememberCoroutineScope()
     val strings = S
+    val requestTaskConsent = rememberScheduledTaskConsent(vm)
     val timeZone = remember { TimeZone.currentSystemDefault() }
     var loading by remember(taskId, vm.activeServerId) { mutableStateOf(true) }
     var initialized by remember(taskId, vm.activeServerId) { mutableStateOf(false) }
@@ -252,21 +254,25 @@ fun ScheduledTaskEditorScreen(
             schedule = schedule,
             enabled = enabled,
         )
-        saving = true
-        scope.launch {
-            try {
-                if (taskId == null) vm.createScheduledTask(mutation)
-                else vm.updateScheduledTask(taskId, mutation)
-                vm.toast(strings.scheduledTaskSaved, Toast.Kind.Success)
-                onSaved()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                error = strings.scheduledTaskSaveFailed(failure.message ?: strings.unknownError)
-            } finally {
-                saving = false
+        fun persist(approvedModel: String) {
+            saving = true
+            scope.launch {
+                try {
+                    if (taskId == null) vm.createScheduledTask(mutation.copy(model = approvedModel))
+                    else vm.updateScheduledTask(taskId, mutation.copy(model = approvedModel))
+                    vm.toast(strings.scheduledTaskSaved, Toast.Kind.Success)
+                    onSaved()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    error = strings.scheduledTaskSaveFailed(failure.message ?: strings.unknownError)
+                } finally {
+                    saving = false
+                }
             }
         }
+        if (mutation.enabled) requestTaskConsent(mutation.workspaceId, mutation.model, ::persist)
+        else persist(mutation.model)
     }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow)) {

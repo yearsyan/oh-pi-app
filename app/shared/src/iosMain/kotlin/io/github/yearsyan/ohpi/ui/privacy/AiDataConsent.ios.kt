@@ -36,7 +36,7 @@ private class IosAiDataConsentPresenter(
 
     override fun requestConsent(request: AiDataConsentRequest, onGranted: () -> Unit) {
         val key = consentStorageKey(request)
-        if (defaults.boolForKey(key)) {
+        if (request.rememberGrant && defaults.boolForKey(key)) {
             onGranted()
             return
         }
@@ -71,7 +71,7 @@ private class IosAiDataConsentPresenter(
                 title = request.agreeAndSendLabel,
                 style = UIAlertActionStyleDefault,
                 handler = {
-                    defaults.setBool(true, forKey = key)
+                    if (request.rememberGrant) defaults.setBool(true, forKey = key)
                     activeAlert = null
                     onGranted()
                 },

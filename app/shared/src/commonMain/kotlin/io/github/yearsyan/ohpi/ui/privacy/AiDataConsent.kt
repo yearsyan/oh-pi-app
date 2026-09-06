@@ -14,6 +14,7 @@ internal data class AiDataConsentRequest(
     val cancelLabel: String,
     val privacyPolicyLabel: String,
     val agreeAndSendLabel: String,
+    val rememberGrant: Boolean = true,
 )
 
 /** Platform gate; non-iOS targets grant immediately without presenting UI. */
