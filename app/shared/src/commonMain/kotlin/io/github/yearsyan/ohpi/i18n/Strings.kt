@@ -231,6 +231,13 @@ interface Strings {
     val fileTruncatedNotice: String
     val fileViewSource: String
     val fileViewRendered: String
+    val fileSaveLocal: String
+    val fileCopyText: String
+    val fileShare: String
+    val fileSaved: String
+    val fileCopied: String
+    val fileCopiedForSharing: String
+    val fileActionFailed: (String) -> String
     val apkDownloading: String
     val apkInstallFailed: (String) -> String
 
@@ -848,6 +855,13 @@ object EnStrings : Strings {
     override val fileTruncatedNotice = "Large file — showing the beginning only"
     override val fileViewSource = "Source"
     override val fileViewRendered = "Preview"
+    override val fileSaveLocal = "Save file"
+    override val fileCopyText = "Copy text"
+    override val fileShare = "Share file"
+    override val fileSaved = "File saved"
+    override val fileCopied = "Full text copied"
+    override val fileCopiedForSharing = "File copied. Paste it into another app to share."
+    override val fileActionFailed = { error: String -> "File action failed: $error" }
     override val apkDownloading = "Downloading APK…"
     override val apkInstallFailed = { error: String -> "Could not install APK: $error" }
 
@@ -1468,6 +1482,13 @@ object ZhStrings : Strings {
     override val fileTruncatedNotice = "文件过大，仅显示开头部分"
     override val fileViewSource = "源码"
     override val fileViewRendered = "预览"
+    override val fileSaveLocal = "保存到本地"
+    override val fileCopyText = "复制全文"
+    override val fileShare = "分享文件"
+    override val fileSaved = "文件已保存"
+    override val fileCopied = "已复制全文"
+    override val fileCopiedForSharing = "文件已复制，可粘贴到其他应用分享"
+    override val fileActionFailed = { error: String -> "文件操作失败：$error" }
     override val apkDownloading = "正在下载 APK…"
     override val apkInstallFailed = { error: String -> "无法安装 APK：$error" }
 

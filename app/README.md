@@ -47,6 +47,8 @@ UI 风格参考 DeepSeek / ChatGPT / Codex 等 AI 聊天应用。
   安装过程中会实时显示远端脚本的 stdout/stderr，并可从设置页停止。完整平台限制见
   [`../docs/managed-install.md`](../docs/managed-install.md)。
 - **扩展 UI 对话框**：支持 pi 扩展的 select / confirm / input / editor 请求。
+- **文件浏览器**：文本和 Markdown 预览支持保存完整原文件、复制全文和分享文件；Android / iOS
+  使用系统保存与分享界面，桌面使用保存对话框，分享时将文件放入剪贴板供粘贴到其他应用。
 
 ## 架构（shared 模块）
 

@@ -47,6 +47,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -244,6 +245,19 @@ class FileBrowserController(
     fun dismissPreview() {
         preview = null
     }
+
+    /** Always export the raw download: preview text may be truncated or normalized. */
+    internal suspend fun downloadTextFile(file: FilePreview): ByteArray {
+        require(!file.loading && file.error == null && !file.isImage)
+        return downloadFile(file.path)
+    }
+
+    internal suspend fun copyText(file: FilePreview): String {
+        require(!file.loading && file.error == null && !file.isImage)
+        if (!file.truncated) return file.content
+        val bytes = downloadTextFile(file)
+        return withContext(Dispatchers.Default) { bytes.decodeToString() }
+    }
 }
 
 /** Width at which the browser switches to the two-pane list + detail layout. */
@@ -277,6 +291,7 @@ fun FileBrowserScreen(
                     )
                     VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     FilePreviewPane(
+                        controller = controller,
                         preview = controller.preview,
                         onClose = controller::dismissPreview,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -303,7 +318,7 @@ fun FileBrowserScreen(
                         subtitle = preview.path,
                     )
                 } else {
-                    FilePreviewSheet(preview, onDismiss = controller::dismissPreview)
+                    FilePreviewSheet(controller, preview, onDismiss = controller::dismissPreview)
                 }
             }
         }
@@ -519,6 +534,7 @@ private fun FileRow(entry: FileEntry, selected: Boolean = false, onClick: () -> 
  */
 @Composable
 private fun FilePreviewPane(
+    controller: FileBrowserController,
     preview: FilePreview?,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -535,7 +551,7 @@ private fun FilePreviewPane(
 
             preview.isImage -> ImagePreviewPane(preview, onClose)
 
-            else -> FilePreviewDetail(preview, Modifier.fillMaxSize(), onClose = onClose)
+            else -> FilePreviewDetail(controller, preview, Modifier.fillMaxSize(), onClose = onClose)
         }
     }
 }
@@ -590,9 +606,9 @@ private fun ImagePreviewPane(preview: FilePreview, onClose: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
+private fun FilePreviewSheet(controller: FileBrowserController, preview: FilePreview, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        FilePreviewDetail(preview, Modifier.fillMaxWidth().fillMaxHeight(0.8f))
+        FilePreviewDetail(controller, preview, Modifier.fillMaxWidth().fillMaxHeight(0.8f))
     }
 }
 
@@ -604,6 +620,7 @@ private fun FilePreviewSheet(preview: FilePreview, onDismiss: () -> Unit) {
  */
 @Composable
 private fun FilePreviewDetail(
+    controller: FileBrowserController,
     preview: FilePreview,
     modifier: Modifier = Modifier,
     onClose: (() -> Unit)? = null,
@@ -648,6 +665,11 @@ private fun FilePreviewDetail(
                 IconButton(onClick = onClose) {
                     Icon(Icons.Filled.Close, contentDescription = S.close)
                 }
+            }
+        }
+        if (!preview.loading && preview.error == null) {
+            key(preview) {
+                TextFileActions(controller, preview)
             }
         }
         Spacer(Modifier.height(10.dp))
