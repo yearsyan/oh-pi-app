@@ -88,6 +88,8 @@ iOS App Store Connect 记录使用以下固定身份：
 
 TestFlight workflow 使用解析出的版本（手工输入或最近 `v*` tag）作为 `MARKETING_VERSION`，使用 `<workflow run number>.<run attempt>` 作为唯一的 `CURRENT_PROJECT_VERSION`。
 
+TestFlight CI 使用 GitHub 的 `xcode-27` Apple Silicon runner，并通过 `DEVELOPER_DIR` 固定选择 Xcode 27.0。该 runner 目前仍为公开预览；每次运行会输出实际 Xcode 与 iOS SDK 版本，便于排查镜像更新导致的构建差异。
+
 归档阶段关闭代码签名；上传阶段在临时 keychain 中导入专用 Apple Distribution `.p12`，安装仅绑定 OhPiApp 的 App Store provisioning profile，再由 Xcode 手工签名并使用 App Store Connect API Key 上传。API Key 保持 Developer 角色即可，不需要给 CI Admin 权限。临时 keychain、证书、profile 和 API Key 在成功或失败后都会删除；缺少任一 Secret 时 workflow 会直接失败。
 
 `app/iosApp/iosApp/Info.plist` 已声明 `ITSAppUsesNonExemptEncryption=false`，`app/iosApp/iosApp/PrivacyInfo.xcprivacy` 包含当前 required-reason API 声明。上传成功只代表 Apple 接受交付；构建仍需经过 App Store Connect 后台处理才会出现在 TestFlight。
